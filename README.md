@@ -1,3 +1,6 @@
+Hinweis: Das ganze Projekt ist mit Claude Sonnet 4.0 erstellt worden. Das ganze hat vielleicht 2-3 Stunden gedauert. Die KI hat fehlerfrei programiert. Kaum zu glauben wie gut und effektiv KI im Augenblick schon ist.
+Einziger Nachteil in Claude ist. Die Projektgrösse ist in Claude für Privatnutzer begrenzt. Das bremst einen immer wieder aus.
+
 # 📊 MqlRealMonitor - Projektübersicht
 
 ## 🎯 **Was macht das Projekt?**
