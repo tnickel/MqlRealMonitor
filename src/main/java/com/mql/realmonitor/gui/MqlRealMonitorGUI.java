@@ -1,0 +1,507 @@
+package com.mql.realmonitor.gui;
+
+import com.mql.realmonitor.MqlRealMonitor;
+import com.mql.realmonitor.parser.SignalData;
+
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.events.SelectionAdapter;
+import org.eclipse.swt.events.SelectionEvent;
+import org.eclipse.swt.graphics.Color;
+import org.eclipse.swt.graphics.Font;
+import org.eclipse.swt.graphics.FontData;
+import org.eclipse.swt.layout.GridData;
+import org.eclipse.swt.layout.GridLayout;
+import org.eclipse.swt.widgets.*;
+
+import java.util.logging.Logger;
+import java.util.logging.Level;
+
+/**
+ * Haupt-GUI für MqlRealMonitor
+ * Verwaltet die SWT-Oberfläche mit Tabelle und Steuerelementen
+ */
+public class MqlRealMonitorGUI {
+    
+    private static final Logger LOGGER = Logger.getLogger(MqlRealMonitorGUI.class.getName());
+    
+    private final MqlRealMonitor monitor;
+    
+    // SWT Komponenten
+    private Display display;
+    private Shell shell;
+    private SignalProviderTable providerTable;
+    private StatusUpdater statusUpdater;
+    
+    // UI Komponenten
+    private Label statusLabel;
+    private Button startButton;
+    private Button stopButton;
+    private Button refreshButton;
+    private Button configButton;
+    private Text intervalText;
+    private Label countLabel;
+    
+    // Farben und Fonts
+    private Color greenColor;
+    private Color redColor;
+    private Color grayColor;
+    private Font boldFont;
+    private Font statusFont;
+    
+    public MqlRealMonitorGUI(MqlRealMonitor monitor) {
+        this.monitor = monitor;
+        this.display = Display.getDefault();
+        
+        initializeColors();
+        initializeFonts();
+        createShell();
+        createWidgets();
+        
+        this.statusUpdater = new StatusUpdater(this);
+    }
+    
+    /**
+     * Initialisiert die Farben
+     */
+    private void initializeColors() {
+        greenColor = new Color(display, 0, 128, 0);
+        redColor = new Color(display, 200, 0, 0);
+        grayColor = new Color(display, 128, 128, 128);
+    }
+    
+    /**
+     * Initialisiert die Schriftarten
+     */
+    private void initializeFonts() {
+        FontData[] fontData = display.getSystemFont().getFontData();
+        
+        // Bold Font
+        fontData[0].setStyle(SWT.BOLD);
+        boldFont = new Font(display, fontData[0]);
+        
+        // Status Font (etwas kleiner)
+        fontData[0].setHeight(fontData[0].getHeight() - 1);
+        fontData[0].setStyle(SWT.NORMAL);
+        statusFont = new Font(display, fontData[0]);
+    }
+    
+    /**
+     * Erstellt das Hauptfenster
+     */
+    private void createShell() {
+        shell = new Shell(display);
+        shell.setText("MQL5 Real Monitor - Signal Provider Überwachung");
+        shell.setSize(1000, 700);
+        shell.setLayout(new GridLayout(1, false));
+        
+        // Beim Schließen ordnungsgemäß beenden
+        shell.addListener(SWT.Close, event -> {
+            LOGGER.info("GUI wird geschlossen");
+            monitor.shutdown();
+            disposeResources();
+        });
+        
+        // Zentrieren
+        centerShell();
+    }
+    
+    /**
+     * Zentriert das Fenster auf dem Bildschirm
+     */
+    private void centerShell() {
+        org.eclipse.swt.graphics.Rectangle displayBounds = display.getPrimaryMonitor().getBounds();
+        org.eclipse.swt.graphics.Rectangle shellBounds = shell.getBounds();
+        
+        int x = (displayBounds.width - shellBounds.width) / 2;
+        int y = (displayBounds.height - shellBounds.height) / 2;
+        
+        shell.setLocation(x, y);
+    }
+    
+    /**
+     * Erstellt alle GUI-Komponenten
+     */
+    private void createWidgets() {
+        createToolbar();
+        createProviderTable();
+        createStatusBar();
+    }
+    
+    /**
+     * Erstellt die Toolbar mit Steuerelementen
+     */
+    private void createToolbar() {
+        Composite toolbar = new Composite(shell, SWT.NONE);
+        toolbar.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
+        toolbar.setLayout(new GridLayout(8, false));
+        
+        // Start Button
+        startButton = new Button(toolbar, SWT.PUSH);
+        startButton.setText("Start Monitoring");
+        startButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        startButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                startMonitoring();
+            }
+        });
+        
+        // Stop Button
+        stopButton = new Button(toolbar, SWT.PUSH);
+        stopButton.setText("Stop Monitoring");
+        stopButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        stopButton.setEnabled(false);
+        stopButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                stopMonitoring();
+            }
+        });
+        
+        // Separator
+        new Label(toolbar, SWT.SEPARATOR | SWT.VERTICAL)
+            .setLayoutData(new GridData(SWT.LEFT, SWT.FILL, false, false));
+        
+        // Refresh Button
+        refreshButton = new Button(toolbar, SWT.PUSH);
+        refreshButton.setText("Manueller Refresh");
+        refreshButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        refreshButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                manualRefresh();
+            }
+        });
+        
+        // Interval Label
+        Label intervalLabel = new Label(toolbar, SWT.NONE);
+        intervalLabel.setText("Intervall (h):");
+        intervalLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        
+        // Interval Text
+        intervalText = new Text(toolbar, SWT.BORDER | SWT.RIGHT);
+        intervalText.setText(String.valueOf(monitor.getConfig().getIntervalHour()));
+        intervalText.setLayoutData(new GridData(40, SWT.DEFAULT));
+        intervalText.addModifyListener(e -> updateInterval());
+        
+        // Separator
+        new Label(toolbar, SWT.SEPARATOR | SWT.VERTICAL)
+            .setLayoutData(new GridData(SWT.LEFT, SWT.FILL, false, false));
+        
+        // Config Button
+        configButton = new Button(toolbar, SWT.PUSH);
+        configButton.setText("Konfiguration");
+        configButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        configButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                showConfiguration();
+            }
+        });
+    }
+    
+    /**
+     * Erstellt die Signalprovider-Tabelle
+     */
+    private void createProviderTable() {
+        Group tableGroup = new Group(shell, SWT.NONE);
+        tableGroup.setText("Signal Provider");
+        tableGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        tableGroup.setLayout(new GridLayout(1, false));
+        
+        providerTable = new SignalProviderTable(tableGroup, this);
+    }
+    
+    /**
+     * Erstellt die Statusleiste
+     */
+    private void createStatusBar() {
+        Composite statusBar = new Composite(shell, SWT.NONE);
+        statusBar.setLayoutData(new GridData(SWT.FILL, SWT.BOTTOM, true, false));
+        statusBar.setLayout(new GridLayout(2, false));
+        
+        // Status Label
+        statusLabel = new Label(statusBar, SWT.NONE);
+        statusLabel.setText("Bereit");
+        statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        statusLabel.setFont(statusFont);
+        
+        // Count Label
+        countLabel = new Label(statusBar, SWT.NONE);
+        countLabel.setText("Provider: 0");
+        countLabel.setLayoutData(new GridData(SWT.RIGHT, SWT.CENTER, false, false));
+        countLabel.setFont(statusFont);
+    }
+    
+    /**
+     * Startet das Monitoring
+     */
+    private void startMonitoring() {
+        try {
+            LOGGER.info("Starte Monitoring über GUI");
+            monitor.startMonitoring();
+            
+            startButton.setEnabled(false);
+            stopButton.setEnabled(true);
+            refreshButton.setEnabled(false);
+            intervalText.setEnabled(false);
+            
+            updateStatus("Monitoring gestartet...");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Starten des Monitorings", e);
+            showError("Fehler beim Starten", "Monitoring konnte nicht gestartet werden: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Stoppt das Monitoring
+     */
+    private void stopMonitoring() {
+        try {
+            LOGGER.info("Stoppe Monitoring über GUI");
+            monitor.stopMonitoring();
+            
+            startButton.setEnabled(true);
+            stopButton.setEnabled(false);
+            refreshButton.setEnabled(true);
+            intervalText.setEnabled(true);
+            
+            updateStatus("Monitoring gestoppt");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Stoppen des Monitorings", e);
+            showError("Fehler beim Stoppen", "Monitoring konnte nicht gestoppt werden: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Führt manuellen Refresh durch
+     */
+    private void manualRefresh() {
+        try {
+            LOGGER.info("Manueller Refresh über GUI");
+            refreshButton.setEnabled(false);
+            updateStatus("Führe manuellen Refresh durch...");
+            
+            monitor.manualRefresh();
+            
+            // Button nach kurzer Zeit wieder aktivieren
+            display.timerExec(2000, () -> {
+                if (!refreshButton.isDisposed()) {
+                    refreshButton.setEnabled(true);
+                }
+            });
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim manuellen Refresh", e);
+            showError("Fehler beim Refresh", "Manueller Refresh fehlgeschlagen: " + e.getMessage());
+            refreshButton.setEnabled(true);
+        }
+    }
+    
+    /**
+     * Aktualisiert das Intervall
+     */
+    private void updateInterval() {
+        try {
+            String text = intervalText.getText().trim();
+            if (!text.isEmpty()) {
+                int interval = Integer.parseInt(text);
+                if (interval > 0) {
+                    monitor.getConfig().setIntervalHour(interval);
+                    LOGGER.info("Intervall geändert auf: " + interval + " Stunden");
+                }
+            }
+        } catch (NumberFormatException e) {
+            LOGGER.warning("Ungültiges Intervall: " + intervalText.getText());
+        }
+    }
+    
+    /**
+     * Zeigt die Konfiguration an
+     */
+    private void showConfiguration() {
+        // TODO: Konfigurationsdialog implementieren
+        MessageBox box = new MessageBox(shell, SWT.ICON_INFORMATION | SWT.OK);
+        box.setMessage("Konfigurationsdialog wird in zukünftiger Version implementiert.\n\n" +
+                      "Aktuelle Konfiguration:\n" +
+                      "Basis-Pfad: " + monitor.getConfig().getBasePath() + "\n" +
+                      "Favoriten-Datei: " + monitor.getConfig().getFavoritesFile() + "\n" +
+                      "Download-Verzeichnis: " + monitor.getConfig().getDownloadDir() + "\n" +
+                      "Tick-Verzeichnis: " + monitor.getConfig().getTickDir());
+        box.setText("Konfiguration");
+        box.open();
+    }
+    
+    /**
+     * Aktualisiert die Statusanzeige (Thread-sicher)
+     * 
+     * @param status Der neue Status-Text
+     */
+    public void updateStatus(String status) {
+        if (display.isDisposed()) return;
+        
+        display.asyncExec(() -> {
+            if (!statusLabel.isDisposed()) {
+                statusLabel.setText(status);
+                LOGGER.fine("Status aktualisiert: " + status);
+            }
+        });
+    }
+    
+    /**
+     * Aktualisiert Provider-Daten (Thread-sicher)
+     * 
+     * @param signalData Die aktualisierten Signaldaten
+     */
+    public void updateProviderData(SignalData signalData) {
+        if (display.isDisposed()) return;
+        
+        display.asyncExec(() -> {
+            if (providerTable != null) {
+                providerTable.updateProviderData(signalData);
+                updateProviderCount();
+            }
+        });
+    }
+    
+    /**
+     * Aktualisiert Provider-Status (Thread-sicher)
+     * 
+     * @param signalId Die Signal-ID
+     * @param status Der neue Status
+     */
+    public void updateProviderStatus(String signalId, String status) {
+        if (display.isDisposed()) return;
+        
+        display.asyncExec(() -> {
+            if (providerTable != null) {
+                providerTable.updateProviderStatus(signalId, status);
+            }
+        });
+    }
+    
+    /**
+     * Aktualisiert die Anzahl der Provider
+     */
+    private void updateProviderCount() {
+        if (providerTable != null && !countLabel.isDisposed()) {
+            int count = providerTable.getProviderCount();
+            countLabel.setText("Provider: " + count);
+        }
+    }
+    
+    /**
+     * Zeigt eine Fehlermeldung an
+     * 
+     * @param title Der Titel der Fehlermeldung
+     * @param message Die Fehlermeldung
+     */
+    public void showError(String title, String message) {
+        if (display.isDisposed()) return;
+        
+        display.asyncExec(() -> {
+            if (!shell.isDisposed()) {
+                MessageBox box = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
+                box.setText(title);
+                box.setMessage(message);
+                box.open();
+            }
+        });
+    }
+    
+    /**
+     * Zeigt eine Informationsmeldung an
+     * 
+     * @param title Der Titel der Meldung
+     * @param message Die Meldung
+     */
+    public void showInfo(String title, String message) {
+        if (display.isDisposed()) return;
+        
+        display.asyncExec(() -> {
+            if (!shell.isDisposed()) {
+                MessageBox box = new MessageBox(shell, SWT.ICON_INFORMATION | SWT.OK);
+                box.setText(title);
+                box.setMessage(message);
+                box.open();
+            }
+        });
+    }
+    
+    /**
+     * Öffnet das GUI-Fenster und startet die Event-Loop
+     */
+    public void open() {
+        shell.open();
+        
+        LOGGER.info("MqlRealMonitor GUI geöffnet");
+        updateStatus("MqlRealMonitor bereit");
+        
+        // Event-Loop
+        while (!shell.isDisposed()) {
+            if (!display.readAndDispatch()) {
+                display.sleep();
+            }
+        }
+        
+        disposeResources();
+    }
+    
+    /**
+     * Schließt das GUI-Fenster
+     */
+    public void dispose() {
+        if (!shell.isDisposed()) {
+            shell.close();
+        }
+    }
+    
+    /**
+     * Gibt alle Ressourcen frei
+     */
+    private void disposeResources() {
+        if (greenColor != null && !greenColor.isDisposed()) greenColor.dispose();
+        if (redColor != null && !redColor.isDisposed()) redColor.dispose();
+        if (grayColor != null && !grayColor.isDisposed()) grayColor.dispose();
+        if (boldFont != null && !boldFont.isDisposed()) boldFont.dispose();
+        if (statusFont != null && !statusFont.isDisposed()) statusFont.dispose();
+        
+        if (!display.isDisposed()) {
+            display.dispose();
+        }
+        
+        LOGGER.info("GUI-Ressourcen freigegeben");
+    }
+    
+    // Getter für andere Klassen
+    
+    public Display getDisplay() {
+        return display;
+    }
+    
+    public Shell getShell() {
+        return shell;
+    }
+    
+    public Color getGreenColor() {
+        return greenColor;
+    }
+    
+    public Color getRedColor() {
+        return redColor;
+    }
+    
+    public Color getGrayColor() {
+        return grayColor;
+    }
+    
+    public Font getBoldFont() {
+        return boldFont;
+    }
+    
+    public MqlRealMonitor getMonitor() {
+        return monitor;
+    }
+}
