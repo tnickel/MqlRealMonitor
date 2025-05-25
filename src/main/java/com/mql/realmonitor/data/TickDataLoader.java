@@ -215,6 +215,7 @@ public class TickDataLoader {
     /**
      * Parst eine einzelne Tick-Zeile
      * Format: 24.05.2025,15:13:36,2000.00,-479.54
+     * Oder fehlerhaftes Format: 24.05.2025,15:13:36,53745,30,0,00 (6 Teile)
      * 
      * @param line Die zu parsende Zeile
      * @param lineNumber Die Zeilennummer für Fehlerbehandlung
@@ -224,26 +225,68 @@ public class TickDataLoader {
         try {
             String[] parts = line.split(",");
             
-            if (parts.length != 4) {
-                LOGGER.warning("Ungültiges Tick-Format in Zeile " + lineNumber + ": " + line);
+            // Flexibles Parsing für verschiedene Formate
+            if (parts.length == 4) {
+                // Normales Format: Datum,Zeit,Equity,FloatingProfit
+                String dateStr = parts[0].trim();
+                String timeStr = parts[1].trim();
+                LocalDateTime timestamp = LocalDateTime.parse(dateStr + " " + timeStr, DATETIME_FORMATTER);
+                
+                // Equity und Floating Profit parsen
+                double equity = parseNumber(parts[2].trim());
+                double floatingProfit = parseNumber(parts[3].trim());
+                
+                return new TickData(timestamp, equity, floatingProfit);
+                
+            } else if (parts.length == 6) {
+                // Fehlerhaftes Format mit Tausendertrennzeichen: 
+                // 24.05.2025,15:22:13,53745,30,0,00
+                String dateStr = parts[0].trim();
+                String timeStr = parts[1].trim();
+                LocalDateTime timestamp = LocalDateTime.parse(dateStr + " " + timeStr, DATETIME_FORMATTER);
+                
+                // Equity zusammensetzen (parts[2] + "." + parts[3])
+                String equityStr = parts[2].trim() + "." + parts[3].trim();
+                double equity = parseNumber(equityStr);
+                
+                // Floating Profit zusammensetzen (parts[4] + "." + parts[5])
+                String floatingStr = parts[4].trim() + "." + parts[5].trim();
+                double floatingProfit = parseNumber(floatingStr);
+                
+                LOGGER.fine("Konvertiere fehlerhaftes Format in Zeile " + lineNumber + 
+                           ": Equity=" + equity + ", Floating=" + floatingProfit);
+                
+                return new TickData(timestamp, equity, floatingProfit);
+                
+            } else {
+                LOGGER.warning("Ungültiges Tick-Format in Zeile " + lineNumber + 
+                              ": " + line + " (erwartet 4 oder 6 Teile, gefunden: " + parts.length + ")");
                 return null;
             }
-            
-            // Datum und Zeit parsen
-            String dateStr = parts[0].trim();
-            String timeStr = parts[1].trim();
-            LocalDateTime timestamp = LocalDateTime.parse(dateStr + " " + timeStr, DATETIME_FORMATTER);
-            
-            // Equity und Floating Profit parsen
-            double equity = Double.parseDouble(parts[2].trim());
-            double floatingProfit = Double.parseDouble(parts[3].trim());
-            
-            return new TickData(timestamp, equity, floatingProfit);
             
         } catch (Exception e) {
             LOGGER.warning("Fehler beim Parsen von Zeile " + lineNumber + ": " + line + " -> " + e.getMessage());
             return null;
         }
+    }
+    
+    /**
+     * Hilfsmethode zum robusten Parsen von Zahlen
+     * 
+     * @param numberStr Der zu parsende String
+     * @return Die geparste Zahl
+     */
+    private static double parseNumber(String numberStr) throws NumberFormatException {
+        if (numberStr == null || numberStr.trim().isEmpty()) {
+            throw new NumberFormatException("Leerer String");
+        }
+        
+        // Entferne alle Leerzeichen und ersetze Komma durch Punkt
+        String cleaned = numberStr.trim()
+                                 .replaceAll("\\s+", "")
+                                 .replace(",", ".");
+        
+        return Double.parseDouble(cleaned);
     }
     
     /**

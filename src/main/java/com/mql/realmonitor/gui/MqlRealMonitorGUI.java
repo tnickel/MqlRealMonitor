@@ -13,6 +13,7 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.*;
 
+import java.util.Map;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -133,7 +134,7 @@ public class MqlRealMonitorGUI {
     private void createToolbar() {
         Composite toolbar = new Composite(shell, SWT.NONE);
         toolbar.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
-        toolbar.setLayout(new GridLayout(8, false));
+        toolbar.setLayout(new GridLayout(10, false));
         
         // Start Button
         startButton = new Button(toolbar, SWT.PUSH);
@@ -183,6 +184,21 @@ public class MqlRealMonitorGUI {
         intervalText.setText(String.valueOf(monitor.getConfig().getIntervalHour()));
         intervalText.setLayoutData(new GridData(40, SWT.DEFAULT));
         intervalText.addModifyListener(e -> updateInterval());
+        
+        // Separator
+        new Label(toolbar, SWT.SEPARATOR | SWT.VERTICAL)
+            .setLayoutData(new GridData(SWT.LEFT, SWT.FILL, false, false));
+        
+        // Repair Button - NEU
+        Button repairButton = new Button(toolbar, SWT.PUSH);
+        repairButton.setText("Tick-Dateien reparieren");
+        repairButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        repairButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                repairTickFiles();
+            }
+        });
         
         // Separator
         new Label(toolbar, SWT.SEPARATOR | SWT.VERTICAL)
@@ -332,6 +348,60 @@ public class MqlRealMonitorGUI {
                       "Tick-Verzeichnis: " + monitor.getConfig().getTickDir());
         box.setText("Konfiguration");
         box.open();
+    }
+    
+    /**
+     * Repariert fehlerhafte Tick-Dateien
+     */
+    private void repairTickFiles() {
+        MessageBox confirmBox = new MessageBox(shell, SWT.ICON_QUESTION | SWT.YES | SWT.NO);
+        confirmBox.setText("Tick-Dateien reparieren");
+        confirmBox.setMessage("Diese Funktion repariert Tick-Dateien mit fehlerhaftem Format.\n" +
+                             "Dateien mit Format '53745,30,0,00' werden zu '53745.30,0.00' korrigiert.\n\n" +
+                             "Es wird automatisch ein Backup erstellt.\n\n" +
+                             "Möchten Sie fortfahren?");
+        
+        if (confirmBox.open() == SWT.YES) {
+            try {
+                updateStatus("Repariere Tick-Dateien...");
+                
+                // Reparatur in separatem Thread ausführen
+                new Thread(() -> {
+                    try {
+                        com.mql.realmonitor.tickdata.TickDataWriter writer = 
+                            new com.mql.realmonitor.tickdata.TickDataWriter(monitor.getConfig());
+                        
+                        Map<String, Boolean> results = writer.repairAllTickFiles();
+                        
+                        long successCount = results.values().stream().filter(v -> v).count();
+                        long failedCount = results.size() - successCount;
+                        
+                        String message = String.format("Reparatur abgeschlossen!\n\n" +
+                                                     "Gesamt: %d Dateien\n" +
+                                                     "Erfolgreich: %d\n" +
+                                                     "Fehlgeschlagen: %d",
+                                                     results.size(), successCount, failedCount);
+                        
+                        display.asyncExec(() -> {
+                            updateStatus("Tick-Dateien repariert");
+                            showInfo("Reparatur abgeschlossen", message);
+                        });
+                        
+                    } catch (Exception e) {
+                        LOGGER.log(Level.SEVERE, "Fehler bei der Reparatur", e);
+                        display.asyncExec(() -> {
+                            updateStatus("Reparatur fehlgeschlagen");
+                            showError("Reparatur fehlgeschlagen", 
+                                     "Fehler bei der Reparatur der Tick-Dateien:\n" + e.getMessage());
+                        });
+                    }
+                }).start();
+                
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "Fehler beim Starten der Reparatur", e);
+                showError("Fehler", "Konnte Reparatur nicht starten: " + e.getMessage());
+            }
+        }
     }
     
     /**

@@ -2,16 +2,14 @@ package com.mql.realmonitor.gui;
 
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
-import java.awt.Button;
 import java.awt.Color;
-import java.awt.Composite;
 import java.awt.Dimension;
 import java.awt.Frame;
-import java.awt.Label;
 import java.time.ZoneId;
 import java.util.Date;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.swing.SwingUtilities;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.awt.SWT_AWT;
@@ -20,10 +18,7 @@ import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
-import org.eclipse.swt.widgets.Group;
-import org.eclipse.swt.widgets.MessageBox;
-import org.eclipse.swt.widgets.Shell;
-import org.eclipse.swt.widgets.Text;
+import org.eclipse.swt.widgets.*;
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.ChartPanel;
 import org.jfree.chart.JFreeChart;
@@ -68,6 +63,7 @@ public class TickChartWindow {
     
     // Parent GUI für Callbacks
     private final MqlRealMonitorGUI parentGui;
+    private final Display display;
     
     /**
      * Konstruktor
@@ -82,6 +78,7 @@ public class TickChartWindow {
     public TickChartWindow(Shell parent, MqlRealMonitorGUI parentGui, String signalId, 
                           String providerName, SignalData signalData, String tickFilePath) {
         this.parentGui = parentGui;
+        this.display = parent.getDisplay();
         this.signalId = signalId;
         this.providerName = providerName;
         this.signalData = signalData;
@@ -174,12 +171,12 @@ public class TickChartWindow {
         chartComposite = new Composite(chartGroup, SWT.EMBEDDED | SWT.NO_BACKGROUND);
         chartComposite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         
+        // Chart erstellen BEVOR Frame erstellt wird
+        createChart();
+        
         // AWT Frame für JFreeChart
         Frame chartFrame = SWT_AWT.new_Frame(chartComposite);
         chartFrame.setLayout(new BorderLayout());
-        
-        // Chart erstellen
-        createChart();
         
         // ChartPanel hinzufügen
         chartPanel = new ChartPanel(chart);
@@ -188,8 +185,16 @@ public class TickChartWindow {
         chartPanel.setRangeZoomable(true);
         chartPanel.setDomainZoomable(true);
         
+        // Explizite Hintergrundfarbe für ChartPanel
+        chartPanel.setBackground(java.awt.Color.WHITE);
+        
         chartFrame.add(chartPanel, BorderLayout.CENTER);
+        
+        // Frame explizit sichtbar machen
+        chartFrame.setVisible(true);
         chartFrame.validate();
+        
+        LOGGER.info("Chart-Bereich erstellt mit SWT-AWT Bridge");
     }
     
     /**
@@ -220,6 +225,9 @@ public class TickChartWindow {
         
         // Chart konfigurieren
         configureChart();
+        
+        // Debug: Chart-Info ausgeben
+        LOGGER.info("Chart erstellt für Signal " + signalId + " mit Provider " + providerName);
     }
     
     /**
@@ -231,29 +239,38 @@ public class TickChartWindow {
         
         // Linien-Renderer konfigurieren
         renderer.setSeriesLinesVisible(0, true);  // Equity
-        renderer.setSeriesShapesVisible(0, false);
+        renderer.setSeriesShapesVisible(0, true); // Punkte für Equity anzeigen
         renderer.setSeriesLinesVisible(1, true);  // Floating Profit
-        renderer.setSeriesShapesVisible(1, false);
+        renderer.setSeriesShapesVisible(1, true); // Punkte für Floating anzeigen
         renderer.setSeriesLinesVisible(2, true);  // Total Value
-        renderer.setSeriesShapesVisible(2, false);
+        renderer.setSeriesShapesVisible(2, true); // Punkte auch für Total anzeigen
         
         // Farben setzen
-        renderer.setSeriesPaint(0, Color.YELLOW);      // Equity in Gelb
-        renderer.setSeriesPaint(1, Color.RED);         // Floating Profit in Rot
-        renderer.setSeriesPaint(2, Color.GREEN);       // Gesamtwert in Grün
+        renderer.setSeriesPaint(0, new Color(255, 200, 0));  // Equity in Gelb
+        renderer.setSeriesPaint(1, Color.RED);               // Floating Profit in Rot
+        renderer.setSeriesPaint(2, new Color(0, 200, 0));    // Gesamtwert in Grün
         
         // Linienstärke
-        renderer.setSeriesStroke(0, new BasicStroke(2.0f));
-        renderer.setSeriesStroke(1, new BasicStroke(2.0f));
-        renderer.setSeriesStroke(2, new BasicStroke(2.0f));
+        renderer.setSeriesStroke(0, new BasicStroke(3.0f));
+        renderer.setSeriesStroke(1, new BasicStroke(3.0f));
+        renderer.setSeriesStroke(2, new BasicStroke(2.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 
+                                                    1.0f, new float[]{5.0f, 5.0f}, 0.0f)); // Gestrichelt
         
         plot.setRenderer(renderer);
         
         // Hintergrund-Farben
-        chart.setBackgroundPaint(Color.WHITE);
+        chart.setBackgroundPaint(new Color(240, 240, 240)); // Hellgrau
         plot.setBackgroundPaint(Color.WHITE);
         plot.setDomainGridlinePaint(Color.LIGHT_GRAY);
         plot.setRangeGridlinePaint(Color.LIGHT_GRAY);
+        
+        // Grid sichtbar machen
+        plot.setDomainGridlinesVisible(true);
+        plot.setRangeGridlinesVisible(true);
+        
+        // Achsen-Labels
+        plot.getRangeAxis().setLabel("Wert (HKD)");
+        plot.getDomainAxis().setLabel("Zeit");
         
         LOGGER.info("Chart konfiguriert mit 3 Datenreihen");
     }
@@ -320,11 +337,26 @@ public class TickChartWindow {
                 return;
             }
             
-            // Chart-Daten aktualisieren
-            updateChartData();
+            // Chart-Daten im AWT Event Thread aktualisieren
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                try {
+                    // Chart-Daten aktualisieren
+                    updateChartData();
+                    
+                    // Chart-Komponente neu validieren
+                    if (chartPanel != null) {
+                        chartPanel.revalidate();
+                        chartPanel.repaint();
+                    }
+                } catch (Exception e) {
+                    LOGGER.log(Level.SEVERE, "Fehler beim Aktualisieren des Charts", e);
+                }
+            });
             
-            // Info-Panel aktualisieren
-            updateInfoPanel();
+            // Info-Panel aktualisieren (im SWT Thread)
+            display.asyncExec(() -> {
+                updateInfoPanel();
+            });
             
             LOGGER.info("Tick-Daten geladen und angezeigt: " + tickDataSet.getTickCount() + " Ticks");
             
@@ -347,26 +379,92 @@ public class TickChartWindow {
         floatingProfitSeries.clear();
         totalValueSeries.clear();
         
+        int addedCount = 0;
+        
         // Tick-Daten zu den Serien hinzufügen
         for (TickDataLoader.TickData tick : tickDataSet.getTicks()) {
             Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
             Second second = new Second(javaDate);
             
-            equitySeries.add(second, tick.getEquity());
-            floatingProfitSeries.add(second, tick.getFloatingProfit());
-            totalValueSeries.add(second, tick.getTotalValue());
+            try {
+                equitySeries.add(second, tick.getEquity());
+                floatingProfitSeries.add(second, tick.getFloatingProfit());
+                totalValueSeries.add(second, tick.getTotalValue());
+                addedCount++;
+                
+                // Debug ersten und letzten Wert
+                if (addedCount == 1 || addedCount == tickDataSet.getTickCount()) {
+                    LOGGER.info("Tick " + addedCount + ": Zeit=" + tick.getTimestamp() + 
+                               ", Equity=" + tick.getEquity() + 
+                               ", Floating=" + tick.getFloatingProfit() + 
+                               ", Total=" + tick.getTotalValue());
+                }
+            } catch (Exception e) {
+                LOGGER.warning("Fehler beim Hinzufügen von Tick-Daten: " + e.getMessage());
+            }
         }
         
         // Chart-Titel aktualisieren
         chart.setTitle("Tick Daten - " + signalId + " (" + providerName + ") - " + 
                       tickDataSet.getTickCount() + " Ticks");
         
-        // Chart neu zeichnen
+        // Y-Achsen-Bereich anpassen bei konstanten Werten
+        adjustYAxisRange();
+        
+        // Chart explizit neu zeichnen
+        chart.fireChartChanged();
+        
+        // Chart-Panel neu zeichnen
         if (chartPanel != null) {
+            chartPanel.revalidate();
             chartPanel.repaint();
         }
         
-        LOGGER.info("Chart-Daten aktualisiert mit " + tickDataSet.getTickCount() + " Ticks");
+        LOGGER.info("Chart-Daten aktualisiert: " + addedCount + " von " + 
+                   tickDataSet.getTickCount() + " Ticks hinzugefügt");
+    }
+    
+    /**
+     * Passt den Y-Achsen-Bereich an, besonders bei konstanten Werten
+     */
+    private void adjustYAxisRange() {
+        XYPlot plot = chart.getXYPlot();
+        
+        // Min/Max-Werte ermitteln
+        double minValue = Double.MAX_VALUE;
+        double maxValue = Double.MIN_VALUE;
+        
+        if (tickDataSet != null && tickDataSet.getTickCount() > 0) {
+            // Berücksichtige alle drei Datenreihen
+            minValue = Math.min(minValue, tickDataSet.getMinEquity());
+            minValue = Math.min(minValue, tickDataSet.getMinFloatingProfit());
+            minValue = Math.min(minValue, tickDataSet.getMinTotalValue());
+            
+            maxValue = Math.max(maxValue, tickDataSet.getMaxEquity());
+            maxValue = Math.max(maxValue, tickDataSet.getMaxFloatingProfit());
+            maxValue = Math.max(maxValue, tickDataSet.getMaxTotalValue());
+            
+            LOGGER.info("Chart Y-Achse: Min=" + minValue + ", Max=" + maxValue);
+        }
+        
+        // Immer den vollen Bereich anzeigen, inklusive 0
+        if (minValue > 0) {
+            minValue = 0; // Stelle sicher, dass 0 im Bereich ist
+        }
+        
+        // Füge immer etwas Padding hinzu
+        double range = maxValue - minValue;
+        double padding = Math.max(range * 0.05, 100); // 5% oder mindestens 100
+        
+        plot.getRangeAxis().setRange(minValue - padding, maxValue + padding);
+        LOGGER.info("Y-Achse eingestellt auf: " + (minValue - padding) + " bis " + (maxValue + padding));
+        
+        // Auto-Range für X-Achse (Zeit)
+        plot.getDomainAxis().setAutoRange(true);
+        
+        // Stelle sicher, dass die Achsen sichtbar sind
+        plot.getRangeAxis().setVisible(true);
+        plot.getDomainAxis().setVisible(true);
     }
     
     /**
@@ -410,6 +508,16 @@ public class TickChartWindow {
             details.append("Equity: ").append(String.format("%.2f", latestTick.getEquity())).append("\n");
             details.append("Floating Profit: ").append(String.format("%.2f", latestTick.getFloatingProfit())).append("\n");
             details.append("Gesamtwert: ").append(String.format("%.2f", latestTick.getTotalValue())).append("\n");
+            
+            // Hinweis bei konstanten Werten
+            if (tickDataSet.getMaxEquity() == tickDataSet.getMinEquity() && 
+                tickDataSet.getMaxFloatingProfit() == tickDataSet.getMinFloatingProfit()) {
+                details.append("\n=== Hinweis ===\n");
+                details.append("Alle Werte sind konstant. Die Linien werden als horizontale Linien angezeigt.\n");
+                details.append("Gelbe Linie (Equity): ").append(String.format("%.2f", tickDataSet.getMaxEquity())).append("\n");
+                details.append("Rote Linie (Floating): ").append(String.format("%.2f", tickDataSet.getMaxFloatingProfit())).append("\n");
+                details.append("Grüne Linie (Gesamt): ").append(String.format("%.2f", tickDataSet.getMaxTotalValue())).append("\n");
+            }
         } else {
             details.append("Keine Tick-Daten verfügbar.\n");
             details.append("Datei: ").append(tickFilePath).append("\n");
@@ -432,10 +540,54 @@ public class TickChartWindow {
                            "Erwartetes Format: Datum,Uhrzeit,Equity,FloatingProfit\n" +
                            "Beispiel: 24.05.2025,15:13:36,2000.00,-479.54");
         
-        // Chart-Titel aktualisieren
-        chart.setTitle("Keine Tick-Daten verfügbar - " + signalId);
+        // Zeige ein Test-Chart mit Dummy-Daten
+        createTestChart();
         
         LOGGER.warning("Keine Tick-Daten verfügbar für Signal: " + signalId);
+    }
+    
+    /**
+     * Erstellt ein Test-Chart mit Dummy-Daten
+     */
+    private void createTestChart() {
+        // Füge einige Test-Datenpunkte hinzu
+        equitySeries.clear();
+        floatingProfitSeries.clear();
+        totalValueSeries.clear();
+        
+        try {
+            Date now = new Date();
+            for (int i = 0; i < 10; i++) {
+                Second second = new Second(new Date(now.getTime() - (9 - i) * 60000)); // 1 Minute Intervalle
+                
+                double equity = 50000 + i * 100;
+                double floating = -500 + i * 50;
+                double total = equity + floating;
+                
+                equitySeries.add(second, equity);
+                floatingProfitSeries.add(second, floating);
+                totalValueSeries.add(second, total);
+            }
+            
+            chart.setTitle("Test-Chart (Keine echten Daten) - " + signalId);
+            
+            // Y-Achse anpassen
+            XYPlot plot = chart.getXYPlot();
+            plot.getRangeAxis().setRange(-1000, 51000);
+            
+            // Chart neu zeichnen
+            chart.fireChartChanged();
+            
+            if (chartPanel != null) {
+                chartPanel.revalidate();
+                chartPanel.repaint();
+            }
+            
+            LOGGER.info("Test-Chart mit Dummy-Daten erstellt");
+            
+        } catch (Exception e) {
+            LOGGER.warning("Fehler beim Erstellen des Test-Charts: " + e.getMessage());
+        }
     }
     
     /**
@@ -466,7 +618,16 @@ public class TickChartWindow {
      */
     private void refreshData() {
         LOGGER.info("Tick-Daten werden aktualisiert für Signal: " + signalId);
-        loadAndDisplayData();
+        
+        // Test-Chart erstellen zum Debugging
+        SwingUtilities.invokeLater(() -> {
+            createTestChart();
+        });
+        
+        // Dann echte Daten laden
+        display.timerExec(500, () -> {
+            loadAndDisplayData();
+        });
     }
     
     /**
@@ -486,6 +647,22 @@ public class TickChartWindow {
     public void open() {
         shell.open();
         LOGGER.info("Tick Chart Fenster geöffnet für Signal: " + signalId);
+        
+        // Force refresh nach dem Öffnen
+        display.asyncExec(() -> {
+            if (chartPanel != null && !shell.isDisposed()) {
+                chartPanel.revalidate();
+                chartPanel.repaint();
+                
+                // Zusätzlicher Refresh nach kurzer Verzögerung
+                display.timerExec(100, () -> {
+                    if (chartPanel != null && !shell.isDisposed()) {
+                        chartPanel.revalidate();
+                        chartPanel.repaint();
+                    }
+                });
+            }
+        });
     }
     
     /**

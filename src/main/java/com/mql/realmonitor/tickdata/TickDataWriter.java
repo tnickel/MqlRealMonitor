@@ -10,7 +10,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -399,6 +401,127 @@ public class TickDataWriter {
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler beim Neuschreiben der Tick-Datei für Signal " + signalId, e);
         }
+    }
+    
+    /**
+     * Repariert eine Tick-Datei mit fehlerhaftem Format
+     * Konvertiert Format von "53745,30,0,00" zu "53745.30,0.00"
+     * 
+     * @param signalId Die Signal-ID
+     * @return true wenn erfolgreich repariert, false bei Fehlern
+     */
+    public boolean repairTickFile(String signalId) {
+        String tickFilePath = config.getTickFilePath(signalId);
+        Path filePath = Paths.get(tickFilePath);
+        
+        if (!Files.exists(filePath)) {
+            LOGGER.warning("Tick-Datei existiert nicht: " + tickFilePath);
+            return false;
+        }
+        
+        try {
+            LOGGER.info("Repariere Tick-Datei für Signal: " + signalId);
+            
+            // Backup erstellen
+            Path backupPath = Paths.get(tickFilePath + ".backup_" + System.currentTimeMillis());
+            Files.copy(filePath, backupPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            LOGGER.info("Backup erstellt: " + backupPath);
+            
+            // Datei lesen
+            List<String> lines = Files.readAllLines(filePath, StandardCharsets.UTF_8);
+            List<String> repairedLines = new ArrayList<>();
+            
+            int repairedCount = 0;
+            
+            for (String line : lines) {
+                // Kommentare und leere Zeilen unverändert übernehmen
+                if (line.trim().isEmpty() || line.trim().startsWith("#")) {
+                    repairedLines.add(line);
+                    continue;
+                }
+                
+                String[] parts = line.split(",");
+                
+                if (parts.length == 6) {
+                    // Fehlerhaftes Format: 24.05.2025,15:22:13,53745,30,0,00
+                    // Repariere zu: 24.05.2025,15:22:13,53745.30,0.00
+                    String repaired = String.format("%s,%s,%s.%s,%s.%s",
+                                                  parts[0].trim(),  // Datum
+                                                  parts[1].trim(),  // Zeit
+                                                  parts[2].trim(),  // Equity Ganzzahl
+                                                  parts[3].trim(),  // Equity Nachkomma
+                                                  parts[4].trim(),  // Floating Ganzzahl
+                                                  parts[5].trim()); // Floating Nachkomma
+                    repairedLines.add(repaired);
+                    repairedCount++;
+                    LOGGER.fine("Repariert: " + line + " -> " + repaired);
+                } else if (parts.length == 4) {
+                    // Format bereits korrekt
+                    repairedLines.add(line);
+                } else {
+                    LOGGER.warning("Unbekanntes Format, überspringe Zeile: " + line);
+                    repairedLines.add(line);
+                }
+            }
+            
+            if (repairedCount > 0) {
+                // Reparierte Datei schreiben
+                Files.write(filePath, repairedLines, StandardCharsets.UTF_8);
+                LOGGER.info("Tick-Datei erfolgreich repariert: " + repairedCount + " Zeilen korrigiert");
+                return true;
+            } else {
+                LOGGER.info("Keine Reparatur notwendig für: " + tickFilePath);
+                // Backup löschen wenn keine Änderungen
+                Files.delete(backupPath);
+                return true;
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Reparieren der Tick-Datei: " + tickFilePath, e);
+            return false;
+        }
+    }
+    
+    /**
+     * Repariert alle Tick-Dateien im Tick-Verzeichnis
+     * 
+     * @return Map mit Signal-ID und Reparatur-Status
+     */
+    public Map<String, Boolean> repairAllTickFiles() {
+        Map<String, Boolean> results = new HashMap<>();
+        
+        try {
+            Path tickDir = Paths.get(config.getTickDir());
+            
+            if (!Files.exists(tickDir)) {
+                LOGGER.warning("Tick-Verzeichnis existiert nicht: " + tickDir);
+                return results;
+            }
+            
+            LOGGER.info("Starte Reparatur aller Tick-Dateien in: " + tickDir);
+            
+            try (var stream = Files.list(tickDir)) {
+                List<Path> tickFiles = stream
+                    .filter(path -> path.toString().toLowerCase().endsWith(".txt"))
+                    .collect(java.util.stream.Collectors.toList());
+                
+                for (Path tickFile : tickFiles) {
+                    String fileName = tickFile.getFileName().toString();
+                    String signalId = fileName.substring(0, fileName.lastIndexOf('.'));
+                    
+                    boolean success = repairTickFile(signalId);
+                    results.put(signalId, success);
+                }
+            }
+            
+            long successCount = results.values().stream().filter(v -> v).count();
+            LOGGER.info("Reparatur abgeschlossen: " + successCount + "/" + results.size() + " erfolgreich");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Reparieren aller Tick-Dateien", e);
+        }
+        
+        return results;
     }
     
     /**

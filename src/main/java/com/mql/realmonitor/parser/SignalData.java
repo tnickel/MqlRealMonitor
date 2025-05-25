@@ -2,6 +2,7 @@ package com.mql.realmonitor.parser;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.Objects;
 
 /**
@@ -161,7 +162,8 @@ public class SignalData {
      * @return CSV-formatierte Zeile für Tick-Datei
      */
     public String toTickFileEntry() {
-        return String.format("%.2f,%.2f", equity, floatingProfit);
+        // Verwende Locale.US um sicherzustellen, dass Punkt als Dezimaltrennzeichen verwendet wird
+        return String.format(Locale.US, "%.2f,%.2f", equity, floatingProfit);
     }
     
     /**
