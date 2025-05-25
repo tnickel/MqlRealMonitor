@@ -1,26 +1,27 @@
 package com.mql.realmonitor.gui;
 
 import java.awt.BasicStroke;
-import java.awt.BorderLayout;
 import java.awt.Color;
-import java.awt.Dimension;
-import java.awt.Frame;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.time.ZoneId;
 import java.util.Date;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.swing.SwingUtilities;
 
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.awt.SWT_AWT;
+import org.eclipse.swt.events.PaintEvent;
+import org.eclipse.swt.events.PaintListener;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
+import org.eclipse.swt.graphics.GC;
+import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.graphics.ImageData;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.*;
 import org.jfree.chart.ChartFactory;
-import org.jfree.chart.ChartPanel;
 import org.jfree.chart.JFreeChart;
 import org.jfree.chart.plot.XYPlot;
 import org.jfree.chart.renderer.xy.XYLineAndShapeRenderer;
@@ -32,8 +33,14 @@ import com.mql.realmonitor.data.TickDataLoader;
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * Fenster für die graphische Anzeige der Tick-Daten
- * Zeigt Equity-Kurve in Gelb und Floating Profit in Rot
+ * OHNE SWT-AWT BRIDGE: JFreeChart als Image-Rendering in SWT Canvas
+ * 
+ * VORTEILE:
+ * - Keine Threading-Konflikte
+ * - Keine Bridge-Probleme
+ * - Stabiles Rendering
+ * - Vollständige SWT-Integration
+ * - Bessere Performance
  */
 public class TickChartWindow {
     
@@ -41,14 +48,16 @@ public class TickChartWindow {
     
     // UI Komponenten
     private Shell shell;
-    private Composite chartComposite;
+    private Canvas chartCanvas;
     private Label infoLabel;
     private Text detailsText;
     private Button refreshButton;
     private Button closeButton;
+    private Button zoomInButton;
+    private Button zoomOutButton;
+    private Button resetZoomButton;
     
-    // Chart Komponenten
-    private ChartPanel chartPanel;
+    // Chart Komponenten (nur für Rendering, nicht für Display)
     private JFreeChart chart;
     private TimeSeries equitySeries;
     private TimeSeries floatingProfitSeries;
@@ -65,15 +74,18 @@ public class TickChartWindow {
     private final MqlRealMonitorGUI parentGui;
     private final Display display;
     
+    // Chart-Image Verwaltung
+    private Image chartImage;
+    private int chartWidth = 800;
+    private int chartHeight = 400;
+    private double zoomFactor = 1.0;
+    
+    // Status-Flags
+    private volatile boolean isDataLoaded = false;
+    private volatile boolean isWindowClosed = false;
+    
     /**
      * Konstruktor
-     * 
-     * @param parent Das Parent-Shell
-     * @param parentGui Die Parent-GUI für Callbacks
-     * @param signalId Die Signal-ID
-     * @param providerName Der Provider-Name
-     * @param signalData Die aktuellen Signal-Daten
-     * @param tickFilePath Pfad zur Tick-Datei
      */
     public TickChartWindow(Shell parent, MqlRealMonitorGUI parentGui, String signalId, 
                           String providerName, SignalData signalData, String tickFilePath) {
@@ -84,14 +96,15 @@ public class TickChartWindow {
         this.signalData = signalData;
         this.tickFilePath = tickFilePath;
         
+        LOGGER.info("Erstelle TickChartWindow OHNE Bridge für Signal: " + signalId + " (" + providerName + ")");
+        
         createWindow(parent);
-        loadAndDisplayData();
+        createChart();
+        loadDataAsync();
     }
     
     /**
      * Erstellt das Hauptfenster
-     * 
-     * @param parent Das Parent-Shell
      */
     private void createWindow(Shell parent) {
         shell = new Shell(parent, SWT.SHELL_TRIM | SWT.MODELESS);
@@ -105,8 +118,8 @@ public class TickChartWindow {
         // Info-Panel erstellen
         createInfoPanel();
         
-        // Chart-Bereich erstellen
-        createChartArea();
+        // Chart-Canvas erstellen (KEIN AWT!)
+        createChartCanvas();
         
         // Button-Panel erstellen
         createButtonPanel();
@@ -114,13 +127,11 @@ public class TickChartWindow {
         // Event Handler
         setupEventHandlers();
         
-        LOGGER.info("Tick Chart Fenster erstellt für Signal: " + signalId);
+        LOGGER.info("TickChartWindow UI erstellt (OHNE Bridge) für Signal: " + signalId);
     }
     
     /**
      * Zentriert das Fenster relativ zum Parent
-     * 
-     * @param parent Das Parent-Shell
      */
     private void centerWindow(Shell parent) {
         Point parentSize = parent.getSize();
@@ -155,50 +166,138 @@ public class TickChartWindow {
         detailsData.heightHint = 80;
         detailsText.setLayoutData(detailsData);
         
-        updateInfoPanel();
+        // Initialer Info-Text
+        updateInfoPanelInitial();
     }
     
     /**
-     * Erstellt den Chart-Bereich
+     * KERN-INNOVATION: Chart-Canvas OHNE SWT-AWT Bridge
      */
-    private void createChartArea() {
+    private void createChartCanvas() {
         Group chartGroup = new Group(shell, SWT.NONE);
         chartGroup.setText("Tick Data Chart");
         chartGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         chartGroup.setLayout(new GridLayout(1, false));
         
-        // SWT-AWT Bridge für JFreeChart
-        chartComposite = new Composite(chartGroup, SWT.EMBEDDED | SWT.NO_BACKGROUND);
-        chartComposite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        // Reiner SWT Canvas für Chart-Anzeige
+        chartCanvas = new Canvas(chartGroup, SWT.BORDER | SWT.DOUBLE_BUFFERED);
+        chartCanvas.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        chartCanvas.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
         
-        // Chart erstellen BEVOR Frame erstellt wird
-        createChart();
+        // Paint-Listener: Zeichnet das Chart-Image
+        chartCanvas.addPaintListener(new PaintListener() {
+            @Override
+            public void paintControl(PaintEvent e) {
+                paintChart(e.gc);
+            }
+        });
         
-        // AWT Frame für JFreeChart
-        Frame chartFrame = SWT_AWT.new_Frame(chartComposite);
-        chartFrame.setLayout(new BorderLayout());
+        // Resize-Listener: Chart bei Größenänderung neu rendern
+        chartCanvas.addListener(SWT.Resize, event -> {
+            Point size = chartCanvas.getSize();
+            if (size.x > 0 && size.y > 0) {
+                chartWidth = size.x;
+                chartHeight = size.y;
+                LOGGER.info("Canvas Größe geändert: " + chartWidth + "x" + chartHeight);
+                renderChartToImage();
+            }
+        });
         
-        // ChartPanel hinzufügen
-        chartPanel = new ChartPanel(chart);
-        chartPanel.setPreferredSize(new Dimension(800, 400));
-        chartPanel.setMouseWheelEnabled(true);
-        chartPanel.setRangeZoomable(true);
-        chartPanel.setDomainZoomable(true);
-        
-        // Explizite Hintergrundfarbe für ChartPanel
-        chartPanel.setBackground(java.awt.Color.WHITE);
-        
-        chartFrame.add(chartPanel, BorderLayout.CENTER);
-        
-        // Frame explizit sichtbar machen
-        chartFrame.setVisible(true);
-        chartFrame.validate();
-        
-        LOGGER.info("Chart-Bereich erstellt mit SWT-AWT Bridge");
+        LOGGER.info("Chart-Canvas erstellt (SWT-only, keine Bridge)");
     }
     
     /**
-     * Erstellt das JFreeChart
+     * Erstellt das Button-Panel mit Zoom-Funktionen
+     */
+    private void createButtonPanel() {
+        Composite buttonComposite = new Composite(shell, SWT.NONE);
+        buttonComposite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
+        buttonComposite.setLayout(new GridLayout(6, false));
+        
+        // Refresh-Button
+        refreshButton = new Button(buttonComposite, SWT.PUSH);
+        refreshButton.setText("Aktualisieren");
+        refreshButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        
+        // Zoom-Buttons
+        zoomInButton = new Button(buttonComposite, SWT.PUSH);
+        zoomInButton.setText("Zoom +");
+        zoomInButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        
+        zoomOutButton = new Button(buttonComposite, SWT.PUSH);
+        zoomOutButton.setText("Zoom -");
+        zoomOutButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        
+        resetZoomButton = new Button(buttonComposite, SWT.PUSH);
+        resetZoomButton.setText("Reset Zoom");
+        resetZoomButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        
+        // Spacer
+        Label spacer = new Label(buttonComposite, SWT.NONE);
+        spacer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        
+        // Close-Button
+        closeButton = new Button(buttonComposite, SWT.PUSH);
+        closeButton.setText("Schließen");
+        closeButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+    }
+    
+    /**
+     * Setup Event Handler
+     */
+    private void setupEventHandlers() {
+        // Refresh-Button
+        refreshButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                refreshData();
+            }
+        });
+        
+        // Zoom-Buttons
+        zoomInButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                zoomFactor *= 1.2;
+                renderChartToImage();
+                LOGGER.info("Zoom In: " + zoomFactor);
+            }
+        });
+        
+        zoomOutButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                zoomFactor /= 1.2;
+                renderChartToImage();
+                LOGGER.info("Zoom Out: " + zoomFactor);
+            }
+        });
+        
+        resetZoomButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                zoomFactor = 1.0;
+                renderChartToImage();
+                LOGGER.info("Zoom Reset");
+            }
+        });
+        
+        // Close-Button
+        closeButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                closeWindow();
+            }
+        });
+        
+        // Shell-Close Event
+        shell.addListener(SWT.Close, event -> {
+            closeWindow();
+        });
+    }
+    
+    /**
+     * Erstellt das JFreeChart (nur für Rendering, nicht für Display)
      */
     private void createChart() {
         // TimeSeries für die verschiedenen Datenreihen
@@ -226,8 +325,7 @@ public class TickChartWindow {
         // Chart konfigurieren
         configureChart();
         
-        // Debug: Chart-Info ausgeben
-        LOGGER.info("Chart erstellt für Signal " + signalId + " mit Provider " + providerName);
+        LOGGER.info("JFreeChart (für Rendering) erstellt für Signal: " + signalId);
     }
     
     /**
@@ -239,11 +337,11 @@ public class TickChartWindow {
         
         // Linien-Renderer konfigurieren
         renderer.setSeriesLinesVisible(0, true);  // Equity
-        renderer.setSeriesShapesVisible(0, true); // Punkte für Equity anzeigen
+        renderer.setSeriesShapesVisible(0, true);
         renderer.setSeriesLinesVisible(1, true);  // Floating Profit
-        renderer.setSeriesShapesVisible(1, true); // Punkte für Floating anzeigen
+        renderer.setSeriesShapesVisible(1, true);
         renderer.setSeriesLinesVisible(2, true);  // Total Value
-        renderer.setSeriesShapesVisible(2, true); // Punkte auch für Total anzeigen
+        renderer.setSeriesShapesVisible(2, true);
         
         // Farben setzen
         renderer.setSeriesPaint(0, new Color(255, 200, 0));  // Equity in Gelb
@@ -259,7 +357,7 @@ public class TickChartWindow {
         plot.setRenderer(renderer);
         
         // Hintergrund-Farben
-        chart.setBackgroundPaint(new Color(240, 240, 240)); // Hellgrau
+        chart.setBackgroundPaint(new Color(240, 240, 240));
         plot.setBackgroundPaint(Color.WHITE);
         plot.setDomainGridlinePaint(Color.LIGHT_GRAY);
         plot.setRangeGridlinePaint(Color.LIGHT_GRAY);
@@ -271,200 +369,223 @@ public class TickChartWindow {
         // Achsen-Labels
         plot.getRangeAxis().setLabel("Wert (HKD)");
         plot.getDomainAxis().setLabel("Zeit");
-        
-        LOGGER.info("Chart konfiguriert mit 3 Datenreihen");
     }
     
     /**
-     * Erstellt das Button-Panel
+     * KERN: Rendert JFreeChart als BufferedImage und konvertiert zu SWT Image
      */
-    private void createButtonPanel() {
-        Composite buttonComposite = new Composite(shell, SWT.NONE);
-        buttonComposite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
-        buttonComposite.setLayout(new GridLayout(3, false));
+    private void renderChartToImage() {
+        if (chart == null || chartWidth <= 0 || chartHeight <= 0) {
+            return;
+        }
         
-        // Refresh-Button
-        refreshButton = new Button(buttonComposite, SWT.PUSH);
-        refreshButton.setText("Aktualisieren");
-        refreshButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
-        
-        // Spacer
-        Label spacer = new Label(buttonComposite, SWT.NONE);
-        spacer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        
-        // Close-Button
-        closeButton = new Button(buttonComposite, SWT.PUSH);
-        closeButton.setText("Schließen");
-        closeButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
-    }
-    
-    /**
-     * Setup Event Handler
-     */
-    private void setupEventHandlers() {
-        // Refresh-Button
-        refreshButton.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                refreshData();
-            }
-        });
-        
-        // Close-Button
-        closeButton.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                closeWindow();
-            }
-        });
-        
-        // Shell-Close Event
-        shell.addListener(SWT.Close, event -> {
-            closeWindow();
-        });
-    }
-    
-    /**
-     * Lädt und zeigt die Tick-Daten an
-     */
-    private void loadAndDisplayData() {
         try {
-            // Tick-Daten laden
-            tickDataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
+            // JFreeChart als BufferedImage rendern (reines AWT, kein Display nötig)
+            BufferedImage bufferedImage = chart.createBufferedImage(
+                (int)(chartWidth * zoomFactor), 
+                (int)(chartHeight * zoomFactor),
+                BufferedImage.TYPE_INT_RGB,
+                null
+            );
             
-            if (tickDataSet == null || tickDataSet.getTickCount() == 0) {
-                showNoDataMessage();
-                return;
+            // BufferedImage zu SWT ImageData konvertieren
+            ImageData imageData = convertBufferedImageToImageData(bufferedImage);
+            
+            // Alte Image-Ressource freigeben
+            if (chartImage != null && !chartImage.isDisposed()) {
+                chartImage.dispose();
             }
             
-            // Chart-Daten im AWT Event Thread aktualisieren
-            javax.swing.SwingUtilities.invokeLater(() -> {
-                try {
-                    // Chart-Daten aktualisieren
-                    updateChartData();
-                    
-                    // Chart-Komponente neu validieren
-                    if (chartPanel != null) {
-                        chartPanel.revalidate();
-                        chartPanel.repaint();
-                    }
-                } catch (Exception e) {
-                    LOGGER.log(Level.SEVERE, "Fehler beim Aktualisieren des Charts", e);
-                }
-            });
+            // Neue SWT Image erstellen
+            chartImage = new Image(display, imageData);
             
-            // Info-Panel aktualisieren (im SWT Thread)
-            display.asyncExec(() -> {
-                updateInfoPanel();
-            });
+            // Canvas neu zeichnen
+            if (!chartCanvas.isDisposed()) {
+                chartCanvas.redraw();
+            }
             
-            LOGGER.info("Tick-Daten geladen und angezeigt: " + tickDataSet.getTickCount() + " Ticks");
+            LOGGER.fine("Chart als Image gerendert: " + chartWidth + "x" + chartHeight + " (Zoom: " + zoomFactor + ")");
             
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Fehler beim Laden der Tick-Daten", e);
-            showErrorMessage("Fehler beim Laden der Tick-Daten: " + e.getMessage());
+            LOGGER.log(Level.WARNING, "Fehler beim Rendern des Charts als Image", e);
         }
+    }
+    
+    /**
+     * Konvertiert BufferedImage zu SWT ImageData
+     */
+    private ImageData convertBufferedImageToImageData(BufferedImage bufferedImage) {
+        int width = bufferedImage.getWidth();
+        int height = bufferedImage.getHeight();
+        
+        // RGB-Daten extrahieren
+        int[] rgbArray = new int[width * height];
+        bufferedImage.getRGB(0, 0, width, height, rgbArray, 0, width);
+        
+        // ImageData erstellen
+        ImageData imageData = new ImageData(width, height, 24, new org.eclipse.swt.graphics.PaletteData(0xFF0000, 0x00FF00, 0x0000FF));
+        
+        // Pixel-Daten kopieren
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int rgb = rgbArray[y * width + x];
+                imageData.setPixel(x, y, rgb & 0xFFFFFF);
+            }
+        }
+        
+        return imageData;
+    }
+    
+    /**
+     * Zeichnet das Chart-Image auf dem Canvas
+     */
+    private void paintChart(GC gc) {
+        // Canvas leeren
+        gc.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
+        gc.fillRectangle(chartCanvas.getBounds());
+        
+        if (chartImage != null && !chartImage.isDisposed()) {
+            // Chart-Image zeichnen
+            org.eclipse.swt.graphics.Rectangle imageBounds = chartImage.getBounds();
+            org.eclipse.swt.graphics.Rectangle canvasBounds = chartCanvas.getBounds();
+            
+            // Image zentriert zeichnen
+            int x = (canvasBounds.width - imageBounds.width) / 2;
+            int y = (canvasBounds.height - imageBounds.height) / 2;
+            
+            gc.drawImage(chartImage, Math.max(0, x), Math.max(0, y));
+            
+        } else if (!isDataLoaded) {
+            // Loading-Message zeichnen
+            gc.setForeground(display.getSystemColor(SWT.COLOR_DARK_GRAY));
+            gc.drawText("Chart wird geladen...", 20, 20, true);
+            
+        } else {
+            // Error-Message zeichnen
+            gc.setForeground(display.getSystemColor(SWT.COLOR_RED));
+            gc.drawText("Fehler beim Laden des Charts", 20, 20, true);
+        }
+    }
+    
+    /**
+     * Lädt Daten asynchron
+     */
+    private void loadDataAsync() {
+        new Thread(() -> {
+            try {
+                LOGGER.info("Lade Tick-Daten für Signal: " + signalId + " von " + tickFilePath);
+                
+                // Tick-Daten laden
+                tickDataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
+                isDataLoaded = true;
+                
+                if (tickDataSet == null || tickDataSet.getTickCount() == 0) {
+                    LOGGER.warning("Keine Tick-Daten gefunden für Signal: " + signalId);
+                    
+                    display.asyncExec(() -> {
+                        if (!isWindowClosed && !shell.isDisposed()) {
+                            showNoDataMessage();
+                        }
+                    });
+                    return;
+                }
+                
+                LOGGER.info("Tick-Daten geladen: " + tickDataSet.getTickCount() + " Ticks für Signal: " + signalId);
+                
+                // Chart-Daten aktualisieren
+                updateChartData();
+                
+                // UI-Updates im SWT Thread
+                display.asyncExec(() -> {
+                    if (!isWindowClosed && !shell.isDisposed()) {
+                        updateInfoPanel();
+                        renderChartToImage();
+                    }
+                });
+                
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "Fehler beim Laden der Tick-Daten für Signal: " + signalId, e);
+                
+                display.asyncExec(() -> {
+                    if (!isWindowClosed && !shell.isDisposed()) {
+                        showErrorMessage("Fehler beim Laden der Tick-Daten: " + e.getMessage());
+                    }
+                });
+            }
+        }, "TickDataLoader-" + signalId).start();
     }
     
     /**
      * Aktualisiert die Chart-Daten
      */
     private void updateChartData() {
-        if (tickDataSet == null) {
+        if (tickDataSet == null || chart == null) {
             return;
         }
         
-        // Serien leeren
-        equitySeries.clear();
-        floatingProfitSeries.clear();
-        totalValueSeries.clear();
-        
-        int addedCount = 0;
-        
-        // Tick-Daten zu den Serien hinzufügen
-        for (TickDataLoader.TickData tick : tickDataSet.getTicks()) {
-            Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
-            Second second = new Second(javaDate);
+        try {
+            // Serien leeren
+            equitySeries.clear();
+            floatingProfitSeries.clear();
+            totalValueSeries.clear();
             
-            try {
+            // Tick-Daten zu den Serien hinzufügen
+            for (TickDataLoader.TickData tick : tickDataSet.getTicks()) {
+                Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
+                Second second = new Second(javaDate);
+                
                 equitySeries.add(second, tick.getEquity());
                 floatingProfitSeries.add(second, tick.getFloatingProfit());
                 totalValueSeries.add(second, tick.getTotalValue());
-                addedCount++;
-                
-                // Debug ersten und letzten Wert
-                if (addedCount == 1 || addedCount == tickDataSet.getTickCount()) {
-                    LOGGER.info("Tick " + addedCount + ": Zeit=" + tick.getTimestamp() + 
-                               ", Equity=" + tick.getEquity() + 
-                               ", Floating=" + tick.getFloatingProfit() + 
-                               ", Total=" + tick.getTotalValue());
-                }
-            } catch (Exception e) {
-                LOGGER.warning("Fehler beim Hinzufügen von Tick-Daten: " + e.getMessage());
             }
+            
+            // Chart-Titel aktualisieren
+            chart.setTitle("Tick Daten - " + signalId + " (" + providerName + ") - " + 
+                          tickDataSet.getTickCount() + " Ticks");
+            
+            // Y-Achsen-Bereich anpassen
+            adjustYAxisRange();
+            
+            LOGGER.info("Chart-Daten aktualisiert: " + tickDataSet.getTickCount() + " Ticks hinzugefügt");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Aktualisieren der Chart-Daten", e);
         }
-        
-        // Chart-Titel aktualisieren
-        chart.setTitle("Tick Daten - " + signalId + " (" + providerName + ") - " + 
-                      tickDataSet.getTickCount() + " Ticks");
-        
-        // Y-Achsen-Bereich anpassen bei konstanten Werten
-        adjustYAxisRange();
-        
-        // Chart explizit neu zeichnen
-        chart.fireChartChanged();
-        
-        // Chart-Panel neu zeichnen
-        if (chartPanel != null) {
-            chartPanel.revalidate();
-            chartPanel.repaint();
-        }
-        
-        LOGGER.info("Chart-Daten aktualisiert: " + addedCount + " von " + 
-                   tickDataSet.getTickCount() + " Ticks hinzugefügt");
     }
     
     /**
-     * Passt den Y-Achsen-Bereich an, besonders bei konstanten Werten
+     * Passt den Y-Achsen-Bereich an
      */
     private void adjustYAxisRange() {
+        if (chart == null || tickDataSet == null) {
+            return;
+        }
+        
         XYPlot plot = chart.getXYPlot();
         
-        // Min/Max-Werte ermitteln
-        double minValue = Double.MAX_VALUE;
-        double maxValue = Double.MIN_VALUE;
+        double minValue = Math.min(Math.min(tickDataSet.getMinEquity(), tickDataSet.getMinFloatingProfit()), 
+                                  tickDataSet.getMinTotalValue());
+        double maxValue = Math.max(Math.max(tickDataSet.getMaxEquity(), tickDataSet.getMaxFloatingProfit()), 
+                                  tickDataSet.getMaxTotalValue());
         
-        if (tickDataSet != null && tickDataSet.getTickCount() > 0) {
-            // Berücksichtige alle drei Datenreihen
-            minValue = Math.min(minValue, tickDataSet.getMinEquity());
-            minValue = Math.min(minValue, tickDataSet.getMinFloatingProfit());
-            minValue = Math.min(minValue, tickDataSet.getMinTotalValue());
-            
-            maxValue = Math.max(maxValue, tickDataSet.getMaxEquity());
-            maxValue = Math.max(maxValue, tickDataSet.getMaxFloatingProfit());
-            maxValue = Math.max(maxValue, tickDataSet.getMaxTotalValue());
-            
-            LOGGER.info("Chart Y-Achse: Min=" + minValue + ", Max=" + maxValue);
-        }
-        
-        // Immer den vollen Bereich anzeigen, inklusive 0
         if (minValue > 0) {
-            minValue = 0; // Stelle sicher, dass 0 im Bereich ist
+            minValue = 0;
         }
         
-        // Füge immer etwas Padding hinzu
         double range = maxValue - minValue;
-        double padding = Math.max(range * 0.05, 100); // 5% oder mindestens 100
+        double padding = Math.max(range * 0.05, 100);
         
         plot.getRangeAxis().setRange(minValue - padding, maxValue + padding);
-        LOGGER.info("Y-Achse eingestellt auf: " + (minValue - padding) + " bis " + (maxValue + padding));
-        
-        // Auto-Range für X-Achse (Zeit)
         plot.getDomainAxis().setAutoRange(true);
-        
-        // Stelle sicher, dass die Achsen sichtbar sind
-        plot.getRangeAxis().setVisible(true);
-        plot.getDomainAxis().setVisible(true);
+    }
+    
+    /**
+     * Zeigt initialen Info-Text
+     */
+    private void updateInfoPanelInitial() {
+        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt...";
+        infoLabel.setText(info);
+        detailsText.setText("Tick-Daten werden geladen...\nBitte warten Sie einen Moment.");
     }
     
     /**
@@ -473,7 +594,6 @@ public class TickChartWindow {
     private void updateInfoPanel() {
         StringBuilder info = new StringBuilder();
         
-        // Grundinformationen
         info.append("Signal ID: ").append(signalId).append("   ");
         info.append("Provider: ").append(providerName).append("   ");
         
@@ -485,128 +605,39 @@ public class TickChartWindow {
         
         infoLabel.setText(info.toString());
         
-        // Detaillierte Informationen
         StringBuilder details = new StringBuilder();
         
         if (tickDataSet != null && tickDataSet.getTickCount() > 0) {
             details.append("=== Tick-Daten Statistik ===\n");
+            details.append("Rendering: JFreeChart ohne SWT-AWT Bridge\n");
             details.append("Datei: ").append(tickFilePath).append("\n");
             details.append("Anzahl Ticks: ").append(tickDataSet.getTickCount()).append("\n");
             details.append("Zeitraum: ").append(tickDataSet.getFirstTick().getTimestamp())
                    .append(" bis ").append(tickDataSet.getLatestTick().getTimestamp()).append("\n");
-            details.append("Equity-Bereich: ").append(String.format("%.2f - %.2f", 
-                         tickDataSet.getMinEquity(), tickDataSet.getMaxEquity())).append("\n");
-            details.append("Floating Profit-Bereich: ").append(String.format("%.2f - %.2f", 
-                         tickDataSet.getMinFloatingProfit(), tickDataSet.getMaxFloatingProfit())).append("\n");
-            details.append("Gesamtwert-Bereich: ").append(String.format("%.2f - %.2f", 
-                         tickDataSet.getMinTotalValue(), tickDataSet.getMaxTotalValue())).append("\n");
-            
-            // Letzte Werte
-            TickDataLoader.TickData latestTick = tickDataSet.getLatestTick();
-            details.append("\n=== Aktuelle Werte ===\n");
-            details.append("Letzter Tick: ").append(latestTick.getTimestamp()).append("\n");
-            details.append("Equity: ").append(String.format("%.2f", latestTick.getEquity())).append("\n");
-            details.append("Floating Profit: ").append(String.format("%.2f", latestTick.getFloatingProfit())).append("\n");
-            details.append("Gesamtwert: ").append(String.format("%.2f", latestTick.getTotalValue())).append("\n");
-            
-            // Hinweis bei konstanten Werten
-            if (tickDataSet.getMaxEquity() == tickDataSet.getMinEquity() && 
-                tickDataSet.getMaxFloatingProfit() == tickDataSet.getMinFloatingProfit()) {
-                details.append("\n=== Hinweis ===\n");
-                details.append("Alle Werte sind konstant. Die Linien werden als horizontale Linien angezeigt.\n");
-                details.append("Gelbe Linie (Equity): ").append(String.format("%.2f", tickDataSet.getMaxEquity())).append("\n");
-                details.append("Rote Linie (Floating): ").append(String.format("%.2f", tickDataSet.getMaxFloatingProfit())).append("\n");
-                details.append("Grüne Linie (Gesamt): ").append(String.format("%.2f", tickDataSet.getMaxTotalValue())).append("\n");
-            }
+            details.append("Zoom-Faktor: ").append(String.format("%.2f", zoomFactor)).append("\n");
         } else {
-            details.append("Keine Tick-Daten verfügbar.\n");
-            details.append("Datei: ").append(tickFilePath).append("\n");
-            details.append("Bitte überprüfen Sie, ob die Datei existiert und gültige Daten enthält.");
+            details.append("Keine Tick-Daten verfügbar oder noch nicht geladen.\n");
         }
         
         detailsText.setText(details.toString());
     }
     
     /**
-     * Zeigt eine "Keine Daten"-Nachricht
+     * Zeigt "Keine Daten"-Nachricht
      */
     private void showNoDataMessage() {
         infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten verfügbar");
-        detailsText.setText("Keine Tick-Daten gefunden.\n\n" +
-                           "Mögliche Ursachen:\n" +
-                           "• Die Tick-Datei existiert nicht: " + tickFilePath + "\n" +
-                           "• Die Datei ist leer oder enthält keine gültigen Daten\n" +
-                           "• Der Dateiformat ist ungültig\n\n" +
-                           "Erwartetes Format: Datum,Uhrzeit,Equity,FloatingProfit\n" +
-                           "Beispiel: 24.05.2025,15:13:36,2000.00,-479.54");
-        
-        // Zeige ein Test-Chart mit Dummy-Daten
-        createTestChart();
-        
-        LOGGER.warning("Keine Tick-Daten verfügbar für Signal: " + signalId);
+        detailsText.setText("Keine Tick-Daten gefunden in: " + tickFilePath);
+        chartCanvas.redraw();
     }
     
     /**
-     * Erstellt ein Test-Chart mit Dummy-Daten
-     */
-    private void createTestChart() {
-        // Füge einige Test-Datenpunkte hinzu
-        equitySeries.clear();
-        floatingProfitSeries.clear();
-        totalValueSeries.clear();
-        
-        try {
-            Date now = new Date();
-            for (int i = 0; i < 10; i++) {
-                Second second = new Second(new Date(now.getTime() - (9 - i) * 60000)); // 1 Minute Intervalle
-                
-                double equity = 50000 + i * 100;
-                double floating = -500 + i * 50;
-                double total = equity + floating;
-                
-                equitySeries.add(second, equity);
-                floatingProfitSeries.add(second, floating);
-                totalValueSeries.add(second, total);
-            }
-            
-            chart.setTitle("Test-Chart (Keine echten Daten) - " + signalId);
-            
-            // Y-Achse anpassen
-            XYPlot plot = chart.getXYPlot();
-            plot.getRangeAxis().setRange(-1000, 51000);
-            
-            // Chart neu zeichnen
-            chart.fireChartChanged();
-            
-            if (chartPanel != null) {
-                chartPanel.revalidate();
-                chartPanel.repaint();
-            }
-            
-            LOGGER.info("Test-Chart mit Dummy-Daten erstellt");
-            
-        } catch (Exception e) {
-            LOGGER.warning("Fehler beim Erstellen des Test-Charts: " + e.getMessage());
-        }
-    }
-    
-    /**
-     * Zeigt eine Fehlermeldung
-     * 
-     * @param message Die Fehlermeldung
+     * Zeigt Fehlermeldung
      */
     private void showErrorMessage(String message) {
         infoLabel.setText("Signal ID: " + signalId + " - Fehler beim Laden");
-        detailsText.setText("FEHLER: " + message + "\n\n" +
-                           "Datei: " + tickFilePath + "\n\n" +
-                           "Bitte überprüfen Sie:\n" +
-                           "• Existiert die Datei?\n" +
-                           "• Haben Sie Leserechte?\n" +
-                           "• Ist das Dateiformat korrekt?");
+        detailsText.setText("FEHLER: " + message);
         
-        chart.setTitle("Fehler beim Laden - " + signalId);
-        
-        // Fehlermeldung auch als MessageBox anzeigen
         MessageBox errorBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
         errorBox.setText("Fehler beim Laden der Tick-Daten");
         errorBox.setMessage(message);
@@ -617,25 +648,38 @@ public class TickChartWindow {
      * Aktualisiert die Daten
      */
     private void refreshData() {
-        LOGGER.info("Tick-Daten werden aktualisiert für Signal: " + signalId);
+        LOGGER.info("Manueller Refresh für Signal: " + signalId);
         
-        // Test-Chart erstellen zum Debugging
-        SwingUtilities.invokeLater(() -> {
-            createTestChart();
-        });
+        refreshButton.setEnabled(false);
+        refreshButton.setText("Lädt...");
         
-        // Dann echte Daten laden
-        display.timerExec(500, () -> {
-            loadAndDisplayData();
+        isDataLoaded = false;
+        chartCanvas.redraw();
+        
+        loadDataAsync();
+        
+        display.timerExec(3000, () -> {
+            if (!isWindowClosed && !refreshButton.isDisposed()) {
+                refreshButton.setEnabled(true);
+                refreshButton.setText("Aktualisieren");
+            }
         });
     }
     
     /**
-     * Schließt das Fenster
+     * Schließt das Fenster sauber
      */
     private void closeWindow() {
-        LOGGER.info("Tick Chart Fenster wird geschlossen für Signal: " + signalId);
+        isWindowClosed = true;
         
+        LOGGER.info("Schließe TickChartWindow (OHNE Bridge) für Signal: " + signalId);
+        
+        // Image-Ressourcen freigeben
+        if (chartImage != null && !chartImage.isDisposed()) {
+            chartImage.dispose();
+        }
+        
+        // SWT-Ressourcen freigeben
         if (shell != null && !shell.isDisposed()) {
             shell.dispose();
         }
@@ -646,38 +690,18 @@ public class TickChartWindow {
      */
     public void open() {
         shell.open();
-        LOGGER.info("Tick Chart Fenster geöffnet für Signal: " + signalId);
-        
-        // Force refresh nach dem Öffnen
-        display.asyncExec(() -> {
-            if (chartPanel != null && !shell.isDisposed()) {
-                chartPanel.revalidate();
-                chartPanel.repaint();
-                
-                // Zusätzlicher Refresh nach kurzer Verzögerung
-                display.timerExec(100, () -> {
-                    if (chartPanel != null && !shell.isDisposed()) {
-                        chartPanel.revalidate();
-                        chartPanel.repaint();
-                    }
-                });
-            }
-        });
+        LOGGER.info("TickChartWindow geöffnet (OHNE Bridge) für Signal: " + signalId);
     }
     
     /**
      * Prüft ob das Fenster noch geöffnet ist
-     * 
-     * @return true wenn das Fenster geöffnet ist
      */
     public boolean isOpen() {
-        return shell != null && !shell.isDisposed();
+        return shell != null && !shell.isDisposed() && !isWindowClosed;
     }
     
     /**
      * Gibt die Signal-ID zurück
-     * 
-     * @return Die Signal-ID
      */
     public String getSignalId() {
         return signalId;
