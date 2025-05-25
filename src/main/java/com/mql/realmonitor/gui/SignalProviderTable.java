@@ -1,13 +1,13 @@
 package com.mql.realmonitor.gui;
 
 import com.mql.realmonitor.parser.SignalData;
-
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.events.MouseAdapter;
+import org.eclipse.swt.events.MouseEvent;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.layout.GridData;
-import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.*;
 
 import java.util.HashMap;
@@ -15,50 +15,76 @@ import java.util.Map;
 import java.util.logging.Logger;
 
 /**
- * Tabelle für Signalprovider-Anzeige
- * Verwaltet die Darstellung aller überwachten Signalprovider
+ * Tabelle für die Anzeige der Signalprovider-Daten
+ * Verwaltet die SWT-Tabelle mit allen Provider-Informationen
  */
 public class SignalProviderTable {
     
     private static final Logger LOGGER = Logger.getLogger(SignalProviderTable.class.getName());
     
-    // Spalten-Indizes
+    // Spalten-Indizes - NEU: PROVIDER_NAME hinzugefügt
     private static final int COL_SIGNAL_ID = 0;
-    private static final int COL_STATUS = 1;
-    private static final int COL_EQUITY = 2;
-    private static final int COL_FLOATING = 3;
-    private static final int COL_TOTAL = 4;
-    private static final int COL_CURRENCY = 5;
-    private static final int COL_LAST_UPDATE = 6;
-    private static final int COL_CHANGE = 7;
+    private static final int COL_PROVIDER_NAME = 1;  // NEU
+    private static final int COL_STATUS = 2;         // Index verschoben
+    private static final int COL_EQUITY = 3;         // Index verschoben
+    private static final int COL_FLOATING = 4;       // Index verschoben
+    private static final int COL_TOTAL = 5;          // Index verschoben
+    private static final int COL_CURRENCY = 6;       // Index verschoben
+    private static final int COL_LAST_UPDATE = 7;    // Index verschoben
+    private static final int COL_CHANGE = 8;         // Index verschoben
+    
+    // Spalten-Definitionen - NEU: Provider Name hinzugefügt
+    private static final String[] COLUMN_TEXTS = {
+        "Signal ID", 
+        "Provider Name",  // NEU
+        "Status", 
+        "Kontostand", 
+        "Floating Profit", 
+        "Gesamtwert", 
+        "Währung", 
+        "Letzte Aktualisierung", 
+        "Änderung"
+    };
+    
+    private static final int[] COLUMN_WIDTHS = {
+        80,   // Signal ID
+        150,  // Provider Name - NEU
+        100,  // Status
+        120,  // Kontostand
+        120,  // Floating Profit
+        120,  // Gesamtwert
+        70,   // Währung
+        150,  // Letzte Aktualisierung
+        120   // Änderung
+    };
     
     private final MqlRealMonitorGUI parentGui;
-    private final Composite parent;
     
     // SWT Komponenten
     private Table table;
     private TableColumn[] columns;
     
-    // Daten-Cache
+    // Daten-Management
     private Map<String, TableItem> signalIdToItem;
     private Map<String, SignalData> lastSignalData;
     
     public SignalProviderTable(Composite parent, MqlRealMonitorGUI parentGui) {
-        this.parent = parent;
         this.parentGui = parentGui;
         this.signalIdToItem = new HashMap<>();
         this.lastSignalData = new HashMap<>();
         
-        createTable();
+        createTable(parent);
         createColumns();
         setupTableBehavior();
+        
+        LOGGER.info("SignalProviderTable initialisiert mit " + COLUMN_TEXTS.length + " Spalten");
     }
     
     /**
      * Erstellt die Tabelle
      */
-    private void createTable() {
-        table = new Table(parent, SWT.BORDER | SWT.FULL_SELECTION | SWT.MULTI | SWT.V_SCROLL | SWT.H_SCROLL);
+    private void createTable(Composite parent) {
+        table = new Table(parent, SWT.BORDER | SWT.FULL_SELECTION | SWT.MULTI);
         table.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         table.setHeaderVisible(true);
         table.setLinesVisible(true);
@@ -68,57 +94,39 @@ public class SignalProviderTable {
      * Erstellt die Tabellenspalten
      */
     private void createColumns() {
-        String[] columnTitles = {
-            "Signal ID",
-            "Status", 
-            "Kontostand",
-            "Floating Profit",
-            "Gesamt",
-            "Währung",
-            "Letzte Aktualisierung",
-            "Änderung"
-        };
+        columns = new TableColumn[COLUMN_TEXTS.length];
         
-        int[] columnWidths = {
-            100,  // Signal ID
-            120,  // Status
-            120,  // Kontostand
-            120,  // Floating Profit
-            120,  // Gesamt
-            80,   // Währung
-            150,  // Letzte Aktualisierung
-            100   // Änderung
-        };
-        
-        columns = new TableColumn[columnTitles.length];
-        
-        for (int i = 0; i < columnTitles.length; i++) {
-            TableColumn column = new TableColumn(table, SWT.NONE);
-            column.setText(columnTitles[i]);
-            column.setWidth(columnWidths[i]);
-            column.setResizable(true);
-            columns[i] = column;
+        for (int i = 0; i < COLUMN_TEXTS.length; i++) {
+            columns[i] = new TableColumn(table, SWT.NONE);
+            columns[i].setText(COLUMN_TEXTS[i]);
+            columns[i].setWidth(COLUMN_WIDTHS[i]);
+            columns[i].setResizable(true);
             
-            // Sortierung hinzufügen
+            // Sortierung bei Klick auf Header
             final int columnIndex = i;
-            column.addSelectionListener(new SelectionAdapter() {
+            columns[i].addSelectionListener(new SelectionAdapter() {
                 @Override
                 public void widgetSelected(SelectionEvent e) {
                     sortTable(columnIndex);
                 }
             });
         }
+        
+        LOGGER.info("Tabellenspalten erstellt: " + java.util.Arrays.toString(COLUMN_TEXTS));
     }
     
     /**
      * Konfiguriert das Tabellenverhalten
      */
     private void setupTableBehavior() {
-        // Doppelklick-Handler
-        table.addListener(SWT.MouseDoubleClick, event -> {
-            TableItem item = table.getItem(table.getSelectionIndex());
-            if (item != null) {
-                showSignalDetails(item);
+        // Doppelklick für Details
+        table.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseDoubleClick(MouseEvent e) {
+                TableItem[] selection = table.getSelection();
+                if (selection.length > 0) {
+                    showSignalDetails(selection[0]);
+                }
             }
         });
         
@@ -126,8 +134,9 @@ public class SignalProviderTable {
         Menu contextMenu = new Menu(table);
         table.setMenu(contextMenu);
         
+        // Menü-Items
         MenuItem refreshItem = new MenuItem(contextMenu, SWT.PUSH);
-        refreshItem.setText("Aktualisieren");
+        refreshItem.setText("Ausgewählte aktualisieren");
         refreshItem.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent e) {
@@ -157,9 +166,9 @@ public class SignalProviderTable {
     }
     
     /**
-     * Aktualisiert Provider-Daten in der Tabelle
+     * Aktualisiert die Daten eines Providers (Thread-sicher)
      * 
-     * @param signalData Die neuen Signaldaten
+     * @param signalData Die aktualisierten Signaldaten
      */
     public void updateProviderData(SignalData signalData) {
         if (signalData == null || !signalData.isValid()) {
@@ -180,8 +189,9 @@ public class SignalProviderTable {
         String changeText = calculateChangeText(signalData, lastData);
         Color changeColor = getChangeColor(signalData, lastData);
         
-        // Tabellendaten setzen
+        // Tabellendaten setzen - NEU: Provider Name hinzugefügt
         item.setText(COL_SIGNAL_ID, signalId);
+        item.setText(COL_PROVIDER_NAME, signalData.getProviderName());  // NEU
         item.setText(COL_STATUS, "OK");
         item.setText(COL_EQUITY, signalData.getFormattedEquity());
         item.setText(COL_FLOATING, signalData.getFormattedFloatingProfit());
@@ -216,6 +226,7 @@ public class SignalProviderTable {
             // Neuen Provider mit Status hinzufügen
             item = new TableItem(table, SWT.NONE);
             item.setText(COL_SIGNAL_ID, signalId);
+            item.setText(COL_PROVIDER_NAME, "Lädt...");  // NEU: Platzhalter
             signalIdToItem.put(signalId, item);
         }
         
@@ -320,7 +331,7 @@ public class SignalProviderTable {
             return parentGui.getGreenColor();
         } else if (lowerStatus.contains("error") || lowerStatus.contains("fehler")) {
             return parentGui.getRedColor();
-        } else if (lowerStatus.contains("loading") || lowerStatus.contains("downloading")) {
+        } else if (lowerStatus.contains("loading") || lowerStatus.contains("downloading") || lowerStatus.contains("lädt")) {
             return parentGui.getGrayColor();
         } else {
             return null; // Standard-Farbe
@@ -450,11 +461,13 @@ public class SignalProviderTable {
      */
     private void showSignalDetails(TableItem item) {
         String signalId = item.getText(COL_SIGNAL_ID);
+        String providerName = item.getText(COL_PROVIDER_NAME);  // NEU
         SignalData signalData = lastSignalData.get(signalId);
         
         StringBuilder details = new StringBuilder();
         details.append("Signal Provider Details\n\n");
         details.append("Signal ID: ").append(signalId).append("\n");
+        details.append("Provider Name: ").append(providerName).append("\n");  // NEU
         details.append("Status: ").append(item.getText(COL_STATUS)).append("\n");
         details.append("Kontostand: ").append(item.getText(COL_EQUITY)).append("\n");
         details.append("Floating Profit: ").append(item.getText(COL_FLOATING)).append("\n");
@@ -511,6 +524,7 @@ public class SignalProviderTable {
             
             for (TableItem item : selectedItems) {
                 summary.append("• ").append(item.getText(COL_SIGNAL_ID))
+                       .append(" (").append(item.getText(COL_PROVIDER_NAME)).append(")")  // NEU: Provider Name
                        .append(" - ").append(item.getText(COL_STATUS))
                        .append(" (").append(item.getText(COL_TOTAL)).append(")")
                        .append("\n");

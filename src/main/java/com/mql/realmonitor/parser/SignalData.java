@@ -18,6 +18,7 @@ public class SignalData {
         DateTimeFormatter.ofPattern("dd.MM.yyyy,HH:mm:ss");
     
     private final String signalId;
+    private final String providerName;  // NEU: Provider-Name
     private final double equity;
     private final double floatingProfit;
     private final String currency;
@@ -27,6 +28,26 @@ public class SignalData {
      * Konstruktor für SignalData
      * 
      * @param signalId Die eindeutige Signal-ID
+     * @param providerName Der Name des Signal-Providers
+     * @param equity Der aktuelle Kontostand
+     * @param floatingProfit Der aktuelle Floating Profit
+     * @param currency Die Währung (z.B. USD, EUR)
+     * @param timestamp Der Zeitstempel der Datenerhebung
+     */
+    public SignalData(String signalId, String providerName, double equity, double floatingProfit, 
+                     String currency, LocalDateTime timestamp) {
+        this.signalId = signalId;
+        this.providerName = providerName != null ? providerName : "Unbekannt";
+        this.equity = equity;
+        this.floatingProfit = floatingProfit;
+        this.currency = currency;
+        this.timestamp = timestamp;
+    }
+    
+    /**
+     * Konstruktor für Rückwärtskompatibilität (ohne Provider-Name)
+     * 
+     * @param signalId Die eindeutige Signal-ID
      * @param equity Der aktuelle Kontostand
      * @param floatingProfit Der aktuelle Floating Profit
      * @param currency Die Währung (z.B. USD, EUR)
@@ -34,11 +55,7 @@ public class SignalData {
      */
     public SignalData(String signalId, double equity, double floatingProfit, 
                      String currency, LocalDateTime timestamp) {
-        this.signalId = signalId;
-        this.equity = equity;
-        this.floatingProfit = floatingProfit;
-        this.currency = currency;
-        this.timestamp = timestamp;
+        this(signalId, null, equity, floatingProfit, currency, timestamp);
     }
     
     /**
@@ -49,6 +66,7 @@ public class SignalData {
      */
     public SignalData(SignalData other, LocalDateTime newTimestamp) {
         this.signalId = other.signalId;
+        this.providerName = other.providerName;
         this.equity = other.equity;
         this.floatingProfit = other.floatingProfit;
         this.currency = other.currency;
@@ -59,6 +77,10 @@ public class SignalData {
     
     public String getSignalId() {
         return signalId;
+    }
+    
+    public String getProviderName() {
+        return providerName;
     }
     
     public double getEquity() {
@@ -216,8 +238,9 @@ public class SignalData {
      * @return Textuelle Beschreibung
      */
     public String getSummary() {
-        return String.format("Signal %s: %s (Floating: %s) - %s", 
+        return String.format("Signal %s (%s): %s (Floating: %s) - %s", 
                            signalId, 
+                           providerName,
                            getFormattedEquity(), 
                            getFormattedFloatingProfit(),
                            getFormattedTimestamp());
@@ -225,8 +248,8 @@ public class SignalData {
     
     @Override
     public String toString() {
-        return String.format("SignalData{id='%s', equity=%.2f, floating=%.2f, currency='%s', time='%s'}", 
-                           signalId, equity, floatingProfit, currency, getFormattedTimestamp());
+        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, currency='%s', time='%s'}", 
+                           signalId, providerName, equity, floatingProfit, currency, getFormattedTimestamp());
     }
     
     @Override
@@ -238,13 +261,14 @@ public class SignalData {
         return Double.compare(that.equity, equity) == 0 &&
                Double.compare(that.floatingProfit, floatingProfit) == 0 &&
                Objects.equals(signalId, that.signalId) &&
+               Objects.equals(providerName, that.providerName) &&
                Objects.equals(currency, that.currency) &&
                Objects.equals(timestamp, that.timestamp);
     }
     
     @Override
     public int hashCode() {
-        return Objects.hash(signalId, equity, floatingProfit, currency, timestamp);
+        return Objects.hash(signalId, providerName, equity, floatingProfit, currency, timestamp);
     }
     
     /**

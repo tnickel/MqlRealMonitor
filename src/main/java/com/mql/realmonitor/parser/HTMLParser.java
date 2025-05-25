@@ -9,7 +9,7 @@ import java.util.logging.Level;
 
 /**
  * HTML-Parser für MQL5 Signalprovider-Seiten
- * Extrahiert Kontostand und Floating Profit mit flexiblem Pattern-Matching
+ * Extrahiert Kontostand, Floating Profit und Provider-Name mit flexiblem Pattern-Matching
  */
 public class HTMLParser {
     
@@ -21,6 +21,10 @@ public class HTMLParser {
     
     private static final String FLOATING_PROFIT_PATTERN = 
         "Floating\\s*Profit:\\s*([-]?[\\d,\\s]+\\.?\\d*)\\s*([A-Z]{3})";
+    
+    // NEU: Pattern für Provider-Name
+    private static final String PROVIDER_NAME_PATTERN = 
+        "<div\\s+class=[\"']s-line-card__title[\"']>([^<]+)</div>";
     
     // Pattern für JavaScript description Array Format
     private static final String DESCRIPTION_ARRAY_PATTERN = 
@@ -43,17 +47,29 @@ public class HTMLParser {
         "Profit[^:]*:\\s*([-]?[\\d,\\s]+\\.?\\d*)\\s*([A-Z]{3})"
     };
     
+    // NEU: Alternative Pattern für Provider-Name
+    private static final String[] ALTERNATIVE_PROVIDER_NAME_PATTERNS = {
+        "<h1[^>]*class=[\"'][^\"']*title[^\"']*[\"'][^>]*>([^<]+)</h1>",
+        "<div[^>]*class=[\"'][^\"']*signal-name[^\"']*[\"'][^>]*>([^<]+)</div>",
+        "<span[^>]*class=[\"'][^\"']*provider-name[^\"']*[\"'][^>]*>([^<]+)</span>",
+        "<title>([^-<]+)\\s*-\\s*MQL5",
+        "class=[\"']s-line-card__title[\"'][^>]*>\\s*([^<]+?)\\s*</[^>]+>"
+    };
+    
     // Compiled Patterns für bessere Performance
     private final Pattern kontostandardPattern;
     private final Pattern floatingProfitPattern;
+    private final Pattern providerNamePattern;  // NEU
     private final Pattern descriptionArrayPattern;
     private final Pattern[] alternativeKontostandPatterns;
     private final Pattern[] alternativeFloatingPatterns;
+    private final Pattern[] alternativeProviderNamePatterns;  // NEU
     
     public HTMLParser() {
         // Hauptpattern kompilieren
         kontostandardPattern = Pattern.compile(KONTOSTAND_PATTERN, Pattern.CASE_INSENSITIVE);
         floatingProfitPattern = Pattern.compile(FLOATING_PROFIT_PATTERN, Pattern.CASE_INSENSITIVE);
+        providerNamePattern = Pattern.compile(PROVIDER_NAME_PATTERN, Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
         descriptionArrayPattern = Pattern.compile(DESCRIPTION_ARRAY_PATTERN, Pattern.CASE_INSENSITIVE);
         
         // Alternative Pattern kompilieren
@@ -67,6 +83,13 @@ public class HTMLParser {
         for (int i = 0; i < ALTERNATIVE_FLOATING_PATTERNS.length; i++) {
             alternativeFloatingPatterns[i] = Pattern.compile(
                 ALTERNATIVE_FLOATING_PATTERNS[i], Pattern.CASE_INSENSITIVE);
+        }
+        
+        // NEU: Alternative Provider-Name Pattern kompilieren
+        alternativeProviderNamePatterns = new Pattern[ALTERNATIVE_PROVIDER_NAME_PATTERNS.length];
+        for (int i = 0; i < ALTERNATIVE_PROVIDER_NAME_PATTERNS.length; i++) {
+            alternativeProviderNamePatterns[i] = Pattern.compile(
+                ALTERNATIVE_PROVIDER_NAME_PATTERNS[i], Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
         }
     }
     
@@ -86,15 +109,18 @@ public class HTMLParser {
         try {
             LOGGER.info("Parse HTML für Signal: " + signalId + " (" + htmlContent.length() + " Zeichen)");
             
+            // Provider-Name extrahieren
+            String providerName = extractProviderName(htmlContent, signalId);
+            
             // Zuerst versuchen: description Array Format (JavaScript)
-            SignalData descriptionResult = parseDescriptionArray(htmlContent, signalId);
+            SignalData descriptionResult = parseDescriptionArray(htmlContent, signalId, providerName);
             if (descriptionResult != null) {
                 LOGGER.info("Successfully parsed using description array format for signal: " + signalId);
                 return descriptionResult;
             }
             
             // Fallback: Traditionelle Pattern-Matching
-            return parseTraditionalFormat(htmlContent, signalId);
+            return parseTraditionalFormat(htmlContent, signalId, providerName);
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler beim Parsen von Signal: " + signalId, e);
@@ -103,223 +129,178 @@ public class HTMLParser {
     }
     
     /**
+     * NEU: Extrahiert den Provider-Namen aus dem HTML
+     * 
+     * @param htmlContent Der HTML-Inhalt
+     * @param signalId Die Signal-ID für Logging
+     * @return Der Provider-Name oder "Unbekannt" falls nicht gefunden
+     */
+    private String extractProviderName(String htmlContent, String signalId) {
+        try {
+            // Hauptpattern versuchen
+            Matcher matcher = providerNamePattern.matcher(htmlContent);
+            if (matcher.find()) {
+                String name = matcher.group(1).trim();
+                if (!name.isEmpty()) {
+                    LOGGER.info("Provider-Name gefunden (Hauptpattern): " + name + " für Signal: " + signalId);
+                    return cleanProviderName(name);
+                }
+            }
+            
+            // Alternative Pattern versuchen
+            for (int i = 0; i < alternativeProviderNamePatterns.length; i++) {
+                matcher = alternativeProviderNamePatterns[i].matcher(htmlContent);
+                if (matcher.find()) {
+                    String name = matcher.group(1).trim();
+                    if (!name.isEmpty()) {
+                        LOGGER.info("Provider-Name gefunden (Alt-Pattern " + i + "): " + name + " für Signal: " + signalId);
+                        return cleanProviderName(name);
+                    }
+                }
+            }
+            
+            LOGGER.warning("Provider-Name nicht gefunden für Signal: " + signalId);
+            return "Unbekannt";
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Extrahieren des Provider-Namens für Signal: " + signalId, e);
+            return "Unbekannt";
+        }
+    }
+    
+    /**
+     * NEU: Bereinigt den Provider-Namen
+     * 
+     * @param rawName Der rohe Provider-Name
+     * @return Der bereinigte Provider-Name
+     */
+    private String cleanProviderName(String rawName) {
+        if (rawName == null || rawName.trim().isEmpty()) {
+            return "Unbekannt";
+        }
+        
+        // HTML-Entities dekodieren und bereinigen
+        String cleaned = rawName
+            .replaceAll("&amp;", "&")
+            .replaceAll("&lt;", "<")
+            .replaceAll("&gt;", ">")
+            .replaceAll("&quot;", "\"")
+            .replaceAll("&#39;", "'")
+            .replaceAll("\\s+", " ")  // Mehrfache Leerzeichen zu einem
+            .trim();
+        
+        // Maximale Länge begrenzen
+        if (cleaned.length() > 50) {
+            cleaned = cleaned.substring(0, 47) + "...";
+        }
+        
+        return cleaned;
+    }
+    
+    /**
      * Parst das JavaScript description Array Format
      * Format: description:['Kontostand: 53 745.30 HKD','Floating Profit: 0.00 HKD']
      */
-    private SignalData parseDescriptionArray(String htmlContent, String signalId) {
+    private SignalData parseDescriptionArray(String htmlContent, String signalId, String providerName) {
         Matcher matcher = descriptionArrayPattern.matcher(htmlContent);
         
         if (matcher.find()) {
-            try {
-                String line1 = matcher.group(1);  // z.B. "Kontostand: 53 745.30 HKD"
-                String line2 = matcher.group(2);  // z.B. "Floating Profit: 0.00 HKD"
-                
-                LOGGER.fine("Found description array: " + line1 + " | " + line2);
-                
-                // Parse Kontostand aus line1
-                ParseResult kontostandardResult = parseLineForKontostand(line1);
-                if (kontostandardResult == null) {
-                    LOGGER.warning("Could not parse Kontostand from: " + line1);
-                    return null;
-                }
-                
-                // Parse Floating Profit aus line2
-                ParseResult floatingResult = parseLineForFloatingProfit(line2);
-                if (floatingResult == null) {
-                    LOGGER.warning("Could not parse Floating Profit from: " + line2);
-                    // Setze Floating Profit auf 0.00 wenn nicht gefunden
-                    floatingResult = new ParseResult(0.0, kontostandardResult.currency);
-                }
-                
-                // Währungen müssen übereinstimmen
-                if (!kontostandardResult.currency.equals(floatingResult.currency)) {
-                    LOGGER.warning("Currency mismatch for signal " + signalId + 
-                                 ": Kontostand=" + kontostandardResult.currency + 
-                                 ", Floating=" + floatingResult.currency);
-                    floatingResult = new ParseResult(floatingResult.value, kontostandardResult.currency);
-                }
-                
-                // SignalData erstellen
-                SignalData signalData = new SignalData(
-                    signalId,
-                    kontostandardResult.value,
-                    floatingResult.value,
-                    kontostandardResult.currency,
-                    LocalDateTime.now()
-                );
-                
-                LOGGER.info("Description array parse successful for signal " + signalId + 
-                           ": Kontostand=" + kontostandardResult.value + " " + kontostandardResult.currency +
-                           ", Floating=" + floatingResult.value + " " + floatingResult.currency);
-                
-                return signalData;
-                
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error parsing description array for signal: " + signalId, e);
+            String balanceStr = matcher.group(1);
+            String floatingStr = matcher.group(2);
+            
+            LOGGER.info("Description Array gefunden für Signal " + signalId + ": [" + balanceStr + ", " + floatingStr + "]");
+            
+            // Equity parsen
+            EquityCurrencyPair equityPair = parseEquityFromString(balanceStr);
+            if (equityPair == null) {
+                LOGGER.warning("Equity konnte nicht geparst werden: " + balanceStr);
                 return null;
             }
+            
+            // Floating Profit parsen
+            EquityCurrencyPair floatingPair = parseFloatingFromString(floatingStr);
+            if (floatingPair == null) {
+                LOGGER.warning("Floating Profit konnte nicht geparst werden: " + floatingStr);
+                return null;
+            }
+            
+            // Währung validieren
+            if (!equityPair.currency.equals(floatingPair.currency)) {
+                LOGGER.warning("Währungen stimmen nicht überein: " + equityPair.currency + " vs " + floatingPair.currency);
+                return null;
+            }
+            
+            SignalData result = new SignalData(
+                signalId,
+                providerName,  // NEU: Provider-Name hinzufügen
+                equityPair.value,
+                floatingPair.value,
+                equityPair.currency,
+                LocalDateTime.now()
+            );
+            
+            LOGGER.info("SignalData erfolgreich aus Description Array erstellt: " + result.getSummary());
+            return result;
         }
         
+        LOGGER.fine("Kein Description Array gefunden für Signal: " + signalId);
         return null;
     }
     
     /**
-     * Parst im traditionellen Format (direkte Pattern im HTML)
+     * Parst traditionelles HTML-Format
      */
-    private SignalData parseTraditionalFormat(String htmlContent, String signalId) {
-        // Kontostand extrahieren
-        ParseResult kontostandardResult = extractKontostand(htmlContent);
-        if (kontostandardResult == null) {
-            LOGGER.warning("Kontostand nicht gefunden für Signal: " + signalId);
+    private SignalData parseTraditionalFormat(String htmlContent, String signalId, String providerName) {
+        LOGGER.info("Verwende traditionelles Pattern-Matching für Signal: " + signalId);
+        
+        // Equity parsen
+        EquityCurrencyPair equityPair = parseEquityFromHtml(htmlContent);
+        if (equityPair == null) {
+            LOGGER.warning("Equity konnte nicht aus HTML geparst werden für Signal: " + signalId);
             return null;
         }
         
-        // Floating Profit extrahieren
-        ParseResult floatingResult = extractFloatingProfit(htmlContent);
-        if (floatingResult == null) {
-            LOGGER.warning("Floating Profit nicht gefunden für Signal: " + signalId);
-            // Floating Profit als 0.00 setzen wenn nicht gefunden
-            floatingResult = new ParseResult(0.0, kontostandardResult.currency);
+        // Floating Profit parsen
+        EquityCurrencyPair floatingPair = parseFloatingFromHtml(htmlContent);
+        if (floatingPair == null) {
+            LOGGER.warning("Floating Profit konnte nicht aus HTML geparst werden für Signal: " + signalId);
+            return null;
         }
         
-        // Währungen müssen übereinstimmen
-        if (!kontostandardResult.currency.equals(floatingResult.currency)) {
-            LOGGER.warning("Währungen stimmen nicht überein für Signal " + signalId + 
-                         ": Kontostand=" + kontostandardResult.currency + 
-                         ", Floating=" + floatingResult.currency);
-            // Verwende Kontostand-Währung als Standard
-            floatingResult = new ParseResult(floatingResult.value, kontostandardResult.currency);
+        // Währung validieren
+        if (!equityPair.currency.equals(floatingPair.currency)) {
+            LOGGER.warning("Währungen stimmen nicht überein: " + equityPair.currency + " vs " + floatingPair.currency + " für Signal: " + signalId);
+            return null;
         }
         
-        // SignalData erstellen
-        SignalData signalData = new SignalData(
+        SignalData result = new SignalData(
             signalId,
-            kontostandardResult.value,
-            floatingResult.value,
-            kontostandardResult.currency,
+            providerName,  // NEU: Provider-Name hinzufügen
+            equityPair.value,
+            floatingPair.value,
+            equityPair.currency,
             LocalDateTime.now()
         );
         
-        LOGGER.info("Traditional parse successful for signal " + signalId + 
-                   ": Kontostand=" + kontostandardResult.value + " " + kontostandardResult.currency +
-                   ", Floating=" + floatingResult.value + " " + floatingResult.currency);
-        
-        return signalData;
+        LOGGER.info("SignalData erfolgreich aus traditionellem Format erstellt: " + result.getSummary());
+        return result;
     }
     
     /**
-     * Parst eine Zeile nach Kontostand-Informationen
+     * Parst Equity aus einer String-Zeile
      */
-    private ParseResult parseLineForKontostand(String line) {
-        // Alle Kontostand-Pattern versuchen
-        ParseResult result = tryParseWithPattern(line, kontostandardPattern, "Kontostand (main)");
-        if (result != null) return result;
-        
-        for (int i = 0; i < alternativeKontostandPatterns.length; i++) {
-            result = tryParseWithPattern(line, alternativeKontostandPatterns[i], 
-                                       "Kontostand (alt " + (i + 1) + ")");
-            if (result != null) return result;
-        }
-        
-        return null;
-    }
-    
-    /**
-     * Parst eine Zeile nach Floating Profit-Informationen
-     */
-    private ParseResult parseLineForFloatingProfit(String line) {
-        // Alle Floating Profit-Pattern versuchen
-        ParseResult result = tryParseWithPattern(line, floatingProfitPattern, "Floating Profit (main)");
-        if (result != null) return result;
-        
-        for (int i = 0; i < alternativeFloatingPatterns.length; i++) {
-            result = tryParseWithPattern(line, alternativeFloatingPatterns[i], 
-                                       "Floating Profit (alt " + (i + 1) + ")");
-            if (result != null) return result;
-        }
-        
-        return null;
-    }
-    
-    /**
-     * Extrahiert den Kontostand aus dem HTML
-     * 
-     * @param htmlContent Der HTML-Inhalt
-     * @return ParseResult mit Wert und Währung oder null
-     */
-    private ParseResult extractKontostand(String htmlContent) {
-        // Zuerst Hauptpattern versuchen
-        ParseResult result = tryParseWithPattern(htmlContent, kontostandardPattern, "Kontostand");
-        if (result != null) {
-            return result;
-        }
-        
-        // Alternative Pattern versuchen
-        for (int i = 0; i < alternativeKontostandPatterns.length; i++) {
-            result = tryParseWithPattern(htmlContent, alternativeKontostandPatterns[i], 
-                                       "Kontostand (Alternative " + (i + 1) + ")");
-            if (result != null) {
-                return result;
-            }
-        }
-        
-        LOGGER.warning("Kontostand Pattern nicht gefunden im HTML");
-        logHtmlSample(htmlContent, "Kontostand");
-        return null;
-    }
-    
-    /**
-     * Extrahiert den Floating Profit aus dem HTML
-     * 
-     * @param htmlContent Der HTML-Inhalt
-     * @return ParseResult mit Wert und Währung oder null
-     */
-    private ParseResult extractFloatingProfit(String htmlContent) {
-        // Zuerst Hauptpattern versuchen
-        ParseResult result = tryParseWithPattern(htmlContent, floatingProfitPattern, "Floating Profit");
-        if (result != null) {
-            return result;
-        }
-        
-        // Alternative Pattern versuchen
-        for (int i = 0; i < alternativeFloatingPatterns.length; i++) {
-            result = tryParseWithPattern(htmlContent, alternativeFloatingPatterns[i], 
-                                       "Floating Profit (Alternative " + (i + 1) + ")");
-            if (result != null) {
-                return result;
-            }
-        }
-        
-        LOGGER.warning("Floating Profit Pattern nicht gefunden im HTML");
-        logHtmlSample(htmlContent, "Floating Profit");
-        return null;
-    }
-    
-    /**
-     * Versucht ein Pattern zu matchen und zu parsen
-     * 
-     * @param htmlContent Der HTML-Inhalt
-     * @param pattern Das Pattern zum Matchen
-     * @param patternName Name des Patterns für Logging
-     * @return ParseResult oder null wenn nicht gefunden
-     */
-    private ParseResult tryParseWithPattern(String htmlContent, Pattern pattern, String patternName) {
-        Matcher matcher = pattern.matcher(htmlContent);
-        
+    private EquityCurrencyPair parseEquityFromString(String text) {
+        // Hauptpattern versuchen
+        Matcher matcher = kontostandardPattern.matcher(text);
         if (matcher.find()) {
-            try {
-                String valueStr = matcher.group(1);
-                String currency = matcher.group(2);
-                
-                // Kommas in Zahlen entfernen und parsen
-                double value = parseNumericValue(valueStr);
-                
-                LOGGER.fine(patternName + " gefunden: " + value + " " + currency);
-                return new ParseResult(value, currency);
-                
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Fehler beim Parsen von " + patternName + 
-                          " Match: " + matcher.group(0), e);
+            return createEquityCurrencyPair(matcher.group(1), matcher.group(2));
+        }
+        
+        // Alternative Pattern versuchen
+        for (Pattern pattern : alternativeKontostandPatterns) {
+            matcher = pattern.matcher(text);
+            if (matcher.find()) {
+                return createEquityCurrencyPair(matcher.group(1), matcher.group(2));
             }
         }
         
@@ -327,88 +308,105 @@ public class HTMLParser {
     }
     
     /**
-     * Parst einen numerischen Wert (entfernt Kommas, Leerzeichen und konvertiert zu double)
-     * 
-     * @param valueStr Der String mit dem numerischen Wert
-     * @return Der geparste double-Wert
+     * Parst Floating Profit aus einer String-Zeile
      */
-    private double parseNumericValue(String valueStr) throws NumberFormatException {
-        if (valueStr == null || valueStr.trim().isEmpty()) {
-            throw new NumberFormatException("Leerer Wert");
+    private EquityCurrencyPair parseFloatingFromString(String text) {
+        // Hauptpattern versuchen
+        Matcher matcher = floatingProfitPattern.matcher(text);
+        if (matcher.find()) {
+            return createEquityCurrencyPair(matcher.group(1), matcher.group(2));
         }
         
-        // Whitespace, Kommas und andere Trennzeichen entfernen
-        String cleanValue = valueStr.trim()
-            .replace(",", "")        // Englische Tausender-Trennung
-            .replace(" ", "")        // Deutsche/Französische Tausender-Trennung mit Leerzeichen
-            .replace("'", "")        // Schweizer Tausender-Trennung
-            .replace(".", ".");      // Dezimalpunkt normalisieren
-        
-        // Prüfe auf mehrere Punkte (bei falscher Behandlung von Tausender-Trennern)
-        int dotCount = cleanValue.length() - cleanValue.replace(".", "").length();
-        if (dotCount > 1) {
-            // Behandle den letzten Punkt als Dezimalpunkt, alle anderen als Tausender-Trenner
-            int lastDotIndex = cleanValue.lastIndexOf(".");
-            String integerPart = cleanValue.substring(0, lastDotIndex).replace(".", "");
-            String decimalPart = cleanValue.substring(lastDotIndex);
-            cleanValue = integerPart + decimalPart;
-        }
-        
-        return Double.parseDouble(cleanValue);
-    }
-    
-    /**
-     * Loggt einen HTML-Auszug für Debugging-Zwecke
-     * 
-     * @param htmlContent Der vollständige HTML-Inhalt
-     * @param context Kontext für das Logging
-     */
-    private void logHtmlSample(String htmlContent, String context) {
-        if (LOGGER.isLoggable(Level.FINE)) {
-            // Suche nach relevanten Bereichen im HTML
-            String[] searchTerms = {"description", "balance", "profit", "equity", "kontostand", "floating"};
-            
-            for (String term : searchTerms) {
-                int index = htmlContent.toLowerCase().indexOf(term.toLowerCase());
-                if (index >= 0) {
-                    int start = Math.max(0, index - 100);
-                    int end = Math.min(htmlContent.length(), index + 200);
-                    String sample = htmlContent.substring(start, end);
-                    
-                    LOGGER.fine(context + " - HTML-Auszug um '" + term + "': " + sample);
-                    break;
-                }
+        // Alternative Pattern versuchen
+        for (Pattern pattern : alternativeFloatingPatterns) {
+            matcher = pattern.matcher(text);
+            if (matcher.find()) {
+                return createEquityCurrencyPair(matcher.group(1), matcher.group(2));
             }
         }
+        
+        return null;
     }
     
     /**
-     * Validiert ob das HTML gültige MQL5-Signalseite zu sein scheint
-     * 
-     * @param htmlContent Der HTML-Inhalt
-     * @return true wenn gültig, false sonst
+     * Parst Equity aus HTML-Inhalt
      */
-    public boolean isValidMql5SignalPage(String htmlContent) {
-        if (htmlContent == null || htmlContent.trim().isEmpty()) {
-            return false;
+    private EquityCurrencyPair parseEquityFromHtml(String htmlContent) {
+        // Hauptpattern versuchen
+        Matcher matcher = kontostandardPattern.matcher(htmlContent);
+        if (matcher.find()) {
+            return createEquityCurrencyPair(matcher.group(1), matcher.group(2));
         }
         
-        // Prüfe auf charakteristische MQL5-Inhalte
-        String lowerContent = htmlContent.toLowerCase();
+        // Alternative Pattern versuchen
+        for (Pattern pattern : alternativeKontostandPatterns) {
+            matcher = pattern.matcher(htmlContent);
+            if (matcher.find()) {
+                return createEquityCurrencyPair(matcher.group(1), matcher.group(2));
+            }
+        }
         
-        return lowerContent.contains("mql5") &&
-               (lowerContent.contains("signal") || lowerContent.contains("account")) &&
-               (lowerContent.contains("balance") || lowerContent.contains("kontostand"));
+        return null;
     }
     
     /**
-     * Interne Klasse für Parse-Ergebnisse
+     * Parst Floating Profit aus HTML-Inhalt
      */
-    private static class ParseResult {
+    private EquityCurrencyPair parseFloatingFromHtml(String htmlContent) {
+        // Hauptpattern versuchen
+        Matcher matcher = floatingProfitPattern.matcher(htmlContent);
+        if (matcher.find()) {
+            return createEquityCurrencyPair(matcher.group(1), matcher.group(2));
+        }
+        
+        // Alternative Pattern versuchen
+        for (Pattern pattern : alternativeFloatingPatterns) {
+            matcher = pattern.matcher(htmlContent);
+            if (matcher.find()) {
+                return createEquityCurrencyPair(matcher.group(1), matcher.group(2));
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Erstellt ein EquityCurrencyPair aus Wert und Währung-Strings
+     */
+    private EquityCurrencyPair createEquityCurrencyPair(String valueStr, String currencyStr) {
+        try {
+            // Wert bereinigen und parsen
+            String cleanValue = valueStr.replaceAll("[^0-9.,-]", "").trim();
+            cleanValue = cleanValue.replace(",", "");  // Tausendertrennzeichen entfernen
+            
+            if (cleanValue.isEmpty()) {
+                return null;
+            }
+            
+            double value = Double.parseDouble(cleanValue);
+            String currency = currencyStr.trim().toUpperCase();
+            
+            if (currency.length() != 3) {
+                LOGGER.warning("Ungültige Währung: " + currency);
+                return null;
+            }
+            
+            return new EquityCurrencyPair(value, currency);
+            
+        } catch (NumberFormatException e) {
+            LOGGER.warning("Fehler beim Parsen des Wertes: " + valueStr + " -> " + e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Hilfsdatenklasse für Wert-Währung-Paare
+     */
+    private static class EquityCurrencyPair {
         final double value;
         final String currency;
         
-        ParseResult(double value, String currency) {
+        EquityCurrencyPair(double value, String currency) {
             this.value = value;
             this.currency = currency;
         }
