@@ -8,6 +8,7 @@ import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.layout.GridData;
+import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.*;
 
 import java.util.HashMap;
@@ -119,13 +120,13 @@ public class SignalProviderTable {
      * Konfiguriert das Tabellenverhalten
      */
     private void setupTableBehavior() {
-        // Doppelklick für Details
+        // NEU: Doppelklick für Tick-Chart
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseDoubleClick(MouseEvent e) {
                 TableItem[] selection = table.getSelection();
                 if (selection.length > 0) {
-                    showSignalDetails(selection[0]);
+                    openTickChart(selection[0]);
                 }
             }
         });
@@ -155,6 +156,18 @@ public class SignalProviderTable {
         
         new MenuItem(contextMenu, SWT.SEPARATOR);
         
+        // NEU: Tick-Chart Menü-Item
+        MenuItem chartItem = new MenuItem(contextMenu, SWT.PUSH);
+        chartItem.setText("Tick-Chart öffnen");
+        chartItem.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                openTickChartForSelected();
+            }
+        });
+        
+        new MenuItem(contextMenu, SWT.SEPARATOR);
+        
         MenuItem removeItem = new MenuItem(contextMenu, SWT.PUSH);
         removeItem.setText("Aus Tabelle entfernen");
         removeItem.addSelectionListener(new SelectionAdapter() {
@@ -163,6 +176,64 @@ public class SignalProviderTable {
                 removeSelectedProviders();
             }
         });
+    }
+    
+    /**
+     * NEU: Öffnet das Tick-Chart für eine Tabellenzeile
+     * 
+     * @param item Das Tabellen-Item
+     */
+    private void openTickChart(TableItem item) {
+        String signalId = item.getText(COL_SIGNAL_ID);
+        String providerName = item.getText(COL_PROVIDER_NAME);
+        SignalData signalData = lastSignalData.get(signalId);
+        
+        if (signalData == null) {
+            parentGui.showError("Fehler", "Keine Signaldaten für " + signalId + " verfügbar.");
+            return;
+        }
+        
+        // Tick-Datei-Pfad erstellen
+        String tickFilePath = parentGui.getMonitor().getConfig().getTickFilePath(signalId);
+        
+        try {
+            // Tick-Chart-Fenster öffnen
+            TickChartWindow chartWindow = new TickChartWindow(
+                parentGui.getShell(), 
+                parentGui, 
+                signalId, 
+                providerName, 
+                signalData, 
+                tickFilePath
+            );
+            chartWindow.open();
+            
+            LOGGER.info("Tick-Chart geöffnet für Signal: " + signalId + " (" + providerName + ")");
+            
+        } catch (Exception e) {
+            LOGGER.severe("Fehler beim Öffnen des Tick-Charts: " + e.getMessage());
+            parentGui.showError("Fehler beim Öffnen des Tick-Charts", 
+                               "Konnte Tick-Chart für " + signalId + " nicht öffnen:\n" + e.getMessage());
+        }
+    }
+    
+    /**
+     * NEU: Öffnet Tick-Chart für ausgewählte Provider
+     */
+    private void openTickChartForSelected() {
+        TableItem[] selectedItems = table.getSelection();
+        
+        if (selectedItems.length == 0) {
+            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen Provider aus.");
+            return;
+        }
+        
+        if (selectedItems.length > 1) {
+            parentGui.showInfo("Mehrfachauswahl", "Bitte wählen Sie nur einen Provider für das Tick-Chart aus.");
+            return;
+        }
+        
+        openTickChart(selectedItems[0]);
     }
     
     /**
