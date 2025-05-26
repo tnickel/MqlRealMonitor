@@ -33,14 +33,13 @@ import com.mql.realmonitor.data.TickDataLoader;
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * OHNE SWT-AWT BRIDGE: JFreeChart als Image-Rendering in SWT Canvas
+ * ERWEITERTE TICK CHART WINDOW MIT EQUITY DRAWDOWN
  * 
- * VORTEILE:
- * - Keine Threading-Konflikte
- * - Keine Bridge-Probleme
- * - Stabiles Rendering
- * - Vollständige SWT-Integration
- * - Bessere Performance
+ * Zeigt zwei Charts:
+ * 1. Hauptchart mit Equity, Floating Profit und Gesamtwert (obere Hälfte)
+ * 2. Drawdown-Chart mit Floating Profit in Prozent (untere Hälfte)
+ * 
+ * OHNE SWT-AWT BRIDGE: JFreeChart als Image-Rendering in SWT Canvas
  */
 public class TickChartWindow {
     
@@ -57,11 +56,15 @@ public class TickChartWindow {
     private Button zoomOutButton;
     private Button resetZoomButton;
     
-    // Chart Komponenten (nur für Rendering, nicht für Display)
-    private JFreeChart chart;
+    // Haupt-Chart Komponenten (obere Hälfte)
+    private JFreeChart mainChart;
     private TimeSeries equitySeries;
     private TimeSeries floatingProfitSeries;
     private TimeSeries totalValueSeries;
+    
+    // NEU: Drawdown-Chart Komponenten (untere Hälfte)
+    private JFreeChart drawdownChart;
+    private TimeSeries drawdownPercentSeries;
     
     // Daten
     private final String signalId;
@@ -74,10 +77,12 @@ public class TickChartWindow {
     private final MqlRealMonitorGUI parentGui;
     private final Display display;
     
-    // Chart-Image Verwaltung
-    private Image chartImage;
+    // Chart-Image Verwaltung (beide Charts)
+    private Image mainChartImage;
+    private Image drawdownChartImage;
     private int chartWidth = 800;
-    private int chartHeight = 400;
+    private int mainChartHeight = 300;  // Halb so groß wie vorher
+    private int drawdownChartHeight = 200; // Neuer Drawdown-Chart
     private double zoomFactor = 1.0;
     
     // Status-Flags
@@ -96,20 +101,20 @@ public class TickChartWindow {
         this.signalData = signalData;
         this.tickFilePath = tickFilePath;
         
-        LOGGER.info("Erstelle TickChartWindow OHNE Bridge für Signal: " + signalId + " (" + providerName + ")");
+        LOGGER.info("Erstelle erweiterte TickChartWindow mit Drawdown für Signal: " + signalId + " (" + providerName + ")");
         
         createWindow(parent);
-        createChart();
+        createCharts();
         loadDataAsync();
     }
     
     /**
-     * Erstellt das Hauptfenster
+     * Erstellt das Hauptfenster (erweiterte Höhe für beide Charts)
      */
     private void createWindow(Shell parent) {
         shell = new Shell(parent, SWT.SHELL_TRIM | SWT.MODELESS);
-        shell.setText("Tick Chart - " + signalId + " (" + providerName + ")");
-        shell.setSize(1000, 700);
+        shell.setText("Tick Chart + Drawdown - " + signalId + " (" + providerName + ")");
+        shell.setSize(1000, 900); // Erhöhte Höhe für beide Charts
         shell.setLayout(new GridLayout(1, false));
         
         // Fenster zentrieren
@@ -118,7 +123,7 @@ public class TickChartWindow {
         // Info-Panel erstellen
         createInfoPanel();
         
-        // Chart-Canvas erstellen (KEIN AWT!)
+        // Chart-Canvas erstellen (für beide Charts)
         createChartCanvas();
         
         // Button-Panel erstellen
@@ -127,7 +132,7 @@ public class TickChartWindow {
         // Event Handler
         setupEventHandlers();
         
-        LOGGER.info("TickChartWindow UI erstellt (OHNE Bridge) für Signal: " + signalId);
+        LOGGER.info("Erweiterte TickChartWindow UI erstellt für Signal: " + signalId);
     }
     
     /**
@@ -171,39 +176,44 @@ public class TickChartWindow {
     }
     
     /**
-     * KERN-INNOVATION: Chart-Canvas OHNE SWT-AWT Bridge
+     * ERWEITERT: Chart-Canvas für beide Charts
      */
     private void createChartCanvas() {
         Group chartGroup = new Group(shell, SWT.NONE);
-        chartGroup.setText("Tick Data Chart");
+        chartGroup.setText("Tick Charts (Haupt-Chart + Equity Drawdown)");
         chartGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         chartGroup.setLayout(new GridLayout(1, false));
         
-        // Reiner SWT Canvas für Chart-Anzeige
+        // Reiner SWT Canvas für beide Charts
         chartCanvas = new Canvas(chartGroup, SWT.BORDER | SWT.DOUBLE_BUFFERED);
         chartCanvas.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         chartCanvas.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
         
-        // Paint-Listener: Zeichnet das Chart-Image
+        // Paint-Listener: Zeichnet beide Chart-Images
         chartCanvas.addPaintListener(new PaintListener() {
             @Override
             public void paintControl(PaintEvent e) {
-                paintChart(e.gc);
+                paintBothCharts(e.gc);
             }
         });
         
-        // Resize-Listener: Chart bei Größenänderung neu rendern
+        // Resize-Listener: Charts bei Größenänderung neu rendern
         chartCanvas.addListener(SWT.Resize, event -> {
             Point size = chartCanvas.getSize();
             if (size.x > 0 && size.y > 0) {
                 chartWidth = size.x;
-                chartHeight = size.y;
-                LOGGER.info("Canvas Größe geändert: " + chartWidth + "x" + chartHeight);
-                renderChartToImage();
+                // Höhe aufteilen: 60% für Haupt-Chart, 40% für Drawdown-Chart
+                int totalHeight = size.y;
+                mainChartHeight = (int) (totalHeight * 0.6);
+                drawdownChartHeight = (int) (totalHeight * 0.4);
+                
+                LOGGER.info("Canvas Größe geändert: " + chartWidth + "x" + totalHeight + 
+                           " (Main: " + mainChartHeight + ", Drawdown: " + drawdownChartHeight + ")");
+                renderBothChartsToImages();
             }
         });
         
-        LOGGER.info("Chart-Canvas erstellt (SWT-only, keine Bridge)");
+        LOGGER.info("Chart-Canvas für beide Charts erstellt");
     }
     
     /**
@@ -259,7 +269,7 @@ public class TickChartWindow {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 zoomFactor *= 1.2;
-                renderChartToImage();
+                renderBothChartsToImages();
                 LOGGER.info("Zoom In: " + zoomFactor);
             }
         });
@@ -268,7 +278,7 @@ public class TickChartWindow {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 zoomFactor /= 1.2;
-                renderChartToImage();
+                renderBothChartsToImages();
                 LOGGER.info("Zoom Out: " + zoomFactor);
             }
         });
@@ -277,7 +287,7 @@ public class TickChartWindow {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 zoomFactor = 1.0;
-                renderChartToImage();
+                renderBothChartsToImages();
                 LOGGER.info("Zoom Reset");
             }
         });
@@ -297,9 +307,18 @@ public class TickChartWindow {
     }
     
     /**
-     * Erstellt das JFreeChart (nur für Rendering, nicht für Display)
+     * ERWEITERT: Erstellt beide JFreeCharts (Haupt-Chart + Drawdown-Chart)
      */
-    private void createChart() {
+    private void createCharts() {
+        createMainChart();
+        createDrawdownChart();
+        LOGGER.info("Beide Charts (Haupt + Drawdown) erstellt für Signal: " + signalId);
+    }
+    
+    /**
+     * Erstellt den Haupt-Chart (Equity, Floating Profit, Gesamtwert)
+     */
+    private void createMainChart() {
         // TimeSeries für die verschiedenen Datenreihen
         equitySeries = new TimeSeries("Equity (Kontostand)");
         floatingProfitSeries = new TimeSeries("Floating Profit");
@@ -311,8 +330,8 @@ public class TickChartWindow {
         dataset.addSeries(floatingProfitSeries);
         dataset.addSeries(totalValueSeries);
         
-        // Chart erstellen
-        chart = ChartFactory.createTimeSeriesChart(
+        // Haupt-Chart erstellen
+        mainChart = ChartFactory.createTimeSeriesChart(
             "Tick Daten - " + signalId + " (" + providerName + ")",
             "Zeit",
             "Wert",
@@ -322,17 +341,41 @@ public class TickChartWindow {
             false  // URLs
         );
         
-        // Chart konfigurieren
-        configureChart();
-        
-        LOGGER.info("JFreeChart (für Rendering) erstellt für Signal: " + signalId);
+        // Haupt-Chart konfigurieren
+        configureMainChart();
     }
     
     /**
-     * Konfiguriert das Chart (Farben, Renderer etc.)
+     * NEU: Erstellt den Drawdown-Chart (Floating Profit in Prozent)
      */
-    private void configureChart() {
-        XYPlot plot = chart.getXYPlot();
+    private void createDrawdownChart() {
+        // TimeSeries für Drawdown-Prozentsatz
+        drawdownPercentSeries = new TimeSeries("Equity Drawdown (%)");
+        
+        // TimeSeriesCollection für Drawdown
+        TimeSeriesCollection drawdownDataset = new TimeSeriesCollection();
+        drawdownDataset.addSeries(drawdownPercentSeries);
+        
+        // Drawdown-Chart erstellen
+        drawdownChart = ChartFactory.createTimeSeriesChart(
+            "Equity Drawdown (%)",
+            "Zeit",
+            "Prozent (%)",
+            drawdownDataset,
+            true,  // Legend
+            true,  // Tooltips
+            false  // URLs
+        );
+        
+        // Drawdown-Chart konfigurieren
+        configureDrawdownChart();
+    }
+    
+    /**
+     * Konfiguriert den Haupt-Chart (Farben, Renderer etc.)
+     */
+    private void configureMainChart() {
+        XYPlot plot = mainChart.getXYPlot();
         XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer();
         
         // Linien-Renderer konfigurieren
@@ -357,7 +400,7 @@ public class TickChartWindow {
         plot.setRenderer(renderer);
         
         // Hintergrund-Farben
-        chart.setBackgroundPaint(new Color(240, 240, 240));
+        mainChart.setBackgroundPaint(new Color(240, 240, 240));
         plot.setBackgroundPaint(Color.WHITE);
         plot.setDomainGridlinePaint(Color.LIGHT_GRAY);
         plot.setRangeGridlinePaint(Color.LIGHT_GRAY);
@@ -372,18 +415,91 @@ public class TickChartWindow {
     }
     
     /**
-     * KERN: Rendert JFreeChart als BufferedImage und konvertiert zu SWT Image
+     * NEU: Konfiguriert den Drawdown-Chart
      */
-    private void renderChartToImage() {
-        if (chart == null || chartWidth <= 0 || chartHeight <= 0) {
+    /**
+     * NEU: Konfiguriert den Drawdown-Chart (KORRIGIERT)
+     * Klasse: TickChartWindow
+     */
+    private void configureDrawdownChart() {
+        XYPlot plot = drawdownChart.getXYPlot();
+        XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer();
+        
+        // Linien-Renderer konfigurieren
+        renderer.setSeriesLinesVisible(0, true);
+        renderer.setSeriesShapesVisible(0, true);
+        
+        // Dynamische Farbe basierend auf Werten wird später in updateDrawdownChartColors() gesetzt
+        renderer.setSeriesPaint(0, Color.BLUE); // Standard-Farbe
+        renderer.setSeriesStroke(0, new BasicStroke(2.5f));
+        
+        plot.setRenderer(renderer);
+        
+        // Hintergrund-Farben
+        drawdownChart.setBackgroundPaint(new Color(250, 250, 250));
+        plot.setBackgroundPaint(Color.WHITE);
+        plot.setDomainGridlinePaint(Color.LIGHT_GRAY);
+        plot.setRangeGridlinePaint(Color.LIGHT_GRAY);
+        
+        // Grid sichtbar machen
+        plot.setDomainGridlinesVisible(true);
+        plot.setRangeGridlinesVisible(true);
+        
+        // Nulllinie hervorheben
+        plot.setRangeZeroBaselineVisible(true);
+        plot.setRangeZeroBaselinePaint(Color.BLACK);
+        plot.setRangeZeroBaselineStroke(new BasicStroke(1.0f));
+        
+        // Achsen-Labels
+        plot.getRangeAxis().setLabel("Drawdown (%)");
+        plot.getDomainAxis().setLabel("Zeit");
+        
+        // Y-Achse manuell konfigurieren (statt setAutoRangeIncludesZero)
+        plot.getRangeAxis().setAutoRange(true);
+        plot.getRangeAxis().setLowerMargin(0.1); // 10% Margin unten
+        plot.getRangeAxis().setUpperMargin(0.1); // 10% Margin oben
+    }
+    
+    /**
+     * NEU: Rendert beide Charts als BufferedImages
+     */
+    private void renderBothChartsToImages() {
+        if (mainChart == null || drawdownChart == null || chartWidth <= 0) {
             return;
         }
         
         try {
-            // JFreeChart als BufferedImage rendern (reines AWT, kein Display nötig)
-            BufferedImage bufferedImage = chart.createBufferedImage(
+            // Haupt-Chart rendern
+            renderMainChartToImage();
+            
+            // Drawdown-Chart rendern
+            renderDrawdownChartToImage();
+            
+            // Canvas neu zeichnen
+            if (!chartCanvas.isDisposed()) {
+                chartCanvas.redraw();
+            }
+            
+            LOGGER.fine("Beide Charts gerendert: Main=" + mainChartHeight + ", Drawdown=" + drawdownChartHeight);
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Rendern der Charts", e);
+        }
+    }
+    
+    /**
+     * Rendert den Haupt-Chart als Image
+     */
+    private void renderMainChartToImage() {
+        if (mainChart == null || mainChartHeight <= 0) {
+            return;
+        }
+        
+        try {
+            // JFreeChart als BufferedImage rendern
+            BufferedImage bufferedImage = mainChart.createBufferedImage(
                 (int)(chartWidth * zoomFactor), 
-                (int)(chartHeight * zoomFactor),
+                (int)(mainChartHeight * zoomFactor),
                 BufferedImage.TYPE_INT_RGB,
                 null
             );
@@ -392,22 +508,48 @@ public class TickChartWindow {
             ImageData imageData = convertBufferedImageToImageData(bufferedImage);
             
             // Alte Image-Ressource freigeben
-            if (chartImage != null && !chartImage.isDisposed()) {
-                chartImage.dispose();
+            if (mainChartImage != null && !mainChartImage.isDisposed()) {
+                mainChartImage.dispose();
             }
             
             // Neue SWT Image erstellen
-            chartImage = new Image(display, imageData);
-            
-            // Canvas neu zeichnen
-            if (!chartCanvas.isDisposed()) {
-                chartCanvas.redraw();
-            }
-            
-            LOGGER.fine("Chart als Image gerendert: " + chartWidth + "x" + chartHeight + " (Zoom: " + zoomFactor + ")");
+            mainChartImage = new Image(display, imageData);
             
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Rendern des Charts als Image", e);
+            LOGGER.log(Level.WARNING, "Fehler beim Rendern des Haupt-Charts", e);
+        }
+    }
+    
+    /**
+     * NEU: Rendert den Drawdown-Chart als Image
+     */
+    private void renderDrawdownChartToImage() {
+        if (drawdownChart == null || drawdownChartHeight <= 0) {
+            return;
+        }
+        
+        try {
+            // JFreeChart als BufferedImage rendern
+            BufferedImage bufferedImage = drawdownChart.createBufferedImage(
+                (int)(chartWidth * zoomFactor), 
+                (int)(drawdownChartHeight * zoomFactor),
+                BufferedImage.TYPE_INT_RGB,
+                null
+            );
+            
+            // BufferedImage zu SWT ImageData konvertieren
+            ImageData imageData = convertBufferedImageToImageData(bufferedImage);
+            
+            // Alte Image-Ressource freigeben
+            if (drawdownChartImage != null && !drawdownChartImage.isDisposed()) {
+                drawdownChartImage.dispose();
+            }
+            
+            // Neue SWT Image erstellen
+            drawdownChartImage = new Image(display, imageData);
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Rendern des Drawdown-Charts", e);
         }
     }
     
@@ -437,33 +579,51 @@ public class TickChartWindow {
     }
     
     /**
-     * Zeichnet das Chart-Image auf dem Canvas
+     * ERWEITERT: Zeichnet beide Charts untereinander auf dem Canvas
      */
-    private void paintChart(GC gc) {
+    private void paintBothCharts(GC gc) {
         // Canvas leeren
         gc.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
         gc.fillRectangle(chartCanvas.getBounds());
         
-        if (chartImage != null && !chartImage.isDisposed()) {
-            // Chart-Image zeichnen
-            org.eclipse.swt.graphics.Rectangle imageBounds = chartImage.getBounds();
-            org.eclipse.swt.graphics.Rectangle canvasBounds = chartCanvas.getBounds();
+        org.eclipse.swt.graphics.Rectangle canvasBounds = chartCanvas.getBounds();
+        
+        if (mainChartImage != null && !mainChartImage.isDisposed()) {
+            // Haupt-Chart oben zeichnen
+            org.eclipse.swt.graphics.Rectangle mainImageBounds = mainChartImage.getBounds();
+            int mainX = (canvasBounds.width - mainImageBounds.width) / 2;
+            int mainY = 5; // Kleiner Abstand oben
             
-            // Image zentriert zeichnen
-            int x = (canvasBounds.width - imageBounds.width) / 2;
-            int y = (canvasBounds.height - imageBounds.height) / 2;
+            gc.drawImage(mainChartImage, Math.max(0, mainX), mainY);
             
-            gc.drawImage(chartImage, Math.max(0, x), Math.max(0, y));
+            // Trennlinie zwischen den Charts
+            int separatorY = mainY + mainImageBounds.height + 5;
+            gc.setForeground(display.getSystemColor(SWT.COLOR_GRAY));
+            gc.drawLine(10, separatorY, canvasBounds.width - 10, separatorY);
+        }
+        
+        if (drawdownChartImage != null && !drawdownChartImage.isDisposed()) {
+            // Drawdown-Chart unten zeichnen
+            org.eclipse.swt.graphics.Rectangle drawdownImageBounds = drawdownChartImage.getBounds();
+            int drawdownX = (canvasBounds.width - drawdownImageBounds.width) / 2;
+            
+            // Y-Position: Nach dem Haupt-Chart + Separator
+            int drawdownY = 15; // Abstand für Separator
+            if (mainChartImage != null && !mainChartImage.isDisposed()) {
+                drawdownY += mainChartImage.getBounds().height + 15;
+            }
+            
+            gc.drawImage(drawdownChartImage, Math.max(0, drawdownX), drawdownY);
             
         } else if (!isDataLoaded) {
             // Loading-Message zeichnen
             gc.setForeground(display.getSystemColor(SWT.COLOR_DARK_GRAY));
-            gc.drawText("Chart wird geladen...", 20, 20, true);
+            gc.drawText("Charts werden geladen...", 20, 20, true);
             
         } else {
             // Error-Message zeichnen
             gc.setForeground(display.getSystemColor(SWT.COLOR_RED));
-            gc.drawText("Fehler beim Laden des Charts", 20, 20, true);
+            gc.drawText("Fehler beim Laden der Charts", 20, 20, true);
         }
     }
     
@@ -473,7 +633,7 @@ public class TickChartWindow {
     private void loadDataAsync() {
         new Thread(() -> {
             try {
-                LOGGER.info("Lade Tick-Daten für Signal: " + signalId + " von " + tickFilePath);
+                LOGGER.info("Lade Tick-Daten für erweiterte Charts - Signal: " + signalId + " von " + tickFilePath);
                 
                 // Tick-Daten laden
                 tickDataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
@@ -490,21 +650,21 @@ public class TickChartWindow {
                     return;
                 }
                 
-                LOGGER.info("Tick-Daten geladen: " + tickDataSet.getTickCount() + " Ticks für Signal: " + signalId);
+                LOGGER.info("Tick-Daten geladen: " + tickDataSet.getTickCount() + " Ticks für erweiterte Charts - Signal: " + signalId);
                 
-                // Chart-Daten aktualisieren
-                updateChartData();
+                // Chart-Daten aktualisieren (beide Charts)
+                updateBothChartsData();
                 
                 // UI-Updates im SWT Thread
                 display.asyncExec(() -> {
                     if (!isWindowClosed && !shell.isDisposed()) {
                         updateInfoPanel();
-                        renderChartToImage();
+                        renderBothChartsToImages();
                     }
                 });
                 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Fehler beim Laden der Tick-Daten für Signal: " + signalId, e);
+                LOGGER.log(Level.SEVERE, "Fehler beim Laden der Tick-Daten für erweiterte Charts - Signal: " + signalId, e);
                 
                 display.asyncExec(() -> {
                     if (!isWindowClosed && !shell.isDisposed()) {
@@ -512,41 +672,55 @@ public class TickChartWindow {
                     }
                 });
             }
-        }, "TickDataLoader-" + signalId).start();
+        }, "TickDataLoader-Extended-" + signalId).start();
     }
     
     /**
-     * Aktualisiert die Chart-Daten
+     * ERWEITERT: Aktualisiert die Daten für beide Charts
      */
-    private void updateChartData() {
-        if (tickDataSet == null || chart == null) {
+    private void updateBothChartsData() {
+        if (tickDataSet == null || mainChart == null || drawdownChart == null) {
             return;
         }
         
         try {
-            // Serien leeren
+            // Haupt-Chart Serien leeren
             equitySeries.clear();
             floatingProfitSeries.clear();
             totalValueSeries.clear();
             
-            // Tick-Daten zu den Serien hinzufügen
+            // NEU: Drawdown-Serie leeren
+            drawdownPercentSeries.clear();
+            
+            // Tick-Daten zu beiden Chart-Serien hinzufügen
             for (TickDataLoader.TickData tick : tickDataSet.getTicks()) {
                 Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
                 Second second = new Second(javaDate);
                 
+                // Haupt-Chart Daten
                 equitySeries.add(second, tick.getEquity());
                 floatingProfitSeries.add(second, tick.getFloatingProfit());
                 totalValueSeries.add(second, tick.getTotalValue());
+                
+                // NEU: Drawdown-Prozentsatz berechnen und hinzufügen
+                double drawdownPercent = calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit());
+                drawdownPercentSeries.add(second, drawdownPercent);
             }
             
             // Chart-Titel aktualisieren
-            chart.setTitle("Tick Daten - " + signalId + " (" + providerName + ") - " + 
-                          tickDataSet.getTickCount() + " Ticks");
+            mainChart.setTitle("Tick Daten - " + signalId + " (" + providerName + ") - " + 
+                              tickDataSet.getTickCount() + " Ticks");
             
-            // Y-Achsen-Bereich anpassen
-            adjustYAxisRange();
+            drawdownChart.setTitle("Equity Drawdown (%) - " + signalId + " (" + providerName + ")");
             
-            LOGGER.info("Chart-Daten aktualisiert: " + tickDataSet.getTickCount() + " Ticks hinzugefügt");
+            // Y-Achsen-Bereiche anpassen
+            adjustMainChartYAxisRange();
+            adjustDrawdownChartYAxisRange();
+            
+            // Drawdown-Chart Farben aktualisieren
+            updateDrawdownChartColors();
+            
+            LOGGER.info("Beide Charts aktualisiert: " + tickDataSet.getTickCount() + " Ticks hinzugefügt");
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler beim Aktualisieren der Chart-Daten", e);
@@ -554,14 +728,30 @@ public class TickChartWindow {
     }
     
     /**
-     * Passt den Y-Achsen-Bereich an
+     * NEU: Berechnet den Drawdown-Prozentsatz
+     * Drawdown (%) = (Floating Profit / Equity) * 100
+     * 
+     * @param equity Der Kontostand
+     * @param floatingProfit Der Floating Profit
+     * @return Der Drawdown-Prozentsatz
      */
-    private void adjustYAxisRange() {
-        if (chart == null || tickDataSet == null) {
+    private double calculateDrawdownPercent(double equity, double floatingProfit) {
+        if (equity == 0) {
+            return 0.0;
+        }
+        
+        return (floatingProfit / equity) * 100.0;
+    }
+    
+    /**
+     * Passt den Y-Achsen-Bereich des Haupt-Charts an
+     */
+    private void adjustMainChartYAxisRange() {
+        if (mainChart == null || tickDataSet == null) {
             return;
         }
         
-        XYPlot plot = chart.getXYPlot();
+        XYPlot plot = mainChart.getXYPlot();
         
         double minValue = Math.min(Math.min(tickDataSet.getMinEquity(), tickDataSet.getMinFloatingProfit()), 
                                   tickDataSet.getMinTotalValue());
@@ -580,6 +770,73 @@ public class TickChartWindow {
     }
     
     /**
+     * NEU: Passt den Y-Achsen-Bereich des Drawdown-Charts an
+     */
+    private void adjustDrawdownChartYAxisRange() {
+        if (drawdownChart == null || tickDataSet == null || drawdownPercentSeries.getItemCount() == 0) {
+            return;
+        }
+        
+        XYPlot plot = drawdownChart.getXYPlot();
+        
+        // Min/Max Drawdown-Prozentsätze finden
+        double minDrawdown = Double.MAX_VALUE;
+        double maxDrawdown = Double.MIN_VALUE;
+        
+        for (int i = 0; i < drawdownPercentSeries.getItemCount(); i++) {
+            double value = drawdownPercentSeries.getValue(i).doubleValue();
+            minDrawdown = Math.min(minDrawdown, value);
+            maxDrawdown = Math.max(maxDrawdown, value);
+        }
+        
+        // Symmetrischer Bereich um 0
+        double maxAbsValue = Math.max(Math.abs(minDrawdown), Math.abs(maxDrawdown));
+        double padding = Math.max(maxAbsValue * 0.1, 1.0); // Mindestens 1% Padding
+        
+        plot.getRangeAxis().setRange(-maxAbsValue - padding, maxAbsValue + padding);
+        plot.getDomainAxis().setAutoRange(true);
+        
+        LOGGER.fine("Drawdown Y-Achse angepasst: " + (-maxAbsValue - padding) + " bis " + (maxAbsValue + padding));
+    }
+    
+    /**
+     * NEU: Aktualisiert die Farben des Drawdown-Charts basierend auf positiven/negativen Werten
+     */
+    private void updateDrawdownChartColors() {
+        if (drawdownChart == null || drawdownPercentSeries.getItemCount() == 0) {
+            return;
+        }
+        
+        XYPlot plot = drawdownChart.getXYPlot();
+        XYLineAndShapeRenderer renderer = (XYLineAndShapeRenderer) plot.getRenderer();
+        
+        // Prüfe ob mehr positive oder negative Werte vorhanden sind
+        int positiveCount = 0;
+        int negativeCount = 0;
+        
+        for (int i = 0; i < drawdownPercentSeries.getItemCount(); i++) {
+            double value = drawdownPercentSeries.getValue(i).doubleValue();
+            if (value > 0) {
+                positiveCount++;
+            } else if (value < 0) {
+                negativeCount++;
+            }
+        }
+        
+        // Farbe basierend auf Mehrheit setzen
+        if (positiveCount > negativeCount) {
+            renderer.setSeriesPaint(0, new Color(0, 150, 0)); // Grün für überwiegend positive Werte
+            LOGGER.fine("Drawdown-Chart Farbe: Grün (mehr positive Werte)");
+        } else if (negativeCount > positiveCount) {
+            renderer.setSeriesPaint(0, new Color(200, 0, 0)); // Rot für überwiegend negative Werte
+            LOGGER.fine("Drawdown-Chart Farbe: Rot (mehr negative Werte)");
+        } else {
+            renderer.setSeriesPaint(0, new Color(0, 0, 200)); // Blau für ausgeglichen
+            LOGGER.fine("Drawdown-Chart Farbe: Blau (ausgeglichen)");
+        }
+    }
+    
+    /**
      * Zeigt initialen Info-Text
      */
     private void updateInfoPanelInitial() {
@@ -589,7 +846,7 @@ public class TickChartWindow {
     }
     
     /**
-     * Aktualisiert das Info-Panel
+     * ERWEITERT: Aktualisiert das Info-Panel mit Drawdown-Informationen
      */
     private void updateInfoPanel() {
         StringBuilder info = new StringBuilder();
@@ -608,13 +865,34 @@ public class TickChartWindow {
         StringBuilder details = new StringBuilder();
         
         if (tickDataSet != null && tickDataSet.getTickCount() > 0) {
-            details.append("=== Tick-Daten Statistik ===\n");
-            details.append("Rendering: JFreeChart ohne SWT-AWT Bridge\n");
+            details.append("=== Erweiterte Tick-Daten Statistik ===\n");
+            details.append("Rendering: JFreeChart ohne SWT-AWT Bridge (Dual-Chart)\n");
+            details.append("Charts: Haupt-Chart (Equity/Floating/Total) + Drawdown-Chart (%)\n");
             details.append("Datei: ").append(tickFilePath).append("\n");
             details.append("Anzahl Ticks: ").append(tickDataSet.getTickCount()).append("\n");
             details.append("Zeitraum: ").append(tickDataSet.getFirstTick().getTimestamp())
                    .append(" bis ").append(tickDataSet.getLatestTick().getTimestamp()).append("\n");
             details.append("Zoom-Faktor: ").append(String.format("%.2f", zoomFactor)).append("\n");
+            
+            // NEU: Drawdown-Statistiken
+            if (drawdownPercentSeries.getItemCount() > 0) {
+                double minDrawdown = Double.MAX_VALUE;
+                double maxDrawdown = Double.MIN_VALUE;
+                double avgDrawdown = 0.0;
+                
+                for (int i = 0; i < drawdownPercentSeries.getItemCount(); i++) {
+                    double value = drawdownPercentSeries.getValue(i).doubleValue();
+                    minDrawdown = Math.min(minDrawdown, value);
+                    maxDrawdown = Math.max(maxDrawdown, value);
+                    avgDrawdown += value;
+                }
+                avgDrawdown /= drawdownPercentSeries.getItemCount();
+                
+                details.append("\n=== Drawdown Statistik ===\n");
+                details.append("Min. Drawdown: ").append(String.format("%.2f%%", minDrawdown)).append("\n");
+                details.append("Max. Drawdown: ").append(String.format("%.2f%%", maxDrawdown)).append("\n");
+                details.append("Durchschn. Drawdown: ").append(String.format("%.2f%%", avgDrawdown)).append("\n");
+            }
         } else {
             details.append("Keine Tick-Daten verfügbar oder noch nicht geladen.\n");
         }
@@ -648,7 +926,7 @@ public class TickChartWindow {
      * Aktualisiert die Daten
      */
     private void refreshData() {
-        LOGGER.info("Manueller Refresh für Signal: " + signalId);
+        LOGGER.info("Manueller Refresh für erweiterte Charts - Signal: " + signalId);
         
         refreshButton.setEnabled(false);
         refreshButton.setText("Lädt...");
@@ -672,11 +950,14 @@ public class TickChartWindow {
     private void closeWindow() {
         isWindowClosed = true;
         
-        LOGGER.info("Schließe TickChartWindow (OHNE Bridge) für Signal: " + signalId);
+        LOGGER.info("Schließe erweiterte TickChartWindow für Signal: " + signalId);
         
         // Image-Ressourcen freigeben
-        if (chartImage != null && !chartImage.isDisposed()) {
-            chartImage.dispose();
+        if (mainChartImage != null && !mainChartImage.isDisposed()) {
+            mainChartImage.dispose();
+        }
+        if (drawdownChartImage != null && !drawdownChartImage.isDisposed()) {
+            drawdownChartImage.dispose();
         }
         
         // SWT-Ressourcen freigeben
@@ -690,7 +971,7 @@ public class TickChartWindow {
      */
     public void open() {
         shell.open();
-        LOGGER.info("TickChartWindow geöffnet (OHNE Bridge) für Signal: " + signalId);
+        LOGGER.info("Erweiterte TickChartWindow geöffnet für Signal: " + signalId);
     }
     
     /**

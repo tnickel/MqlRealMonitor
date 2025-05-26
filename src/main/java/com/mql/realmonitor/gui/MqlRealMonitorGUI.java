@@ -13,6 +13,7 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.*;
 
+import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -20,6 +21,7 @@ import java.util.logging.Level;
 /**
  * Haupt-GUI für MqlRealMonitor
  * Verwaltet die SWT-Oberfläche mit Tabelle und Steuerelementen
+ * GEÄNDERT: Intervall in Minuten + Vorladen der Favoriten beim Start
  */
 public class MqlRealMonitorGUI {
     
@@ -59,6 +61,9 @@ public class MqlRealMonitorGUI {
         createWidgets();
         
         this.statusUpdater = new StatusUpdater(this);
+        
+        // NEU: Tabelle sofort beim Erstellen initialisieren
+        initializeTableWithSavedData();
     }
     
     /**
@@ -130,6 +135,7 @@ public class MqlRealMonitorGUI {
     
     /**
      * Erstellt die Toolbar mit Steuerelementen
+     * GEÄNDERT: Label von "Stunden" zu "Minuten"
      */
     private void createToolbar() {
         Composite toolbar = new Composite(shell, SWT.NONE);
@@ -174,14 +180,14 @@ public class MqlRealMonitorGUI {
             }
         });
         
-        // Interval Label
+        // Interval Label - GEÄNDERT: von "Stunden" zu "Minuten"
         Label intervalLabel = new Label(toolbar, SWT.NONE);
-        intervalLabel.setText("Intervall (h):");
+        intervalLabel.setText("Intervall (min):");  // GEÄNDERT
         intervalLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
         
-        // Interval Text
+        // Interval Text - GEÄNDERT: Zeigt Minuten statt Stunden
         intervalText = new Text(toolbar, SWT.BORDER | SWT.RIGHT);
-        intervalText.setText(String.valueOf(monitor.getConfig().getIntervalHour()));
+        intervalText.setText(String.valueOf(monitor.getConfig().getIntervalMinutes())); // GEÄNDERT
         intervalText.setLayoutData(new GridData(40, SWT.DEFAULT));
         intervalText.addModifyListener(e -> updateInterval());
         
@@ -189,7 +195,7 @@ public class MqlRealMonitorGUI {
         new Label(toolbar, SWT.SEPARATOR | SWT.VERTICAL)
             .setLayoutData(new GridData(SWT.LEFT, SWT.FILL, false, false));
         
-        // Repair Button - NEU
+        // Repair Button
         Button repairButton = new Button(toolbar, SWT.PUSH);
         repairButton.setText("Tick-Dateien reparieren");
         repairButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
@@ -318,6 +324,7 @@ public class MqlRealMonitorGUI {
     
     /**
      * Aktualisiert das Intervall
+     * GEÄNDERT: Arbeitet jetzt mit Minuten statt Stunden
      */
     private void updateInterval() {
         try {
@@ -325,8 +332,8 @@ public class MqlRealMonitorGUI {
             if (!text.isEmpty()) {
                 int interval = Integer.parseInt(text);
                 if (interval > 0) {
-                    monitor.getConfig().setIntervalHour(interval);
-                    LOGGER.info("Intervall geändert auf: " + interval + " Stunden");
+                    monitor.getConfig().setIntervalMinutes(interval); // GEÄNDERT
+                    LOGGER.info("Intervall geändert auf: " + interval + " Minuten"); // GEÄNDERT
                 }
             }
         } catch (NumberFormatException e) {
@@ -336,16 +343,17 @@ public class MqlRealMonitorGUI {
     
     /**
      * Zeigt die Konfiguration an
+     * GEÄNDERT: Zeigt Minuten statt Stunden
      */
     private void showConfiguration() {
-        // TODO: Konfigurationsdialog implementieren
         MessageBox box = new MessageBox(shell, SWT.ICON_INFORMATION | SWT.OK);
         box.setMessage("Konfigurationsdialog wird in zukünftiger Version implementiert.\n\n" +
                       "Aktuelle Konfiguration:\n" +
                       "Basis-Pfad: " + monitor.getConfig().getBasePath() + "\n" +
                       "Favoriten-Datei: " + monitor.getConfig().getFavoritesFile() + "\n" +
                       "Download-Verzeichnis: " + monitor.getConfig().getDownloadDir() + "\n" +
-                      "Tick-Verzeichnis: " + monitor.getConfig().getTickDir());
+                      "Tick-Verzeichnis: " + monitor.getConfig().getTickDir() + "\n" +
+                      "Intervall: " + monitor.getConfig().getIntervalMinutes() + " Minuten"); // GEÄNDERT
         box.setText("Konfiguration");
         box.open();
     }
@@ -401,6 +409,121 @@ public class MqlRealMonitorGUI {
                 LOGGER.log(Level.SEVERE, "Fehler beim Starten der Reparatur", e);
                 showError("Fehler", "Konnte Reparatur nicht starten: " + e.getMessage());
             }
+        }
+    }
+    
+    /**
+     * NEU: Initialisiert die Tabelle beim Start mit gespeicherten Daten
+     * Wird direkt im Konstruktor aufgerufen - kein Timer!
+     */
+    private void initializeTableWithSavedData() {
+        try {
+            LOGGER.info("=== INITIALISIERE TABELLE MIT GESPEICHERTEN DATEN ===");
+            
+            // Favoriten-Reader erstellen
+            com.mql.realmonitor.downloader.FavoritesReader favoritesReader = 
+                new com.mql.realmonitor.downloader.FavoritesReader(monitor.getConfig());
+            
+            // TickDataWriter für das Lesen der letzten Einträge
+            com.mql.realmonitor.tickdata.TickDataWriter tickDataWriter = 
+                new com.mql.realmonitor.tickdata.TickDataWriter(monitor.getConfig());
+            
+            // Favoriten laden
+            List<String> favoriteIds = favoritesReader.readFavorites();
+            LOGGER.info("Gefundene Favoriten: " + favoriteIds.size());
+            
+            if (favoriteIds.isEmpty()) {
+                LOGGER.warning("Keine Favoriten gefunden!");
+                return;
+            }
+            
+            // Jede Signal-ID verarbeiten
+            int loadedCount = 0;
+            int totalCount = favoriteIds.size();
+            
+            for (String signalId : favoriteIds) {
+                if (signalId == null || signalId.trim().isEmpty()) {
+                    continue;
+                }
+                
+                LOGGER.info("Verarbeite Signal-ID: " + signalId);
+                
+                try {
+                    // Tick-Datei-Pfad ermitteln
+                    String tickFilePath = monitor.getConfig().getTickFilePath(signalId);
+                    LOGGER.info("Tick-Datei-Pfad: " + tickFilePath);
+                    
+                    // Prüfen ob Datei existiert
+                    java.io.File tickFile = new java.io.File(tickFilePath);
+                    if (!tickFile.exists()) {
+                        LOGGER.warning("Tick-Datei existiert nicht: " + tickFilePath);
+                        providerTable.updateProviderStatus(signalId, "Keine Datei");
+                        continue;
+                    }
+                    
+                    LOGGER.info("Tick-Datei gefunden, Größe: " + tickFile.length() + " Bytes");
+                    
+                    // Letzten Eintrag lesen
+                    LOGGER.info("Versuche letzten Tick-Eintrag zu lesen...");
+                    SignalData lastSignalData = tickDataWriter.readLastTickEntry(tickFilePath, signalId);
+                    
+                    if (lastSignalData != null) {
+                        LOGGER.info("SignalData erhalten: " + lastSignalData.toString());
+                        LOGGER.info("IsValid: " + lastSignalData.isValid());
+                        
+                        if (lastSignalData.isValid()) {
+                            LOGGER.info("Gültige Daten geladen: " + lastSignalData.getSummary());
+                            
+                            // Vollständige Provider-Daten in Tabelle anzeigen
+                            providerTable.updateProviderData(lastSignalData);
+                            providerTable.updateProviderStatus(signalId, "Geladen - " + lastSignalData.getFormattedTimestamp());
+                            loadedCount++;
+                        } else {
+                            LOGGER.warning("SignalData ist ungültig für Signal: " + signalId);
+                            LOGGER.warning("Details: SignalId=" + lastSignalData.getSignalId() + 
+                                         ", Currency=" + lastSignalData.getCurrency() + 
+                                         ", Equity=" + lastSignalData.getEquity() + 
+                                         ", Timestamp=" + lastSignalData.getTimestamp());
+                            providerTable.updateProviderStatus(signalId, "Ungültige Daten");
+                        }
+                    } else {
+                        LOGGER.warning("readLastTickEntry gab null zurück für Signal: " + signalId);
+                        
+                        // Versuche die Datei direkt zu lesen um zu sehen was drin steht
+                        try {
+                            java.nio.file.Path path = java.nio.file.Paths.get(tickFilePath);
+                            java.util.List<String> lines = java.nio.file.Files.readAllLines(path);
+                            LOGGER.info("Datei-Inhalt (" + lines.size() + " Zeilen):");
+                            for (int i = Math.max(0, lines.size() - 5); i < lines.size(); i++) {
+                                LOGGER.info("Zeile " + (i+1) + ": " + lines.get(i));
+                            }
+                        } catch (Exception fileEx) {
+                            LOGGER.log(Level.WARNING, "Konnte Datei nicht direkt lesen", fileEx);
+                        }
+                        
+                        providerTable.updateProviderStatus(signalId, "Keine Daten");
+                    }
+                    
+                } catch (Exception e) {
+                    LOGGER.log(Level.SEVERE, "Fehler beim Verarbeiten von Signal: " + signalId, e);
+                    providerTable.updateProviderStatus(signalId, "Fehler: " + e.getMessage());
+                }
+            }
+            
+            updateProviderCount();
+            String resultMessage = "Tabelle initialisiert: " + loadedCount + "/" + totalCount + " Provider geladen";
+            LOGGER.info("=== " + resultMessage + " ===");
+            
+            // Status in GUI setzen
+            display.asyncExec(() -> {
+                updateStatus(resultMessage);
+            });
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "FATALER FEHLER beim Initialisieren der Tabelle", e);
+            display.asyncExec(() -> {
+                updateStatus("Fehler beim Laden der Daten");
+            });
         }
     }
     
@@ -507,7 +630,7 @@ public class MqlRealMonitorGUI {
         shell.open();
         
         LOGGER.info("MqlRealMonitor GUI geöffnet");
-        updateStatus("MqlRealMonitor bereit");
+        updateStatus("MqlRealMonitor bereit - Daten geladen");
         
         // Event-Loop
         while (!shell.isDisposed()) {

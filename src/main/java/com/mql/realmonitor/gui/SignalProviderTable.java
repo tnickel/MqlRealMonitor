@@ -294,13 +294,12 @@ public class SignalProviderTable {
         TableItem item = signalIdToItem.get(signalId);
         
         if (item == null) {
-            // Neuen Provider mit Status hinzufügen
-            item = new TableItem(table, SWT.NONE);
-            item.setText(COL_SIGNAL_ID, signalId);
-            item.setText(COL_PROVIDER_NAME, "Lädt...");  // NEU: Platzhalter
-            signalIdToItem.put(signalId, item);
+            // Neuen Provider mit Status hinzufügen (für Vorladen der Favoriten)
+            addEmptyProviderEntry(signalId, status);
+            return;
         }
         
+        // Bestehenden Status aktualisieren
         item.setText(COL_STATUS, status);
         
         // Status-Farbe basierend auf Text
@@ -661,4 +660,48 @@ public class SignalProviderTable {
     public Table getTable() {
         return table;
     }
+    /**
+     * NEU: Fügt einen leeren Provider-Eintrag hinzu (nur mit Signal-ID)
+     * Wird beim Vorladen der Favoriten verwendet
+     * 
+     * @param signalId Die Signal-ID
+     * @param initialStatus Der initiale Status
+     */
+    public void addEmptyProviderEntry(String signalId, String initialStatus) {
+        if (signalId == null || signalId.trim().isEmpty()) {
+            return;
+        }
+        
+        // Prüfen ob bereits vorhanden
+        if (signalIdToItem.containsKey(signalId)) {
+            LOGGER.fine("Provider bereits in Tabelle: " + signalId);
+            return;
+        }
+        
+        // Neuen leeren Eintrag erstellen
+        TableItem item = new TableItem(table, SWT.NONE);
+        
+        // Nur Signal-ID und Status setzen, Rest bleibt leer
+        item.setText(COL_SIGNAL_ID, signalId);
+        item.setText(COL_PROVIDER_NAME, "Lädt...");  
+        item.setText(COL_STATUS, initialStatus != null ? initialStatus : "Nicht geladen");
+        item.setText(COL_EQUITY, "");
+        item.setText(COL_FLOATING, "");
+        item.setText(COL_TOTAL, "");
+        item.setText(COL_CURRENCY, "");
+        item.setText(COL_LAST_UPDATE, "");
+        item.setText(COL_CHANGE, "");
+        
+        // Status-Farbe setzen
+        Color statusColor = getStatusColor(initialStatus);
+        if (statusColor != null) {
+            item.setForeground(COL_STATUS, statusColor);
+        }
+        
+        // In Map eintragen
+        signalIdToItem.put(signalId, item);
+        
+        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt: " + signalId);
+    }
+
 }

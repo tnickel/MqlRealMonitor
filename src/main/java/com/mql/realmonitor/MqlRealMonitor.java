@@ -18,6 +18,7 @@ import java.util.logging.Level;
 /**
  * Hauptklasse für MqlRealMonitor
  * Orchestriert Download, Parsing und GUI-Updates für MQL5 Signalprovider-Monitoring
+ * GEÄNDERT: Intervall jetzt in Minuten statt Stunden
  */
 public class MqlRealMonitor {
     
@@ -69,6 +70,7 @@ public class MqlRealMonitor {
     
     /**
      * Startet den Monitor-Prozess
+     * GEÄNDERT: Intervall in Minuten statt Stunden
      */
     public void startMonitoring() {
         if (isRunning) {
@@ -82,16 +84,16 @@ public class MqlRealMonitor {
         // Ersten Download sofort starten
         scheduler.submit(this::performMonitoringCycle);
         
-        // Wiederkehrende Downloads planen
-        long intervalMinutes = config.getIntervalHour() * 60;
+        // Wiederkehrende Downloads planen - GEÄNDERT: Minuten statt Stunden
+        long intervalMinutes = config.getIntervalMinutes();
         scheduler.scheduleAtFixedRate(
             this::performMonitoringCycle,
             intervalMinutes,
             intervalMinutes,
-            TimeUnit.MINUTES
+            TimeUnit.MINUTES  // GEÄNDERT: MINUTES statt vorher umgerechnete Minuten
         );
         
-        gui.updateStatus("Monitoring gestartet - Intervall: " + config.getIntervalHour() + " Stunden");
+        gui.updateStatus("Monitoring gestartet - Intervall: " + config.getIntervalMinutes() + " Minuten"); // GEÄNDERT
     }
     
     /**
@@ -187,7 +189,7 @@ public class MqlRealMonitor {
             }
             
             gui.updateStatus("Monitoring-Zyklus abgeschlossen - Nächster in " + 
-                           config.getIntervalHour() + " Stunden");
+                           config.getIntervalMinutes() + " Minuten"); // GEÄNDERT
             LOGGER.info("Monitoring-Zyklus erfolgreich abgeschlossen");
             
         } catch (Exception e) {

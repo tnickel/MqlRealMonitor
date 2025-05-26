@@ -11,6 +11,7 @@ import java.util.logging.Level;
 /**
  * Konfigurationsverwaltung für MqlRealMonitor
  * Verwaltet alle konfigurierbaren Parameter und Pfade
+ * GEÄNDERT: Intervall jetzt in Minuten statt Stunden
  */
 public class MqlRealMonitorConfig {
     
@@ -18,20 +19,20 @@ public class MqlRealMonitorConfig {
     
     // Standard-Pfade
     private static final String BASE_PATH = "C:\\Forex\\MqlAnalyzer";
-    private static final String CONFIG_DIR = BASE_PATH + "\\conf";
+    private static final String CONFIG_DIR = BASE_PATH + "\\config";  // KORRIGIERT: config statt conf
     private static final String CONFIG_FILE = CONFIG_DIR + "\\MqlRealMonitorConfig.txt";
     private static final String FAVORITES_FILE = BASE_PATH + "\\config\\favorites.txt";
     private static final String DOWNLOAD_DIR = BASE_PATH + "\\Realtick\\download";
     private static final String TICK_DIR = BASE_PATH + "\\Realtick\\tick";
     
-    // Standard-Konfigurationswerte
-    private static final int DEFAULT_INTERVAL_HOUR = 1;
+    // Standard-Konfigurationswerte - GEÄNDERT: Intervall in Minuten
+    private static final int DEFAULT_INTERVAL_MINUTES = 15; // GEÄNDERT: von 1 Stunde zu 15 Minuten
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;
     private static final String DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
     private static final String DEFAULT_URL_TEMPLATE = "https://www.mql5.com/de/signals/%s?source=Site+Signals+Subscriptions#!tab=account";
     
-    // Konfigurationsvariablen
-    private int intervalHour;
+    // Konfigurationsvariablen - GEÄNDERT: intervalHour → intervalMinutes
+    private int intervalMinutes;
     private int timeoutSeconds;
     private String userAgent;
     private String urlTemplate;
@@ -52,7 +53,7 @@ public class MqlRealMonitorConfig {
      * Setzt Standard-Konfigurationswerte
      */
     private void setDefaultValues() {
-        this.intervalHour = DEFAULT_INTERVAL_HOUR;
+        this.intervalMinutes = DEFAULT_INTERVAL_MINUTES; // GEÄNDERT
         this.timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
         this.userAgent = DEFAULT_USER_AGENT;
         this.urlTemplate = DEFAULT_URL_TEMPLATE;
@@ -118,9 +119,21 @@ public class MqlRealMonitorConfig {
     
     /**
      * Parst die Properties und setzt die Konfigurationswerte
+     * GEÄNDERT: intervalHour → intervalMinutes mit Rückwärtskompatibilität
      */
     private void parseProperties() {
-        intervalHour = getIntProperty("intervalHour", DEFAULT_INTERVAL_HOUR);
+        // Rückwärtskompatibilität: Prüfe erst auf neue intervalMinutes, dann auf alte intervalHour
+        if (properties.containsKey("intervalMinutes")) {
+            intervalMinutes = getIntProperty("intervalMinutes", DEFAULT_INTERVAL_MINUTES);
+        } else if (properties.containsKey("intervalHour")) {
+            // Konvertiere alte Stunden-Werte zu Minuten
+            int oldHours = getIntProperty("intervalHour", 1);
+            intervalMinutes = oldHours * 60;
+            LOGGER.info("Konvertiere alten Stunden-Wert (" + oldHours + "h) zu Minuten: " + intervalMinutes + " min");
+        } else {
+            intervalMinutes = DEFAULT_INTERVAL_MINUTES;
+        }
+        
         timeoutSeconds = getIntProperty("timeoutSeconds", DEFAULT_TIMEOUT_SECONDS);
         userAgent = properties.getProperty("userAgent", DEFAULT_USER_AGENT);
         urlTemplate = properties.getProperty("urlTemplate", DEFAULT_URL_TEMPLATE);
@@ -133,9 +146,10 @@ public class MqlRealMonitorConfig {
     
     /**
      * Aktualisiert Properties aus aktuellen Werten
+     * GEÄNDERT: intervalHour → intervalMinutes
      */
     private void updateProperties() {
-        properties.setProperty("intervalHour", String.valueOf(intervalHour));
+        properties.setProperty("intervalMinutes", String.valueOf(intervalMinutes)); // GEÄNDERT
         properties.setProperty("timeoutSeconds", String.valueOf(timeoutSeconds));
         properties.setProperty("userAgent", userAgent);
         properties.setProperty("urlTemplate", urlTemplate);
@@ -144,6 +158,9 @@ public class MqlRealMonitorConfig {
         properties.setProperty("favoritesFile", favoritesFile);
         properties.setProperty("downloadDir", downloadDir);
         properties.setProperty("tickDir", tickDir);
+        
+        // Alte intervalHour Property entfernen falls vorhanden
+        properties.remove("intervalHour");
     }
     
     /**
@@ -182,20 +199,32 @@ public class MqlRealMonitorConfig {
     
     /**
      * Loggt die aktuelle Konfiguration
+     * GEÄNDERT: Zeigt Minuten statt Stunden
      */
     private void logCurrentConfig() {
         LOGGER.info("Aktuelle Konfiguration:");
-        LOGGER.info("  Intervall (Stunden): " + intervalHour);
+        LOGGER.info("  Intervall (Minuten): " + intervalMinutes); // GEÄNDERT
         LOGGER.info("  Timeout (Sekunden): " + timeoutSeconds);
         LOGGER.info("  Favoriten-Datei: " + favoritesFile);
         LOGGER.info("  Download-Verzeichnis: " + downloadDir);
         LOGGER.info("  Tick-Verzeichnis: " + tickDir);
     }
     
-    // Getter-Methoden
+    // Getter-Methoden - GEÄNDERT: intervalHour → intervalMinutes
     
+    /**
+     * GEÄNDERT: Gibt das Intervall in Minuten zurück (vorher Stunden)
+     */
+    public int getIntervalMinutes() {
+        return intervalMinutes;
+    }
+    
+    /**
+     * DEPRECATED: Für Rückwärtskompatibilität - verwende getIntervalMinutes()
+     */
+    @Deprecated
     public int getIntervalHour() {
-        return intervalHour;
+        return Math.max(1, intervalMinutes / 60); // Mindestens 1 Stunde
     }
     
     public int getTimeoutSeconds() {
@@ -251,11 +280,24 @@ public class MqlRealMonitorConfig {
         return tickDir + "\\" + signalId + ".txt";
     }
     
-    // Setter-Methoden für Konfigurationsänderungen
+    // Setter-Methoden für Konfigurationsänderungen - GEÄNDERT
     
+    /**
+     * GEÄNDERT: Setzt das Intervall in Minuten (vorher Stunden)
+     */
+    public void setIntervalMinutes(int intervalMinutes) {
+        if (intervalMinutes > 0) {
+            this.intervalMinutes = intervalMinutes;
+        }
+    }
+    
+    /**
+     * DEPRECATED: Für Rückwärtskompatibilität - verwende setIntervalMinutes()
+     */
+    @Deprecated
     public void setIntervalHour(int intervalHour) {
         if (intervalHour > 0) {
-            this.intervalHour = intervalHour;
+            this.intervalMinutes = intervalHour * 60;
         }
     }
     
@@ -275,7 +317,7 @@ public class MqlRealMonitorConfig {
      * Validiert die aktuelle Konfiguration
      */
     public boolean isValid() {
-        return intervalHour > 0 && 
+        return intervalMinutes > 0 && 
                timeoutSeconds > 0 && 
                userAgent != null && !userAgent.trim().isEmpty() &&
                urlTemplate != null && !urlTemplate.trim().isEmpty();

@@ -16,7 +16,7 @@ public class SignalData {
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
     public static final DateTimeFormatter FILE_TIMESTAMP_FORMATTER = 
-        DateTimeFormatter.ofPattern("dd.MM.yyyy,HH:mm:ss");
+    	    DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss");  // KORRIGIERT: Leerzeichen statt Komma
     
     private final String signalId;
     private final String providerName;  // NEU: Provider-Name
