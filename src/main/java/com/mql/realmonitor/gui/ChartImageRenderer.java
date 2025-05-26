@@ -10,7 +10,8 @@ import org.eclipse.swt.widgets.Display;
 import org.jfree.chart.JFreeChart;
 
 /**
- * Rendert JFreeChart Objekte zu SWT Images
+ * VEREINFACHT: Rendert nur den Drawdown-Chart zu SWT Images
+ * Haupt-Chart wurde entfernt - nur noch Drawdown-Chart wird gerendert
  */
 public class ChartImageRenderer {
     
@@ -18,8 +19,7 @@ public class ChartImageRenderer {
     
     private final Display display;
     
-    // Chart-Images
-    private Image mainChartImage;
+    // Chart-Image - NUR DRAWDOWN
     private Image drawdownChartImage;
     
     /**
@@ -30,78 +30,28 @@ public class ChartImageRenderer {
     }
     
     /**
-     * Rendert beide Charts zu Images
+     * VEREINFACHT: Rendert nur den Drawdown-Chart zu einem Image
      * 
-     * @param mainChart Der Haupt-Chart
      * @param drawdownChart Der Drawdown-Chart
-     * @param chartWidth Die Breite der Charts
-     * @param mainChartHeight Die Höhe des Haupt-Charts
+     * @param chartWidth Die Breite des Charts
      * @param drawdownChartHeight Die Höhe des Drawdown-Charts
      * @param zoomFactor Der Zoom-Faktor
      */
-    public void renderBothChartsToImages(JFreeChart mainChart, JFreeChart drawdownChart,
-                                        int chartWidth, int mainChartHeight, int drawdownChartHeight,
-                                        double zoomFactor) {
-        if (mainChart == null || drawdownChart == null || chartWidth <= 0) {
+    public void renderDrawdownChartToImage(JFreeChart drawdownChart,
+                                          int chartWidth, int drawdownChartHeight,
+                                          double zoomFactor) {
+        if (drawdownChart == null || chartWidth <= 0 || drawdownChartHeight <= 0) {
+            LOGGER.warning("Ungültige Parameter für Drawdown-Chart Rendering: " +
+                          "Chart=" + (drawdownChart != null) + 
+                          ", Width=" + chartWidth + 
+                          ", Height=" + drawdownChartHeight);
             return;
         }
         
         try {
-            // Haupt-Chart rendern
-            renderMainChartToImage(mainChart, chartWidth, mainChartHeight, zoomFactor);
+            LOGGER.info("Rendere Drawdown-Chart: " + chartWidth + "x" + drawdownChartHeight + 
+                       " (Zoom: " + zoomFactor + ")");
             
-            // Drawdown-Chart rendern
-            renderDrawdownChartToImage(drawdownChart, chartWidth, drawdownChartHeight, zoomFactor);
-            
-            LOGGER.fine("Beide Charts gerendert: Main=" + mainChartHeight + ", Drawdown=" + drawdownChartHeight);
-            
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Rendern der Charts", e);
-        }
-    }
-    
-    /**
-     * Rendert den Haupt-Chart als Image
-     */
-    private void renderMainChartToImage(JFreeChart mainChart, int chartWidth, int mainChartHeight, double zoomFactor) {
-        if (mainChart == null || mainChartHeight <= 0) {
-            return;
-        }
-        
-        try {
-            // JFreeChart als BufferedImage rendern
-            BufferedImage bufferedImage = mainChart.createBufferedImage(
-                (int)(chartWidth * zoomFactor), 
-                (int)(mainChartHeight * zoomFactor),
-                BufferedImage.TYPE_INT_RGB,
-                null
-            );
-            
-            // BufferedImage zu SWT ImageData konvertieren
-            ImageData imageData = convertBufferedImageToImageData(bufferedImage);
-            
-            // Alte Image-Ressource freigeben
-            if (mainChartImage != null && !mainChartImage.isDisposed()) {
-                mainChartImage.dispose();
-            }
-            
-            // Neue SWT Image erstellen
-            mainChartImage = new Image(display, imageData);
-            
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Rendern des Haupt-Charts", e);
-        }
-    }
-    
-    /**
-     * Rendert den Drawdown-Chart als Image
-     */
-    private void renderDrawdownChartToImage(JFreeChart drawdownChart, int chartWidth, int drawdownChartHeight, double zoomFactor) {
-        if (drawdownChart == null || drawdownChartHeight <= 0) {
-            return;
-        }
-        
-        try {
             // JFreeChart als BufferedImage rendern
             BufferedImage bufferedImage = drawdownChart.createBufferedImage(
                 (int)(chartWidth * zoomFactor), 
@@ -121,9 +71,25 @@ public class ChartImageRenderer {
             // Neue SWT Image erstellen
             drawdownChartImage = new Image(display, imageData);
             
+            LOGGER.info("Drawdown-Chart erfolgreich gerendert");
+            
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Fehler beim Rendern des Drawdown-Charts", e);
         }
+    }
+    
+    /**
+     * @deprecated Der Haupt-Chart wurde entfernt - verwende renderDrawdownChartToImage()
+     */
+    @Deprecated
+    public void renderBothChartsToImages(JFreeChart mainChart, JFreeChart drawdownChart,
+                                        int chartWidth, int mainChartHeight, int drawdownChartHeight,
+                                        double zoomFactor) {
+        LOGGER.warning("renderBothChartsToImages() aufgerufen - Haupt-Chart wurde entfernt!");
+        LOGGER.info("Fallback: Rendere nur Drawdown-Chart");
+        
+        // Fallback: Verwende die neue Methode
+        renderDrawdownChartToImage(drawdownChart, chartWidth, drawdownChartHeight, zoomFactor);
     }
     
     /**
@@ -156,25 +122,34 @@ public class ChartImageRenderer {
      * Gibt die Chart-Images frei
      */
     public void disposeImages() {
-        if (mainChartImage != null && !mainChartImage.isDisposed()) {
-            mainChartImage.dispose();
-        }
         if (drawdownChartImage != null && !drawdownChartImage.isDisposed()) {
             drawdownChartImage.dispose();
         }
     }
     
-    // Getter-Methoden
-    public Image getMainChartImage() {
-        return mainChartImage;
-    }
-    
+    // Getter-Methoden - NUR DRAWDOWN
     public Image getDrawdownChartImage() {
         return drawdownChartImage;
     }
     
+    /**
+     * @deprecated Der Haupt-Chart wurde entfernt - verwende getDrawdownChartImage()
+     */
+    @Deprecated
+    public Image getMainChartImage() {
+        LOGGER.warning("getMainChartImage() aufgerufen - Haupt-Chart wurde entfernt!");
+        return null;
+    }
+    
+    public boolean hasValidDrawdownImage() {
+        return drawdownChartImage != null && !drawdownChartImage.isDisposed();
+    }
+    
+    /**
+     * @deprecated Verwende hasValidDrawdownImage()
+     */
+    @Deprecated
     public boolean hasValidImages() {
-        return mainChartImage != null && !mainChartImage.isDisposed() &&
-               drawdownChartImage != null && !drawdownChartImage.isDisposed();
+        return hasValidDrawdownImage();
     }
 }

@@ -4,7 +4,7 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.time.ZoneId;
 import java.util.Date;
- import java.util.List;
+import java.util.List;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -19,22 +19,16 @@ import org.jfree.data.time.TimeSeriesCollection;
 import com.mql.realmonitor.data.TickDataLoader;
 
 /**
- * VERBESSERT: Verwaltet die JFreeChart Objekte für Tick-Charts
- * Erstellt und konfiguriert Haupt-Chart und Drawdown-Chart
- * ALLE PROBLEME BEHOBEN: Robuste Diagnostik und Fehlerbehandlung
+ * VEREINFACHT: Verwaltet nur den Drawdown-Chart (Haupt-Chart entfernt)
+ * Erstellt und konfiguriert ausschließlich den Drawdown-Chart
+ * ALLE PROBLEME BEHOBEN: Robuste Diagnostik und Fehlerbehandlung nur für Drawdown
  */
 public class TickChartManager {
     
     private static final Logger LOGGER = Logger.getLogger(TickChartManager.class.getName());
     
-    // Chart Komponenten
-    private JFreeChart mainChart;
+    // Chart Komponenten - NUR DRAWDOWN
     private JFreeChart drawdownChart;
-    
-    // TimeSeries für Haupt-Chart
-    private TimeSeries equitySeries;
-    private TimeSeries floatingProfitSeries;
-    private TimeSeries totalValueSeries;
     
     // TimeSeries für Drawdown-Chart
     private TimeSeries drawdownPercentSeries;
@@ -42,7 +36,7 @@ public class TickChartManager {
     private final String signalId;
     private final String providerName;
     
-    // NEUER DEBUG-COUNTER
+    // DEBUG-COUNTER
     private int updateCounter = 0;
     
     /**
@@ -51,50 +45,11 @@ public class TickChartManager {
     public TickChartManager(String signalId, String providerName) {
         this.signalId = signalId;
         this.providerName = providerName;
-        createBothCharts();
-    }
-    
-    /**
-     * Erstellt beide JFreeCharts
-     */
-    private void createBothCharts() {
-        createMainChart();
         createDrawdownChart();
-        LOGGER.info("=== CHARTS ERSTELLT für Signal: " + signalId + " ===");
     }
     
     /**
-     * Erstellt den Haupt-Chart (Equity, Floating Profit, Gesamtwert)
-     */
-    private void createMainChart() {
-        // TimeSeries für die verschiedenen Datenreihen
-        equitySeries = new TimeSeries("Equity (Kontostand)");
-        floatingProfitSeries = new TimeSeries("Floating Profit");
-        totalValueSeries = new TimeSeries("Gesamtwert");
-        
-        // TimeSeriesCollection erstellen
-        TimeSeriesCollection dataset = new TimeSeriesCollection();
-        dataset.addSeries(equitySeries);
-        dataset.addSeries(floatingProfitSeries);
-        dataset.addSeries(totalValueSeries);
-        
-        // Haupt-Chart erstellen
-        mainChart = ChartFactory.createTimeSeriesChart(
-            "Tick Daten - " + signalId + " (" + providerName + ")",
-            "Zeit",
-            "Wert",
-            dataset,
-            true,  // Legend
-            true,  // Tooltips
-            false  // URLs
-        );
-        
-        // Haupt-Chart konfigurieren
-        configureMainChart();
-    }
-    
-    /**
-     * Erstellt den Drawdown-Chart (Floating Profit in Prozent)
+     * Erstellt nur den Drawdown-Chart
      */
     private void createDrawdownChart() {
         // TimeSeries für Drawdown-Prozentsatz
@@ -106,7 +61,7 @@ public class TickChartManager {
         
         // Drawdown-Chart erstellen
         drawdownChart = ChartFactory.createTimeSeriesChart(
-            "Equity Drawdown (%) - Auto-Kalibriert - DIAGNOSEMODUS",
+            "Equity Drawdown (%) - " + signalId + " (" + providerName + ") - DIAGNOSEMODUS",
             "Zeit",
             "Prozent (%)",
             drawdownDataset,
@@ -117,54 +72,12 @@ public class TickChartManager {
         
         // Drawdown-Chart konfigurieren
         configureDrawdownChart();
-    }
-    
-    /**
-     * Konfiguriert den Haupt-Chart (Farben, Renderer etc.)
-     */
-    private void configureMainChart() {
-        XYPlot plot = mainChart.getXYPlot();
-        XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer();
         
-        // Linien-Renderer konfigurieren
-        renderer.setSeriesLinesVisible(0, true);  // Equity
-        renderer.setSeriesShapesVisible(0, false);
-        renderer.setSeriesLinesVisible(1, true);  // Floating Profit
-        renderer.setSeriesShapesVisible(1, false);
-        renderer.setSeriesLinesVisible(2, true);  // Total Value
-        renderer.setSeriesShapesVisible(2, false);
-        
-        // Farben setzen
-        renderer.setSeriesPaint(0, new Color(255, 200, 0));  // Equity in Gelb
-        renderer.setSeriesPaint(1, Color.RED);               // Floating Profit in Rot
-        renderer.setSeriesPaint(2, new Color(0, 200, 0));    // Gesamtwert in Grün
-        
-        // Linienstärke
-        renderer.setSeriesStroke(0, new BasicStroke(2.0f));
-        renderer.setSeriesStroke(1, new BasicStroke(2.0f));
-        renderer.setSeriesStroke(2, new BasicStroke(2.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 
-                                                    1.0f, new float[]{5.0f, 5.0f}, 0.0f)); // Gestrichelt
-        
-        plot.setRenderer(renderer);
-        
-        // Hintergrund-Farben
-        mainChart.setBackgroundPaint(new Color(240, 240, 240));
-        plot.setBackgroundPaint(Color.WHITE);
-        plot.setDomainGridlinePaint(Color.LIGHT_GRAY);
-        plot.setRangeGridlinePaint(Color.LIGHT_GRAY);
-        
-        // Grid sichtbar machen
-        plot.setDomainGridlinesVisible(true);
-        plot.setRangeGridlinesVisible(true);
-        
-        // Achsen-Labels
-        plot.getRangeAxis().setLabel("Wert (USD)");
-        plot.getDomainAxis().setLabel("Zeit");
+        LOGGER.info("=== DRAWDOWN-CHART ERSTELLT für Signal: " + signalId + " ===");
     }
     
     /**
      * Konfiguriert den Drawdown-Chart
-     * VERBESSERT: Shapes immer sichtbar für Ein-Punkt-Darstellung
      */
     private void configureDrawdownChart() {
         XYPlot plot = drawdownChart.getXYPlot();
@@ -172,7 +85,7 @@ public class TickChartManager {
         
         // Linien-Renderer konfigurieren
         renderer.setSeriesLinesVisible(0, true);
-        renderer.setSeriesShapesVisible(0, true); // GEÄNDERT: Shapes immer sichtbar für einzelne Punkte
+        renderer.setSeriesShapesVisible(0, true); // Shapes immer sichtbar für einzelne Punkte
         
         // Shape-Größe für bessere Sichtbarkeit einzelner Punkte
         renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Größere Punkte
@@ -209,13 +122,12 @@ public class TickChartManager {
     }
     
     /**
-     * KOMPLETT NEU GESCHRIEBEN: Aktualisiert beide Charts mit gefilterten Daten
-     * ALLE PROBLEME BEHOBEN: Umfassende Diagnostik und robuste Fehlerbehandlung
+     * VEREINFACHT: Aktualisiert nur den Drawdown-Chart mit gefilterten Daten
      */
-    public void updateChartsWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
+    public void updateDrawdownChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         updateCounter++;
         
-        LOGGER.info("=== CHART UPDATE #" + updateCounter + " GESTARTET für Signal: " + signalId + " ===");
+        LOGGER.info("=== DRAWDOWN CHART UPDATE #" + updateCounter + " GESTARTET für Signal: " + signalId + " ===");
         LOGGER.info("Input-Daten: filteredTicks=" + (filteredTicks != null ? filteredTicks.size() : "NULL") + 
                    ", timeScale=" + (timeScale != null ? timeScale.getLabel() : "NULL"));
         
@@ -229,8 +141,8 @@ public class TickChartManager {
             return;
         }
         
-        if (mainChart == null || drawdownChart == null) {
-            LOGGER.severe("KRITISCHER FEHLER: Charts sind NULL! mainChart=" + mainChart + ", drawdownChart=" + drawdownChart);
+        if (drawdownChart == null) {
+            LOGGER.severe("KRITISCHER FEHLER: drawdownChart ist NULL!");
             return;
         }
         
@@ -254,12 +166,12 @@ public class TickChartManager {
                 }
             }
             
-            // Chart Serien leeren
-            LOGGER.info("Leere Chart-Serien...");
-            clearAllSeries();
+            // Chart Serie leeren
+            LOGGER.info("Leere Drawdown-Chart-Serie...");
+            clearDrawdownSeries();
             
-            // SCHRITT-FÜR-SCHRITT: Gefilterte Tick-Daten zu beiden Chart-Serien hinzufügen
-            LOGGER.info("=== BEGINNE DATEN-HINZUFÜGUNG ===");
+            // SCHRITT-FÜR-SCHRITT: Gefilterte Tick-Daten zur Drawdown-Serie hinzufügen
+            LOGGER.info("=== BEGINNE DRAWDOWN-DATEN-HINZUFÜGUNG ===");
             int addedCount = 0;
             
             for (int i = 0; i < filteredTicks.size(); i++) {
@@ -270,17 +182,12 @@ public class TickChartManager {
                     Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
                     Second second = new Second(javaDate);
                     
-                    // Haupt-Chart Daten hinzufügen
-                    equitySeries.add(second, tick.getEquity());
-                    floatingProfitSeries.add(second, tick.getFloatingProfit());
-                    totalValueSeries.add(second, tick.getTotalValue());
-                    
                     // KRITISCH: Drawdown-Prozentsatz berechnen und hinzufügen
                     double drawdownPercent = calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit());
                     drawdownPercentSeries.add(second, drawdownPercent);
                     
                     // DETAILLIERTES LOGGING für jeden Datenpunkt
-                    LOGGER.info("TICK #" + (i+1) + " HINZUGEFÜGT: Zeit=" + tick.getTimestamp() + 
+                    LOGGER.info("DRAWDOWN TICK #" + (i+1) + " HINZUGEFÜGT: Zeit=" + tick.getTimestamp() + 
                                ", Equity=" + tick.getEquity() + 
                                ", Floating=" + tick.getFloatingProfit() + 
                                ", Berechnet Drawdown=" + String.format("%.6f%%", drawdownPercent));
@@ -288,37 +195,36 @@ public class TickChartManager {
                     addedCount++;
                     
                 } catch (Exception e) {
-                    LOGGER.log(Level.SEVERE, "FEHLER beim Hinzufügen von Tick #" + (i+1) + ": " + tick, e);
+                    LOGGER.log(Level.SEVERE, "FEHLER beim Hinzufügen von Drawdown-Tick #" + (i+1) + ": " + tick, e);
                 }
             }
             
-            LOGGER.info("HINZUGEFÜGTE DATENPUNKTE: " + addedCount + " von " + filteredTicks.size());
+            LOGGER.info("HINZUGEFÜGTE DRAWDOWN-DATENPUNKTE: " + addedCount + " von " + filteredTicks.size());
             
-            // Serien-Status überprüfen
-            checkSeriesStatus();
+            // Serie-Status überprüfen
+            checkDrawdownSeriesStatus();
             
             // Chart-Titel aktualisieren
-            updateChartTitles(timeScale, filteredTicks.size());
+            updateChartTitle(timeScale, filteredTicks.size());
             
             // Renderer für Drawdown-Chart anpassen basierend auf Datenpunkt-Anzahl
             adjustDrawdownChartRenderer(filteredTicks.size());
             
-            // Y-Achsen-Bereiche anpassen
-            adjustMainChartYAxisRange(filteredTicks);
+            // Y-Achsen-Bereich anpassen
             adjustDrawdownChartYAxisRangeRobust(filteredTicks);
             
             // Drawdown-Chart Farben aktualisieren
             updateDrawdownChartColors(filteredTicks);
             
-            LOGGER.info("=== CHART UPDATE #" + updateCounter + " ERFOLGREICH ABGESCHLOSSEN ===");
+            LOGGER.info("=== DRAWDOWN CHART UPDATE #" + updateCounter + " ERFOLGREICH ABGESCHLOSSEN ===");
             
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "FATALER FEHLER im Chart Update #" + updateCounter + " für Signal " + signalId, e);
+            LOGGER.log(Level.SEVERE, "FATALER FEHLER im Drawdown Chart Update #" + updateCounter + " für Signal " + signalId, e);
         }
     }
     
     /**
-     * NEU: Formatiert einen Tick für das Logging
+     * Formatiert einen Tick für das Logging
      */
     private String formatTickForLog(TickDataLoader.TickData tick) {
         if (tick == null) {
@@ -332,13 +238,10 @@ public class TickChartManager {
     }
     
     /**
-     * NEU: Überprüft den Status aller Serien
+     * Überprüft den Status der Drawdown-Serie
      */
-    private void checkSeriesStatus() {
-        LOGGER.info("=== SERIEN-STATUS CHECK ===");
-        LOGGER.info("equitySeries: " + (equitySeries != null ? equitySeries.getItemCount() + " Items" : "NULL"));
-        LOGGER.info("floatingProfitSeries: " + (floatingProfitSeries != null ? floatingProfitSeries.getItemCount() + " Items" : "NULL"));
-        LOGGER.info("totalValueSeries: " + (totalValueSeries != null ? totalValueSeries.getItemCount() + " Items" : "NULL"));
+    private void checkDrawdownSeriesStatus() {
+        LOGGER.info("=== DRAWDOWN-SERIES-STATUS CHECK ===");
         LOGGER.info("drawdownPercentSeries: " + (drawdownPercentSeries != null ? drawdownPercentSeries.getItemCount() + " Items" : "NULL"));
         
         // Detaillierte Drawdown-Serie Analyse
@@ -355,7 +258,27 @@ public class TickChartManager {
     }
     
     /**
-     * VERBESSERT: Passt den Drawdown-Chart Renderer basierend auf Datenpunkt-Anzahl an
+     * Leert die Drawdown-Chart-Serie
+     */
+    private void clearDrawdownSeries() {
+        if (drawdownPercentSeries != null) drawdownPercentSeries.clear();
+        LOGGER.info("Drawdown-Chart-Serie geleert");
+    }
+    
+    /**
+     * Aktualisiert den Chart-Titel
+     */
+    private void updateChartTitle(TimeScale timeScale, int tickCount) {
+        if (drawdownChart != null) {
+            drawdownChart.setTitle("Equity Drawdown (%) - " + signalId + " (" + providerName + ") - " + 
+                                  (timeScale != null ? timeScale.getLabel() : "Unbekannt") + " [DIAGNOSE #" + updateCounter + "]");
+        }
+        
+        LOGGER.info("Drawdown-Chart-Titel aktualisiert mit " + tickCount + " Ticks");
+    }
+    
+    /**
+     * Passt den Drawdown-Chart Renderer basierend auf Datenpunkt-Anzahl an
      */
     private void adjustDrawdownChartRenderer(int tickCount) {
         if (drawdownChart == null) {
@@ -390,34 +313,6 @@ public class TickChartManager {
     }
     
     /**
-     * Leert alle Chart-Serien
-     */
-    private void clearAllSeries() {
-        if (equitySeries != null) equitySeries.clear();
-        if (floatingProfitSeries != null) floatingProfitSeries.clear();
-        if (totalValueSeries != null) totalValueSeries.clear();
-        if (drawdownPercentSeries != null) drawdownPercentSeries.clear();
-        LOGGER.info("Alle Chart-Serien geleert");
-    }
-    
-    /**
-     * Aktualisiert die Chart-Titel
-     */
-    private void updateChartTitles(TimeScale timeScale, int tickCount) {
-        if (mainChart != null) {
-            mainChart.setTitle("Tick Daten - " + signalId + " (" + providerName + ") - " + 
-                              (timeScale != null ? timeScale.getLabel() : "Unbekannt") + " (" + tickCount + " Ticks)");
-        }
-        
-        if (drawdownChart != null) {
-            drawdownChart.setTitle("Equity Drawdown (%) - " + signalId + " (" + providerName + ") - " + 
-                                  (timeScale != null ? timeScale.getLabel() : "Unbekannt") + " [DIAGNOSE #" + updateCounter + "]");
-        }
-        
-        LOGGER.info("Chart-Titel aktualisiert mit " + tickCount + " Ticks");
-    }
-    
-    /**
      * KRITISCH: Berechnet den Drawdown-Prozentsatz mit verbessertem Logging
      */
     private double calculateDrawdownPercent(double equity, double floatingProfit) {
@@ -435,40 +330,7 @@ public class TickChartManager {
     }
     
     /**
-     * Passt den Y-Achsen-Bereich des Haupt-Charts an
-     */
-    private void adjustMainChartYAxisRange(List<TickDataLoader.TickData> filteredTicks) {
-        if (mainChart == null || filteredTicks.isEmpty()) {
-            return;
-        }
-        
-        XYPlot plot = mainChart.getXYPlot();
-        
-        double minValue = filteredTicks.stream().mapToDouble(tick -> 
-            Math.min(Math.min(tick.getEquity(), tick.getFloatingProfit()), tick.getTotalValue())
-        ).min().orElse(0.0);
-        
-        double maxValue = filteredTicks.stream().mapToDouble(tick -> 
-            Math.max(Math.max(tick.getEquity(), tick.getFloatingProfit()), tick.getTotalValue())
-        ).max().orElse(0.0);
-        
-        if (minValue > 0) {
-            minValue = 0;
-        }
-        
-        double range = maxValue - minValue;
-        double padding = Math.max(range * 0.05, 100);
-        
-        plot.getRangeAxis().setRange(minValue - padding, maxValue + padding);
-        plot.getDomainAxis().setAutoRange(true);
-        
-        LOGGER.info("Haupt-Chart Y-Achse gesetzt: " + String.format("%.2f", minValue - padding) + 
-                   " bis " + String.format("%.2f", maxValue + padding));
-    }
-    
-    /**
-     * KOMPLETT NEU: Robuste Y-Achsen-Bereich-Anpassung für Drawdown-Chart
-     * ALLE PROBLEME BEHOBEN: Garantiert sichtbare Darstellung für alle Wertebereiche
+     * ROBUSTE Y-Achsen-Bereich-Anpassung für Drawdown-Chart
      */
     private void adjustDrawdownChartYAxisRangeRobust(List<TickDataLoader.TickData> filteredTicks) {
         if (drawdownChart == null || filteredTicks.isEmpty()) {
@@ -615,12 +477,17 @@ public class TickChartManager {
         }
     }
     
-    // Getter-Methoden
-    public JFreeChart getMainChart() {
-        return mainChart;
-    }
-    
+    // Getter-Methoden - NUR DRAWDOWN
     public JFreeChart getDrawdownChart() {
         return drawdownChart;
+    }
+    
+    /**
+     * @deprecated Der Haupt-Chart wurde entfernt - verwende getDrawdownChart()
+     */
+    @Deprecated
+    public JFreeChart getMainChart() {
+        LOGGER.warning("getMainChart() aufgerufen - Haupt-Chart wurde entfernt! Verwende getDrawdownChart()");
+        return null;
     }
 }
