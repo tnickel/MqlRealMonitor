@@ -1,6 +1,9 @@
 package com.mql.realmonitor.gui;
 
-import com.mql.realmonitor.parser.SignalData;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.logging.Logger;
+
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.MouseAdapter;
 import org.eclipse.swt.events.MouseEvent;
@@ -8,39 +11,45 @@ import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.layout.GridData;
-import org.eclipse.swt.layout.GridLayout;
-import org.eclipse.swt.widgets.*;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.swt.widgets.MessageBox;
+import org.eclipse.swt.widgets.Table;
+import org.eclipse.swt.widgets.TableColumn;
+import org.eclipse.swt.widgets.TableItem;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.logging.Logger;
+import com.mql.realmonitor.parser.SignalData;
 
 /**
  * Tabelle für die Anzeige der Signalprovider-Daten
  * Verwaltet die SWT-Tabelle mit allen Provider-Informationen
+ * ERWEITERT: Equity Drawdown Spalte hinzugefügt
  */
 public class SignalProviderTable {
     
     private static final Logger LOGGER = Logger.getLogger(SignalProviderTable.class.getName());
     
-    // Spalten-Indizes - NEU: PROVIDER_NAME hinzugefügt
+    // Spalten-Indizes - ERWEITERT: EQUITY_DRAWDOWN hinzugefügt, nachfolgende Indizes erhöht
     private static final int COL_SIGNAL_ID = 0;
-    private static final int COL_PROVIDER_NAME = 1;  // NEU
-    private static final int COL_STATUS = 2;         // Index verschoben
-    private static final int COL_EQUITY = 3;         // Index verschoben
-    private static final int COL_FLOATING = 4;       // Index verschoben
-    private static final int COL_TOTAL = 5;          // Index verschoben
-    private static final int COL_CURRENCY = 6;       // Index verschoben
-    private static final int COL_LAST_UPDATE = 7;    // Index verschoben
-    private static final int COL_CHANGE = 8;         // Index verschoben
+    private static final int COL_PROVIDER_NAME = 1;
+    private static final int COL_STATUS = 2;
+    private static final int COL_EQUITY = 3;
+    private static final int COL_FLOATING = 4;
+    private static final int COL_EQUITY_DRAWDOWN = 5;  // NEU: Equity Drawdown
+    private static final int COL_TOTAL = 6;            // Index erhöht
+    private static final int COL_CURRENCY = 7;         // Index erhöht
+    private static final int COL_LAST_UPDATE = 8;      // Index erhöht
+    private static final int COL_CHANGE = 9;           // Index erhöht
     
-    // Spalten-Definitionen - NEU: Provider Name hinzugefügt
+    // Spalten-Definitionen - ERWEITERT: Equity Drawdown hinzugefügt
     private static final String[] COLUMN_TEXTS = {
         "Signal ID", 
-        "Provider Name",  // NEU
+        "Provider Name",
         "Status", 
         "Kontostand", 
         "Floating Profit", 
+        "Equity Drawdown",     // NEU
         "Gesamtwert", 
         "Währung", 
         "Letzte Aktualisierung", 
@@ -49,10 +58,11 @@ public class SignalProviderTable {
     
     private static final int[] COLUMN_WIDTHS = {
         80,   // Signal ID
-        150,  // Provider Name - NEU
+        150,  // Provider Name
         100,  // Status
         120,  // Kontostand
         120,  // Floating Profit
+        100,  // Equity Drawdown - NEU
         120,  // Gesamtwert
         70,   // Währung
         150,  // Letzte Aktualisierung
@@ -78,7 +88,7 @@ public class SignalProviderTable {
         createColumns();
         setupTableBehavior();
         
-        LOGGER.info("SignalProviderTable initialisiert mit " + COLUMN_TEXTS.length + " Spalten");
+        LOGGER.info("SignalProviderTable initialisiert mit " + COLUMN_TEXTS.length + " Spalten (inkl. Equity Drawdown)");
     }
     
     /**
@@ -238,6 +248,7 @@ public class SignalProviderTable {
     
     /**
      * Aktualisiert die Daten eines Providers (Thread-sicher)
+     * ERWEITERT: Equity Drawdown Spalte hinzugefügt
      * 
      * @param signalData Die aktualisierten Signaldaten
      */
@@ -260,19 +271,21 @@ public class SignalProviderTable {
         String changeText = calculateChangeText(signalData, lastData);
         Color changeColor = getChangeColor(signalData, lastData);
         
-        // Tabellendaten setzen - NEU: Provider Name hinzugefügt
+        // Tabellendaten setzen - ERWEITERT: Equity Drawdown hinzugefügt
         item.setText(COL_SIGNAL_ID, signalId);
-        item.setText(COL_PROVIDER_NAME, signalData.getProviderName());  // NEU
+        item.setText(COL_PROVIDER_NAME, signalData.getProviderName());
         item.setText(COL_STATUS, "OK");
         item.setText(COL_EQUITY, signalData.getFormattedEquity());
         item.setText(COL_FLOATING, signalData.getFormattedFloatingProfit());
+        item.setText(COL_EQUITY_DRAWDOWN, signalData.getFormattedEquityDrawdown());  // NEU
         item.setText(COL_TOTAL, signalData.getFormattedTotalValue());
         item.setText(COL_CURRENCY, signalData.getCurrency());
         item.setText(COL_LAST_UPDATE, signalData.getFormattedTimestamp());
         item.setText(COL_CHANGE, changeText);
         
-        // Farben setzen
+        // Farben setzen - ERWEITERT: Equity Drawdown Farbe hinzugefügt
         item.setForeground(COL_FLOATING, getFloatingProfitColor(signalData.getFloatingProfit()));
+        item.setForeground(COL_EQUITY_DRAWDOWN, getEquityDrawdownColor(signalData.getEquityDrawdownPercent()));  // NEU
         item.setForeground(COL_CHANGE, changeColor);
         
         // Status-Farbe
@@ -281,7 +294,7 @@ public class SignalProviderTable {
         // Daten im Cache speichern
         lastSignalData.put(signalId, signalData);
         
-        LOGGER.fine("Provider-Daten aktualisiert: " + signalData.getSummary());
+        LOGGER.fine("Provider-Daten aktualisiert (inkl. Equity Drawdown): " + signalData.getSummary());
     }
     
     /**
@@ -385,6 +398,22 @@ public class SignalProviderTable {
     }
     
     /**
+     * NEU: Bestimmt die Farbe für Equity Drawdown
+     * 
+     * @param equityDrawdownPercent Der Equity Drawdown in Prozent
+     * @return Die entsprechende Farbe
+     */
+    private Color getEquityDrawdownColor(double equityDrawdownPercent) {
+        if (equityDrawdownPercent > 0) {
+            return parentGui.getGreenColor();  // Grün für positive Drawdowns
+        } else if (equityDrawdownPercent < 0) {
+            return parentGui.getRedColor();    // Rot für negative Drawdowns
+        } else {
+            return null; // Standard-Farbe für 0%
+        }
+    }
+    
+    /**
      * Bestimmt die Farbe für den Status
      * 
      * @param status Der Status-Text
@@ -410,6 +439,7 @@ public class SignalProviderTable {
     
     /**
      * Sortiert die Tabelle nach der angegebenen Spalte
+     * ERWEITERT: Equity Drawdown Spalte für numerische Sortierung hinzugefügt
      * 
      * @param columnIndex Der Index der Spalte
      */
@@ -440,6 +470,7 @@ public class SignalProviderTable {
     
     /**
      * Vergleicht zwei Tabellen-Texte für Sortierung
+     * ERWEITERT: Equity Drawdown Spalte für numerische Sortierung hinzugefügt
      * 
      * @param text1 Erster Text
      * @param text2 Zweiter Text
@@ -447,8 +478,9 @@ public class SignalProviderTable {
      * @return Vergleichsresultat
      */
     private int compareTableText(String text1, String text2, int columnIndex) {
-        // Für numerische Spalten versuche numerische Sortierung
-        if (columnIndex == COL_EQUITY || columnIndex == COL_FLOATING || columnIndex == COL_TOTAL) {
+        // Für numerische Spalten versuche numerische Sortierung - ERWEITERT: COL_EQUITY_DRAWDOWN hinzugefügt
+        if (columnIndex == COL_EQUITY || columnIndex == COL_FLOATING || 
+            columnIndex == COL_EQUITY_DRAWDOWN || columnIndex == COL_TOTAL) {
             try {
                 // Extrahiere Zahlen aus formatiertem Text
                 double num1 = extractNumber(text1);
@@ -465,6 +497,7 @@ public class SignalProviderTable {
     
     /**
      * Extrahiert eine Zahl aus formatiertem Text
+     * ERWEITERT: Unterstützt auch Prozent-Zeichen für Equity Drawdown
      * 
      * @param text Der formatierte Text
      * @return Die extrahierte Zahl
@@ -474,8 +507,13 @@ public class SignalProviderTable {
             return 0.0;
         }
         
-        // Entferne alles außer Zahlen, Dezimalpunkt und Minus
-        String cleanText = text.replaceAll("[^0-9.+-]", "").trim();
+        // Entferne alles außer Zahlen, Dezimalpunkt, Minus und Prozentzeichen
+        String cleanText = text.replaceAll("[^0-9.+%-]", "").trim();
+        
+        // Entferne Prozentzeichen für die Berechnung
+        if (cleanText.endsWith("%")) {
+            cleanText = cleanText.substring(0, cleanText.length() - 1);
+        }
         
         if (cleanText.isEmpty()) {
             return 0.0;
@@ -526,21 +564,23 @@ public class SignalProviderTable {
     
     /**
      * Zeigt Details für einen Provider an
+     * ERWEITERT: Equity Drawdown in Details hinzugefügt
      * 
      * @param item Das Tabellen-Item
      */
     private void showSignalDetails(TableItem item) {
         String signalId = item.getText(COL_SIGNAL_ID);
-        String providerName = item.getText(COL_PROVIDER_NAME);  // NEU
+        String providerName = item.getText(COL_PROVIDER_NAME);
         SignalData signalData = lastSignalData.get(signalId);
         
         StringBuilder details = new StringBuilder();
         details.append("Signal Provider Details\n\n");
         details.append("Signal ID: ").append(signalId).append("\n");
-        details.append("Provider Name: ").append(providerName).append("\n");  // NEU
+        details.append("Provider Name: ").append(providerName).append("\n");
         details.append("Status: ").append(item.getText(COL_STATUS)).append("\n");
         details.append("Kontostand: ").append(item.getText(COL_EQUITY)).append("\n");
         details.append("Floating Profit: ").append(item.getText(COL_FLOATING)).append("\n");
+        details.append("Equity Drawdown: ").append(item.getText(COL_EQUITY_DRAWDOWN)).append("\n");  // NEU
         details.append("Gesamtwert: ").append(item.getText(COL_TOTAL)).append("\n");
         details.append("Währung: ").append(item.getText(COL_CURRENCY)).append("\n");
         details.append("Letzte Aktualisierung: ").append(item.getText(COL_LAST_UPDATE)).append("\n");
@@ -594,9 +634,10 @@ public class SignalProviderTable {
             
             for (TableItem item : selectedItems) {
                 summary.append("• ").append(item.getText(COL_SIGNAL_ID))
-                       .append(" (").append(item.getText(COL_PROVIDER_NAME)).append(")")  // NEU: Provider Name
+                       .append(" (").append(item.getText(COL_PROVIDER_NAME)).append(")")
                        .append(" - ").append(item.getText(COL_STATUS))
                        .append(" (").append(item.getText(COL_TOTAL)).append(")")
+                       .append(" [DD: ").append(item.getText(COL_EQUITY_DRAWDOWN)).append("]")  // NEU: Drawdown anzeigen
                        .append("\n");
             }
             
@@ -660,9 +701,11 @@ public class SignalProviderTable {
     public Table getTable() {
         return table;
     }
+    
     /**
      * NEU: Fügt einen leeren Provider-Eintrag hinzu (nur mit Signal-ID)
      * Wird beim Vorladen der Favoriten verwendet
+     * ERWEITERT: Equity Drawdown Spalte mit leerem Inhalt hinzugefügt
      * 
      * @param signalId Die Signal-ID
      * @param initialStatus Der initiale Status
@@ -681,12 +724,13 @@ public class SignalProviderTable {
         // Neuen leeren Eintrag erstellen
         TableItem item = new TableItem(table, SWT.NONE);
         
-        // Nur Signal-ID und Status setzen, Rest bleibt leer
+        // Nur Signal-ID und Status setzen, Rest bleibt leer - ERWEITERT: Equity Drawdown leer lassen
         item.setText(COL_SIGNAL_ID, signalId);
         item.setText(COL_PROVIDER_NAME, "Lädt...");  
         item.setText(COL_STATUS, initialStatus != null ? initialStatus : "Nicht geladen");
         item.setText(COL_EQUITY, "");
         item.setText(COL_FLOATING, "");
+        item.setText(COL_EQUITY_DRAWDOWN, "");  // NEU: Leer lassen
         item.setText(COL_TOTAL, "");
         item.setText(COL_CURRENCY, "");
         item.setText(COL_LAST_UPDATE, "");
@@ -701,7 +745,6 @@ public class SignalProviderTable {
         // In Map eintragen
         signalIdToItem.put(signalId, item);
         
-        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt: " + signalId);
+        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (inkl. Equity Drawdown Spalte): " + signalId);
     }
-
 }

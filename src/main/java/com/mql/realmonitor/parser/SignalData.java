@@ -8,6 +8,7 @@ import java.util.Objects;
 /**
  * Model-Klasse für Signalprovider-Daten
  * Repräsentiert die extrahierten Daten eines MQL5-Signalproviders
+ * ERWEITERT: Equity Drawdown Berechnung hinzugefügt
  */
 public class SignalData {
     
@@ -110,6 +111,18 @@ public class SignalData {
     }
     
     /**
+     * NEU: Berechnet den Equity Drawdown in Prozent
+     * 
+     * @return Der Equity Drawdown in Prozent
+     */
+    public double getEquityDrawdownPercent() {
+        if (equity == 0) {
+            return 0.0;
+        }
+        return (floatingProfit / equity) * 100.0;
+    }
+    
+    /**
      * Gibt den formatierten Zeitstempel zurück
      * 
      * @return Formatierter Zeitstempel für Anzeige
@@ -144,6 +157,17 @@ public class SignalData {
     public String getFormattedFloatingProfit() {
         String sign = floatingProfit >= 0 ? "+" : "";
         return String.format("%s%.2f %s", sign, floatingProfit, currency);
+    }
+    
+    /**
+     * NEU: Formatiert den Equity Drawdown für Anzeige
+     * 
+     * @return Formatierter Equity Drawdown mit Prozentzeichen und Vorzeichen
+     */
+    public String getFormattedEquityDrawdown() {
+        double drawdownPercent = getEquityDrawdownPercent();
+        String sign = drawdownPercent >= 0 ? "+" : "";
+        return String.format("%s%.2f%%", sign, drawdownPercent);
     }
     
     /**
@@ -240,18 +264,19 @@ public class SignalData {
      * @return Textuelle Beschreibung
      */
     public String getSummary() {
-        return String.format("Signal %s (%s): %s (Floating: %s) - %s", 
+        return String.format("Signal %s (%s): %s (Floating: %s, Drawdown: %s) - %s", 
                            signalId, 
                            providerName,
                            getFormattedEquity(), 
                            getFormattedFloatingProfit(),
+                           getFormattedEquityDrawdown(),
                            getFormattedTimestamp());
     }
     
     @Override
     public String toString() {
-        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, currency='%s', time='%s'}", 
-                           signalId, providerName, equity, floatingProfit, currency, getFormattedTimestamp());
+        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, drawdown=%.2f%%, currency='%s', time='%s'}", 
+                           signalId, providerName, equity, floatingProfit, getEquityDrawdownPercent(), currency, getFormattedTimestamp());
     }
     
     @Override
