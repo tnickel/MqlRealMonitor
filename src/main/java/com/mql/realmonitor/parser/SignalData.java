@@ -193,11 +193,15 @@ public class SignalData {
     /**
      * Erstellt einen vollständigen String für die Tick-Datei
      * Format: DD.MM.YYYY,HH:MM:SS,Equity,FloatingProfit
+     * KORRIGIERT: Datum und Zeit korrekt getrennt
      * 
      * @return Vollständige CSV-Zeile für Tick-Datei
      */
     public String toFullTickFileEntry() {
-        return getFileTimestamp() + "," + toTickFileEntry();
+        // Datum und Zeit separat formatieren für korrektes CSV-Format
+        String dateStr = timestamp.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+        String timeStr = timestamp.format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+        return dateStr + "," + timeStr + "," + toTickFileEntry();
     }
     
     /**
