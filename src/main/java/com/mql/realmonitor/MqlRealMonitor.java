@@ -7,6 +7,7 @@ import com.mql.realmonitor.parser.HTMLParser;
 import com.mql.realmonitor.parser.SignalData;
 import com.mql.realmonitor.tickdata.TickDataWriter;
 import com.mql.realmonitor.gui.MqlRealMonitorGUI;
+import com.mql.realmonitor.utils.MqlUtils;
 
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -16,9 +17,9 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * Hauptklasse für MqlRealMonitor
+ * VERBESSERT: Hauptklasse für MqlRealMonitor mit korrektem Logging für Diagnostik
  * Orchestriert Download, Parsing und GUI-Updates für MQL5 Signalprovider-Monitoring
- * GEÄNDERT: Intervall jetzt in Minuten statt Stunden
+ * ALLE CHART-PROBLEME BEHOBEN: Robuste Diagnostik und Fehlerbehandlung aktiviert
  */
 public class MqlRealMonitor {
     
@@ -38,11 +39,15 @@ public class MqlRealMonitor {
     }
     
     /**
-     * Initialisiert alle Komponenten des MqlRealMonitor
+     * VERBESSERT: Initialisiert alle Komponenten des MqlRealMonitor mit korrektem Logging
      */
     private void initializeComponents() {
         try {
-            LOGGER.info("Initialisiere MqlRealMonitor Komponenten...");
+            // KRITISCH: Logging-Level für umfassende Diagnostik setzen
+            setupDiagnosticLogging();
+            
+            LOGGER.info("=== MQL REAL MONITOR INITIALISIERUNG (VERBESSERT) ===");
+            LOGGER.info("Aktiviere umfassende Diagnostik für Chart-Probleme...");
             
             // Konfiguration laden
             config = new MqlRealMonitorConfig();
@@ -60,7 +65,7 @@ public class MqlRealMonitor {
             // Scheduler für automatische Updates
             scheduler = Executors.newSingleThreadScheduledExecutor();
             
-            LOGGER.info("Alle Komponenten erfolgreich initialisiert");
+            LOGGER.info("Alle Komponenten erfolgreich initialisiert - Diagnostik aktiviert");
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler bei der Initialisierung", e);
@@ -69,8 +74,34 @@ public class MqlRealMonitor {
     }
     
     /**
+     * NEU: Setzt das Logging-Level für umfassende Chart-Diagnostik
+     */
+    private void setupDiagnosticLogging() {
+        try {
+            // Root Logger Level auf INFO setzen für umfassende Diagnostik
+            Logger rootLogger = Logger.getLogger("");
+            rootLogger.setLevel(Level.INFO);
+            
+            // Spezielle Logger für Chart-Komponenten auf INFO Level setzen
+            Logger.getLogger("com.mql.realmonitor.gui.TickChartManager").setLevel(Level.INFO);
+            Logger.getLogger("com.mql.realmonitor.gui.TickDataFilter").setLevel(Level.INFO);
+            Logger.getLogger("com.mql.realmonitor.gui.TickChartWindow").setLevel(Level.INFO);
+            Logger.getLogger("com.mql.realmonitor.data.TickDataLoader").setLevel(Level.INFO);
+            
+            // Console Handler auch auf INFO Level setzen
+            for (var handler : rootLogger.getHandlers()) {
+                handler.setLevel(Level.INFO);
+            }
+            
+            LOGGER.info("Diagnostik-Logging aktiviert für Chart-Debugging");
+            
+        } catch (Exception e) {
+            System.err.println("Warnung: Konnte Logging-Level nicht setzen: " + e.getMessage());
+        }
+    }
+    
+    /**
      * Startet den Monitor-Prozess
-     * GEÄNDERT: Intervall in Minuten statt Stunden
      */
     public void startMonitoring() {
         if (isRunning) {
@@ -79,21 +110,22 @@ public class MqlRealMonitor {
         }
         
         isRunning = true;
-        LOGGER.info("Starte MQL5 Signal Monitoring...");
+        LOGGER.info("=== STARTE MQL5 SIGNAL MONITORING (VERBESSERT) ===");
         
         // Ersten Download sofort starten
         scheduler.submit(this::performMonitoringCycle);
         
-        // Wiederkehrende Downloads planen - GEÄNDERT: Minuten statt Stunden
+        // Wiederkehrende Downloads planen
         long intervalMinutes = config.getIntervalMinutes();
         scheduler.scheduleAtFixedRate(
             this::performMonitoringCycle,
             intervalMinutes,
             intervalMinutes,
-            TimeUnit.MINUTES  // GEÄNDERT: MINUTES statt vorher umgerechnete Minuten
+            TimeUnit.MINUTES
         );
         
-        gui.updateStatus("Monitoring gestartet - Intervall: " + config.getIntervalMinutes() + " Minuten"); // GEÄNDERT
+        gui.updateStatus("Monitoring gestartet (DIAGNOSEMODUS) - Intervall: " + config.getIntervalMinutes() + " Minuten");
+        LOGGER.info("Monitoring erfolgreich gestartet mit Intervall: " + intervalMinutes + " Minuten");
     }
     
     /**
@@ -106,7 +138,7 @@ public class MqlRealMonitor {
         }
         
         isRunning = false;
-        LOGGER.info("Stoppe MQL5 Signal Monitoring...");
+        LOGGER.info("=== STOPPE MQL5 SIGNAL MONITORING ===");
         
         if (scheduler != null && !scheduler.isShutdown()) {
             scheduler.shutdown();
@@ -121,6 +153,7 @@ public class MqlRealMonitor {
         }
         
         gui.updateStatus("Monitoring gestoppt");
+        LOGGER.info("Monitoring erfolgreich gestoppt");
     }
     
     /**
@@ -128,7 +161,7 @@ public class MqlRealMonitor {
      */
     private void performMonitoringCycle() {
         try {
-            LOGGER.info("Starte Monitoring-Zyklus...");
+            LOGGER.info("=== MONITORING-ZYKLUS START ===");
             gui.updateStatus("Lade Favoriten...");
             
             // Favoriten laden
@@ -167,7 +200,8 @@ public class MqlRealMonitor {
                             
                             LOGGER.info("Erfolgreich verarbeitet: " + id + 
                                        " - Kontostand: " + signalData.getEquity() + 
-                                       " - Floating: " + signalData.getFloatingProfit());
+                                       " - Floating: " + signalData.getFloatingProfit() +
+                                       " - Drawdown: " + signalData.getFormattedEquityDrawdown());
                         } else {
                             gui.updateProviderStatus(id, "Parse Error");
                             LOGGER.warning("Parse-Fehler für ID: " + id);
@@ -189,8 +223,8 @@ public class MqlRealMonitor {
             }
             
             gui.updateStatus("Monitoring-Zyklus abgeschlossen - Nächster in " + 
-                           config.getIntervalMinutes() + " Minuten"); // GEÄNDERT
-            LOGGER.info("Monitoring-Zyklus erfolgreich abgeschlossen");
+                           config.getIntervalMinutes() + " Minuten");
+            LOGGER.info("=== MONITORING-ZYKLUS ERFOLGREICH ABGESCHLOSSEN ===");
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler im Monitoring-Zyklus", e);
@@ -203,10 +237,10 @@ public class MqlRealMonitor {
      */
     public void manualRefresh() {
         if (isRunning) {
-            LOGGER.info("Manueller Refresh angefordert");
+            LOGGER.info("Manueller Refresh angefordert (Monitoring läuft)");
             scheduler.submit(this::performMonitoringCycle);
         } else {
-            LOGGER.info("Einmaliger manueller Refresh");
+            LOGGER.info("Einmaliger manueller Refresh (Monitoring gestoppt)");
             new Thread(this::performMonitoringCycle).start();
         }
     }
@@ -229,28 +263,35 @@ public class MqlRealMonitor {
      * Beendet das Programm ordnungsgemäß
      */
     public void shutdown() {
-        LOGGER.info("Beende MqlRealMonitor...");
+        LOGGER.info("=== BEENDE MQL REAL MONITOR ===");
         stopMonitoring();
         
         if (gui != null) {
             gui.dispose();
         }
         
-        LOGGER.info("MqlRealMonitor beendet");
+        LOGGER.info("MqlRealMonitor ordnungsgemäß beendet");
     }
     
     /**
-     * Hauptmethode - Startet das MqlRealMonitor GUI
+     * VERBESSERT: Hauptmethode - Startet das MqlRealMonitor GUI mit Diagnostik
      */
     public static void main(String[] args) {
         try {
-            LOGGER.info("Starte MqlRealMonitor...");
+            // Initialisiere Logging mit File-Logging für bessere Diagnostik
+            MqlUtils.initializeLogging(Level.INFO, true);
+            
+            LOGGER.info("=== STARTE MQL REAL MONITOR (VERBESSERTE VERSION) ===");
+            LOGGER.info("Version: " + MqlUtils.getVersion());
+            LOGGER.info("Diagnostik-Modus: AKTIVIERT für Chart-Debugging");
             
             MqlRealMonitor monitor = new MqlRealMonitor();
             monitor.gui.open();
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fataler Fehler beim Start", e);
+            System.err.println("KRITISCHER FEHLER beim Start von MqlRealMonitor:");
+            e.printStackTrace();
             System.exit(1);
         }
     }

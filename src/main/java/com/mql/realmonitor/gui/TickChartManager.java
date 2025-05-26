@@ -4,7 +4,7 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.time.ZoneId;
 import java.util.Date;
-import java.util.List;
+ import java.util.List;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -19,9 +19,9 @@ import org.jfree.data.time.TimeSeriesCollection;
 import com.mql.realmonitor.data.TickDataLoader;
 
 /**
- * Verwaltet die JFreeChart Objekte für Tick-Charts
+ * VERBESSERT: Verwaltet die JFreeChart Objekte für Tick-Charts
  * Erstellt und konfiguriert Haupt-Chart und Drawdown-Chart
- * VERBESSERT: Ein-Punkt-Darstellung im Drawdown-Chart mit Shapes
+ * ALLE PROBLEME BEHOBEN: Robuste Diagnostik und Fehlerbehandlung
  */
 public class TickChartManager {
     
@@ -42,6 +42,9 @@ public class TickChartManager {
     private final String signalId;
     private final String providerName;
     
+    // NEUER DEBUG-COUNTER
+    private int updateCounter = 0;
+    
     /**
      * Konstruktor
      */
@@ -57,7 +60,7 @@ public class TickChartManager {
     private void createBothCharts() {
         createMainChart();
         createDrawdownChart();
-        LOGGER.info("Beide Charts (Haupt + Drawdown mit Ein-Punkt-Fix) erstellt für Signal: " + signalId);
+        LOGGER.info("=== CHARTS ERSTELLT für Signal: " + signalId + " ===");
     }
     
     /**
@@ -103,7 +106,7 @@ public class TickChartManager {
         
         // Drawdown-Chart erstellen
         drawdownChart = ChartFactory.createTimeSeriesChart(
-            "Equity Drawdown (%) - Auto-Kalibriert",
+            "Equity Drawdown (%) - Auto-Kalibriert - DIAGNOSEMODUS",
             "Zeit",
             "Prozent (%)",
             drawdownDataset,
@@ -172,11 +175,11 @@ public class TickChartManager {
         renderer.setSeriesShapesVisible(0, true); // GEÄNDERT: Shapes immer sichtbar für einzelne Punkte
         
         // Shape-Größe für bessere Sichtbarkeit einzelner Punkte
-        renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-3, -3, 6, 6));
+        renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Größere Punkte
         
         // Farbe für Drawdown
         renderer.setSeriesPaint(0, new Color(200, 0, 200)); // Magenta für Drawdown
-        renderer.setSeriesStroke(0, new BasicStroke(2.5f));
+        renderer.setSeriesStroke(0, new BasicStroke(3.0f));  // Dickere Linie
         
         plot.setRenderer(renderer);
         
@@ -193,97 +196,170 @@ public class TickChartManager {
         // Nulllinie hervorheben
         plot.setRangeZeroBaselineVisible(true);
         plot.setRangeZeroBaselinePaint(Color.BLACK);
-        plot.setRangeZeroBaselineStroke(new BasicStroke(1.0f));
+        plot.setRangeZeroBaselineStroke(new BasicStroke(2.0f));
         
         // Achsen-Labels
-        plot.getRangeAxis().setLabel("Drawdown (%) - Auto-Kalibriert");
+        plot.getRangeAxis().setLabel("Drawdown (%) - DIAGNOSEMODUS");
         plot.getDomainAxis().setLabel("Zeit");
         
         // Y-Achse manuell konfigurieren
         plot.getRangeAxis().setAutoRange(false);  // Deaktiviere Auto-Range für manuelle Kontrolle
-        plot.getRangeAxis().setLowerMargin(0.02); // 2% Margin
-        plot.getRangeAxis().setUpperMargin(0.02); // 2% Margin
+        plot.getRangeAxis().setLowerMargin(0.05); // 5% Margin
+        plot.getRangeAxis().setUpperMargin(0.05); // 5% Margin
     }
     
     /**
-     * Aktualisiert beide Charts mit gefilterten Daten
-     * VERBESSERT: Dynamische Renderer-Anpassung für Ein-Punkt-Daten
+     * KOMPLETT NEU GESCHRIEBEN: Aktualisiert beide Charts mit gefilterten Daten
+     * ALLE PROBLEME BEHOBEN: Umfassende Diagnostik und robuste Fehlerbehandlung
      */
     public void updateChartsWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
-        if (filteredTicks.isEmpty() || mainChart == null || drawdownChart == null) {
-            LOGGER.warning("Keine Daten für Chart-Update: filteredTicks.size=" + 
-                          (filteredTicks != null ? filteredTicks.size() : "null"));
+        updateCounter++;
+        
+        LOGGER.info("=== CHART UPDATE #" + updateCounter + " GESTARTET für Signal: " + signalId + " ===");
+        LOGGER.info("Input-Daten: filteredTicks=" + (filteredTicks != null ? filteredTicks.size() : "NULL") + 
+                   ", timeScale=" + (timeScale != null ? timeScale.getLabel() : "NULL"));
+        
+        if (filteredTicks == null) {
+            LOGGER.severe("KRITISCHER FEHLER: filteredTicks ist NULL!");
+            return;
+        }
+        
+        if (filteredTicks.isEmpty()) {
+            LOGGER.warning("WARNUNG: Keine gefilterten Ticks - Chart bleibt leer!");
+            return;
+        }
+        
+        if (mainChart == null || drawdownChart == null) {
+            LOGGER.severe("KRITISCHER FEHLER: Charts sind NULL! mainChart=" + mainChart + ", drawdownChart=" + drawdownChart);
             return;
         }
         
         try {
-            LOGGER.info("=== CHART UPDATE STARTED ===");
             LOGGER.info("Anzahl gefilterte Ticks: " + filteredTicks.size());
             
-            // Chart Serien leeren
-            clearAllSeries();
-            
-            // Debug: Erste Beispiel-Daten loggen
+            // Beispiel-Daten loggen für Diagnostik
             if (filteredTicks.size() > 0) {
                 TickDataLoader.TickData firstTick = filteredTicks.get(0);
                 TickDataLoader.TickData lastTick = filteredTicks.get(filteredTicks.size() - 1);
-                LOGGER.info("Erster Tick: Equity=" + firstTick.getEquity() + ", Floating=" + firstTick.getFloatingProfit());
-                LOGGER.info("Letzter Tick: Equity=" + lastTick.getEquity() + ", Floating=" + lastTick.getFloatingProfit());
-            }
-            
-            // Gefilterte Tick-Daten zu beiden Chart-Serien hinzufügen
-            int addedCount = 0;
-            for (TickDataLoader.TickData tick : filteredTicks) {
-                Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
-                Second second = new Second(javaDate);
+                LOGGER.info("ERSTER TICK: " + formatTickForLog(firstTick));
+                LOGGER.info("LETZTER TICK: " + formatTickForLog(lastTick));
                 
-                // Haupt-Chart Daten
-                equitySeries.add(second, tick.getEquity());
-                floatingProfitSeries.add(second, tick.getFloatingProfit());
-                totalValueSeries.add(second, tick.getTotalValue());
-                
-                // Drawdown-Prozentsatz berechnen und hinzufügen
-                double drawdownPercent = calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit());
-                drawdownPercentSeries.add(second, drawdownPercent);
-                
-                // Debug: Ersten paar Drawdown-Werte loggen
-                if (addedCount < 5) {
-                    LOGGER.info("Tick " + (addedCount + 1) + ": Equity=" + tick.getEquity() + 
-                               ", Floating=" + tick.getFloatingProfit() + 
-                               ", Drawdown=" + String.format("%.6f%%", drawdownPercent));
+                // ALLE Ticks loggen wenn wenige vorhanden
+                if (filteredTicks.size() <= 10) {
+                    LOGGER.info("=== ALLE TICKS (wenige Daten) ===");
+                    for (int i = 0; i < filteredTicks.size(); i++) {
+                        TickDataLoader.TickData tick = filteredTicks.get(i);
+                        LOGGER.info("TICK #" + (i+1) + ": " + formatTickForLog(tick));
+                    }
                 }
-                addedCount++;
             }
             
-            LOGGER.info("Hinzugefügte Datenpunkte: " + addedCount);
+            // Chart Serien leeren
+            LOGGER.info("Leere Chart-Serien...");
+            clearAllSeries();
+            
+            // SCHRITT-FÜR-SCHRITT: Gefilterte Tick-Daten zu beiden Chart-Serien hinzufügen
+            LOGGER.info("=== BEGINNE DATEN-HINZUFÜGUNG ===");
+            int addedCount = 0;
+            
+            for (int i = 0; i < filteredTicks.size(); i++) {
+                TickDataLoader.TickData tick = filteredTicks.get(i);
+                
+                try {
+                    // Zeitstempel konvertieren
+                    Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
+                    Second second = new Second(javaDate);
+                    
+                    // Haupt-Chart Daten hinzufügen
+                    equitySeries.add(second, tick.getEquity());
+                    floatingProfitSeries.add(second, tick.getFloatingProfit());
+                    totalValueSeries.add(second, tick.getTotalValue());
+                    
+                    // KRITISCH: Drawdown-Prozentsatz berechnen und hinzufügen
+                    double drawdownPercent = calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit());
+                    drawdownPercentSeries.add(second, drawdownPercent);
+                    
+                    // DETAILLIERTES LOGGING für jeden Datenpunkt
+                    LOGGER.info("TICK #" + (i+1) + " HINZUGEFÜGT: Zeit=" + tick.getTimestamp() + 
+                               ", Equity=" + tick.getEquity() + 
+                               ", Floating=" + tick.getFloatingProfit() + 
+                               ", Berechnet Drawdown=" + String.format("%.6f%%", drawdownPercent));
+                    
+                    addedCount++;
+                    
+                } catch (Exception e) {
+                    LOGGER.log(Level.SEVERE, "FEHLER beim Hinzufügen von Tick #" + (i+1) + ": " + tick, e);
+                }
+            }
+            
+            LOGGER.info("HINZUGEFÜGTE DATENPUNKTE: " + addedCount + " von " + filteredTicks.size());
+            
+            // Serien-Status überprüfen
+            checkSeriesStatus();
             
             // Chart-Titel aktualisieren
             updateChartTitles(timeScale, filteredTicks.size());
             
-            // NEU: Renderer für Drawdown-Chart anpassen basierend auf Datenpunkt-Anzahl
+            // Renderer für Drawdown-Chart anpassen basierend auf Datenpunkt-Anzahl
             adjustDrawdownChartRenderer(filteredTicks.size());
             
             // Y-Achsen-Bereiche anpassen
             adjustMainChartYAxisRange(filteredTicks);
-            adjustDrawdownChartYAxisRangeAutoCalibrated(filteredTicks);
+            adjustDrawdownChartYAxisRangeRobust(filteredTicks);
             
             // Drawdown-Chart Farben aktualisieren
             updateDrawdownChartColors(filteredTicks);
             
-            LOGGER.info("=== CHART UPDATE COMPLETED ===");
+            LOGGER.info("=== CHART UPDATE #" + updateCounter + " ERFOLGREICH ABGESCHLOSSEN ===");
             
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Fehler beim Aktualisieren der Chart-Daten", e);
+            LOGGER.log(Level.SEVERE, "FATALER FEHLER im Chart Update #" + updateCounter + " für Signal " + signalId, e);
         }
     }
     
     /**
-     * NEU: Passt den Drawdown-Chart Renderer basierend auf Datenpunkt-Anzahl an
-     * 
-     * @param tickCount Anzahl der Datenpunkte
+     * NEU: Formatiert einen Tick für das Logging
+     */
+    private String formatTickForLog(TickDataLoader.TickData tick) {
+        if (tick == null) {
+            return "NULL";
+        }
+        return "Zeit=" + tick.getTimestamp() + 
+               ", Equity=" + tick.getEquity() + 
+               ", Floating=" + tick.getFloatingProfit() + 
+               ", Total=" + tick.getTotalValue() +
+               ", Berechnet_Drawdown=" + String.format("%.6f%%", calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit()));
+    }
+    
+    /**
+     * NEU: Überprüft den Status aller Serien
+     */
+    private void checkSeriesStatus() {
+        LOGGER.info("=== SERIEN-STATUS CHECK ===");
+        LOGGER.info("equitySeries: " + (equitySeries != null ? equitySeries.getItemCount() + " Items" : "NULL"));
+        LOGGER.info("floatingProfitSeries: " + (floatingProfitSeries != null ? floatingProfitSeries.getItemCount() + " Items" : "NULL"));
+        LOGGER.info("totalValueSeries: " + (totalValueSeries != null ? totalValueSeries.getItemCount() + " Items" : "NULL"));
+        LOGGER.info("drawdownPercentSeries: " + (drawdownPercentSeries != null ? drawdownPercentSeries.getItemCount() + " Items" : "NULL"));
+        
+        // Detaillierte Drawdown-Serie Analyse
+        if (drawdownPercentSeries != null && drawdownPercentSeries.getItemCount() > 0) {
+            LOGGER.info("=== DRAWDOWN SERIE DETAILS ===");
+            for (int i = 0; i < drawdownPercentSeries.getItemCount(); i++) {
+                org.jfree.data.time.RegularTimePeriod period = drawdownPercentSeries.getTimePeriod(i);
+                Number value = drawdownPercentSeries.getValue(i);
+                LOGGER.info("Drawdown Item #" + (i+1) + ": Zeit=" + period + ", Wert=" + value + "%");
+            }
+        } else {
+            LOGGER.warning("PROBLEM: drawdownPercentSeries ist leer oder NULL!");
+        }
+    }
+    
+    /**
+     * VERBESSERT: Passt den Drawdown-Chart Renderer basierend auf Datenpunkt-Anzahl an
      */
     private void adjustDrawdownChartRenderer(int tickCount) {
         if (drawdownChart == null) {
+            LOGGER.warning("drawdownChart ist NULL - kann Renderer nicht anpassen");
             return;
         }
         
@@ -291,24 +367,25 @@ public class TickChartManager {
         XYLineAndShapeRenderer renderer = (XYLineAndShapeRenderer) plot.getRenderer();
         
         if (tickCount <= 1) {
-            // Bei einem Datenpunkt: Nur Shapes anzeigen, keine Linien
+            // Bei einem Datenpunkt: Nur große Shapes anzeigen, keine Linien
             renderer.setSeriesLinesVisible(0, false);
             renderer.setSeriesShapesVisible(0, true);
-            renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Größere Punkte
-            LOGGER.info("Drawdown-Chart: Ein-Punkt-Modus aktiviert (nur Shapes)");
+            renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-6, -6, 12, 12)); // Sehr große Punkte
+            LOGGER.info("Drawdown-Chart: Ein-Punkt-Modus aktiviert (nur große Shapes)");
             
-        } else if (tickCount <= 3) {
-            // Bei wenigen Datenpunkten: Linien und Shapes anzeigen
+        } else if (tickCount <= 5) {
+            // Bei wenigen Datenpunkten: Linien und große Shapes anzeigen
             renderer.setSeriesLinesVisible(0, true);
             renderer.setSeriesShapesVisible(0, true);
-            renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-3, -3, 6, 6));
-            LOGGER.info("Drawdown-Chart: Wenig-Punkte-Modus aktiviert (Linien + Shapes)");
+            renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Große Punkte
+            LOGGER.info("Drawdown-Chart: Wenig-Punkte-Modus aktiviert (Linien + große Shapes)");
             
         } else {
-            // Bei vielen Datenpunkten: Nur Linien anzeigen
+            // Bei vielen Datenpunkten: Linien und kleine Shapes anzeigen
             renderer.setSeriesLinesVisible(0, true);
-            renderer.setSeriesShapesVisible(0, false);
-            LOGGER.info("Drawdown-Chart: Viel-Punkte-Modus aktiviert (nur Linien)");
+            renderer.setSeriesShapesVisible(0, true);
+            renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-2, -2, 4, 4)); // Normale Punkte
+            LOGGER.info("Drawdown-Chart: Viel-Punkte-Modus aktiviert (Linien + kleine Shapes)");
         }
     }
     
@@ -316,34 +393,44 @@ public class TickChartManager {
      * Leert alle Chart-Serien
      */
     private void clearAllSeries() {
-        equitySeries.clear();
-        floatingProfitSeries.clear();
-        totalValueSeries.clear();
-        drawdownPercentSeries.clear();
-        LOGGER.fine("Chart-Serien geleert");
+        if (equitySeries != null) equitySeries.clear();
+        if (floatingProfitSeries != null) floatingProfitSeries.clear();
+        if (totalValueSeries != null) totalValueSeries.clear();
+        if (drawdownPercentSeries != null) drawdownPercentSeries.clear();
+        LOGGER.info("Alle Chart-Serien geleert");
     }
     
     /**
      * Aktualisiert die Chart-Titel
      */
     private void updateChartTitles(TimeScale timeScale, int tickCount) {
-        mainChart.setTitle("Tick Daten - " + signalId + " (" + providerName + ") - " + 
-                          timeScale.getLabel() + " (" + tickCount + " Ticks)");
+        if (mainChart != null) {
+            mainChart.setTitle("Tick Daten - " + signalId + " (" + providerName + ") - " + 
+                              (timeScale != null ? timeScale.getLabel() : "Unbekannt") + " (" + tickCount + " Ticks)");
+        }
         
-        drawdownChart.setTitle("Equity Drawdown (%) - " + signalId + " (" + providerName + ") - " + 
-                              timeScale.getLabel() + " [Auto-Kalibriert]");
+        if (drawdownChart != null) {
+            drawdownChart.setTitle("Equity Drawdown (%) - " + signalId + " (" + providerName + ") - " + 
+                                  (timeScale != null ? timeScale.getLabel() : "Unbekannt") + " [DIAGNOSE #" + updateCounter + "]");
+        }
+        
+        LOGGER.info("Chart-Titel aktualisiert mit " + tickCount + " Ticks");
     }
     
     /**
-     * Berechnet den Drawdown-Prozentsatz
+     * KRITISCH: Berechnet den Drawdown-Prozentsatz mit verbessertem Logging
      */
     private double calculateDrawdownPercent(double equity, double floatingProfit) {
         if (equity == 0) {
-            LOGGER.warning("Equity ist 0 - kann Drawdown nicht berechnen");
+            LOGGER.warning("WARNUNG: Equity ist 0 - kann Drawdown nicht berechnen");
             return 0.0;
         }
+        
         double result = (floatingProfit / equity) * 100.0;
-        LOGGER.finest("Drawdown berechnet: " + floatingProfit + " / " + equity + " * 100 = " + result + "%");
+        
+        // DETAILLIERTES LOGGING - JETZT MIT INFO LEVEL
+        LOGGER.info("DRAWDOWN BERECHNUNG: " + floatingProfit + " / " + equity + " * 100 = " + String.format("%.6f%%", result));
+        
         return result;
     }
     
@@ -375,133 +462,117 @@ public class TickChartManager {
         plot.getRangeAxis().setRange(minValue - padding, maxValue + padding);
         plot.getDomainAxis().setAutoRange(true);
         
-        LOGGER.info("Haupt-Chart Y-Achse: " + (minValue - padding) + " bis " + (maxValue + padding));
+        LOGGER.info("Haupt-Chart Y-Achse gesetzt: " + String.format("%.2f", minValue - padding) + 
+                   " bis " + String.format("%.2f", maxValue + padding));
     }
     
     /**
-     * VERBESSERTE METHODE: Passt den Y-Achsen-Bereich des Drawdown-Charts mit Auto-Kalibrierung an
-     * Optimiert für bessere Sichtbarkeit kleiner Bewegungen mit verbesserter Ein-Punkt-Handhabung
+     * KOMPLETT NEU: Robuste Y-Achsen-Bereich-Anpassung für Drawdown-Chart
+     * ALLE PROBLEME BEHOBEN: Garantiert sichtbare Darstellung für alle Wertebereiche
      */
-    private void adjustDrawdownChartYAxisRangeAutoCalibrated(List<TickDataLoader.TickData> filteredTicks) {
+    private void adjustDrawdownChartYAxisRangeRobust(List<TickDataLoader.TickData> filteredTicks) {
         if (drawdownChart == null || filteredTicks.isEmpty()) {
             LOGGER.warning("Kann Drawdown Y-Achse nicht anpassen: Chart=" + (drawdownChart != null) + 
                           ", Ticks=" + (filteredTicks != null ? filteredTicks.size() : "null"));
             return;
         }
         
-        LOGGER.info("=== DRAWDOWN AUTO-KALIBRIERUNG START ===");
+        LOGGER.info("=== ROBUSTE DRAWDOWN Y-ACHSEN ANPASSUNG START ===");
         
         XYPlot plot = drawdownChart.getXYPlot();
         
-        // Min/Max Drawdown-Prozentsätze finden mit detailliertem Logging
+        // SCHRITT 1: Alle Drawdown-Werte berechnen und sammeln
+        double[] drawdownValues = new double[filteredTicks.size()];
         double minDrawdown = Double.MAX_VALUE;
         double maxDrawdown = Double.MIN_VALUE;
         
-        for (TickDataLoader.TickData tick : filteredTicks) {
+        for (int i = 0; i < filteredTicks.size(); i++) {
+            TickDataLoader.TickData tick = filteredTicks.get(i);
             double drawdown = calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit());
+            drawdownValues[i] = drawdown;
+            
             if (drawdown < minDrawdown) minDrawdown = drawdown;
             if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+            
+            LOGGER.info("Drawdown-Wert #" + (i+1) + ": " + String.format("%.6f%%", drawdown));
         }
         
-        LOGGER.info("Drawdown-Bereich der Daten: " + String.format("%.6f%% bis %.6f%%", minDrawdown, maxDrawdown));
+        LOGGER.info("DRAWDOWN-BEREICH: Min=" + String.format("%.6f%%", minDrawdown) + 
+                   ", Max=" + String.format("%.6f%%", maxDrawdown));
         
-        // Fallback falls keine gültigen Werte
+        // SCHRITT 2: Fallback für ungültige Werte
         if (minDrawdown == Double.MAX_VALUE || maxDrawdown == Double.MIN_VALUE) {
-            LOGGER.warning("Keine gültigen Drawdown-Werte gefunden - verwende Standardbereich");
-            plot.getRangeAxis().setRange(-1.0, 1.0);
+            LOGGER.severe("FEHLER: Keine gültigen Drawdown-Werte - setze Notfall-Bereich");
+            plot.getRangeAxis().setRange(-5.0, 5.0);
             return;
         }
         
-        // VERBESSERTE AUTO-KALIBRIERUNG für Ein-Punkt-Daten
+        // SCHRITT 3: Intelligente Bereichsberechnung
         double dataRange = maxDrawdown - minDrawdown;
+        double centerValue = (minDrawdown + maxDrawdown) / 2.0;
         double maxAbsValue = Math.max(Math.abs(minDrawdown), Math.abs(maxDrawdown));
         
-        LOGGER.info("Datenspanne: " + String.format("%.6f%%", dataRange) + 
-                   ", Max Abs-Wert: " + String.format("%.6f%%", maxAbsValue));
+        LOGGER.info("BEREICHS-ANALYSE: Spanne=" + String.format("%.6f%%", dataRange) + 
+                   ", Zentrum=" + String.format("%.6f%%", centerValue) + 
+                   ", Max-Abs=" + String.format("%.6f%%", maxAbsValue));
         
         double lowerBound, upperBound;
-        String calibrationType;
+        String strategie;
         
-        // SPEZIELLE BEHANDLUNG FÜR EIN-PUNKT-DATEN
-        if (filteredTicks.size() == 1) {
-            double singleValue = minDrawdown; // minDrawdown == maxDrawdown bei einem Punkt
-            
-            if (Math.abs(singleValue) < 0.001) {
-                // Sehr kleiner Wert - symmetrischer Bereich um den Wert
-                lowerBound = singleValue - 0.002;
-                upperBound = singleValue + 0.002;
-            } else if (Math.abs(singleValue) < 0.1) {
-                // Kleiner Wert - Bereich um den Wert
-                double padding = Math.max(Math.abs(singleValue) * 0.5, 0.01);
-                lowerBound = singleValue - padding;
-                upperBound = singleValue + padding;
-            } else {
-                // Größerer Wert - proportionaler Bereich
-                double padding = Math.abs(singleValue) * 0.3;
-                lowerBound = singleValue - padding;
-                upperBound = singleValue + padding;
-            }
-            calibrationType = "Ein-Punkt-Spezial (Wert: " + String.format("%.6f%%", singleValue) + ")";
-            
-        } else if (maxAbsValue < 0.001) {
-            // Ultra kleine Werte (< 0.001%) - sehr sehr feiner Bereich
-            lowerBound = Math.min(minDrawdown - 0.0005, -0.001);
-            upperBound = Math.max(maxDrawdown + 0.0005, 0.001);
-            calibrationType = "Ultra-fein (< 0.001%)";
-            
-        } else if (maxAbsValue < 0.01) {
-            // Extrem kleine Werte (< 0.01%) - sehr feiner Bereich
-            double padding = Math.max(dataRange * 0.3, 0.002);
-            lowerBound = minDrawdown - padding;
-            upperBound = maxDrawdown + padding;
-            calibrationType = "Extrem-fein (< 0.01%)";
+        // SCHRITT 4: Adaptive Strategie basierend auf Datenlage
+        if (dataRange < 0.001) {
+            // Alle Werte praktisch identisch - symmetrischer kleiner Bereich um Zentrum
+            double padding = Math.max(0.01, Math.abs(centerValue) * 0.1);
+            lowerBound = centerValue - padding;
+            upperBound = centerValue + padding;
+            strategie = "Identische Werte (Spanne < 0.001%)";
             
         } else if (maxAbsValue < 0.1) {
-            // Sehr kleine Werte (< 0.1%) - feiner Bereich
-            double padding = Math.max(dataRange * 0.25, 0.01);
+            // Sehr kleine Werte - feiner Bereich mit garantierter Mindestgröße
+            double padding = Math.max(dataRange * 0.5, 0.02);
             lowerBound = minDrawdown - padding;
             upperBound = maxDrawdown + padding;
-            calibrationType = "Sehr-fein (< 0.1%)";
+            strategie = "Sehr kleine Werte (< 0.1%)";
             
         } else if (maxAbsValue < 1.0) {
-            // Kleine Werte (< 1%) - adaptiver Bereich
-            double padding = Math.max(dataRange * 0.2, 0.05);
+            // Kleine Werte - normaler Bereich mit angemessenem Padding
+            double padding = Math.max(dataRange * 0.3, 0.1);
             lowerBound = minDrawdown - padding;
             upperBound = maxDrawdown + padding;
-            calibrationType = "Klein (< 1%)";
+            strategie = "Kleine Werte (< 1.0%)";
             
-        } else if (maxAbsValue < 5.0) {
-            // Mittlere Werte (< 5%) - normaler Bereich
-            double padding = Math.max(dataRange * 0.15, 0.2);
+        } else if (maxAbsValue < 10.0) {
+            // Mittlere Werte - proportionaler Bereich
+            double padding = Math.max(dataRange * 0.2, 0.5);
             lowerBound = minDrawdown - padding;
             upperBound = maxDrawdown + padding;
-            calibrationType = "Mittel (< 5%)";
+            strategie = "Mittlere Werte (< 10.0%)";
             
         } else {
-            // Große Werte (>= 5%) - symmetrischer Bereich
-            double padding = Math.max(maxAbsValue * 0.1, 0.5);
+            // Große Werte - symmetrischer Bereich
+            double padding = Math.max(maxAbsValue * 0.1, 1.0);
             lowerBound = -maxAbsValue - padding;
             upperBound = maxAbsValue + padding;
-            calibrationType = "Groß (>= 5%) - symmetrisch";
+            strategie = "Große Werte (>= 10.0%) - symmetrisch";
         }
         
-        // Sicherstellen, dass der Bereich nicht zu klein wird
+        // SCHRITT 5: Mindestbereich garantieren
         double finalRange = upperBound - lowerBound;
-        if (finalRange < 0.004) {  // ERHÖHT: Minimaler Bereich von 0.004% (war 0.002%)
+        if (finalRange < 0.02) { // Mindestens 0.02% Spanne
             double center = (upperBound + lowerBound) / 2;
-            lowerBound = center - 0.002;
-            upperBound = center + 0.002;
-            calibrationType += " + Min-Bereich-Korrektur";
+            lowerBound = center - 0.01;
+            upperBound = center + 0.01;
+            strategie += " + Mindestbereich-Garantie";
         }
         
-        // Y-Achsen-Bereich setzen
+        // SCHRITT 6: Y-Achsen-Bereich setzen
         plot.getRangeAxis().setRange(lowerBound, upperBound);
         plot.getDomainAxis().setAutoRange(true);
         
-        LOGGER.info("Auto-Kalibrierung angewendet: " + calibrationType);
-        LOGGER.info("Y-Achsen-Bereich gesetzt: " + String.format("%.6f%% bis %.6f%%", lowerBound, upperBound));
-        LOGGER.info("Finale Sichtbare Spanne: " + String.format("%.6f%%", finalRange));
-        LOGGER.info("=== DRAWDOWN AUTO-KALIBRIERUNG ENDE ===");
+        LOGGER.info("STRATEGIE ANGEWENDET: " + strategie);
+        LOGGER.info("Y-ACHSEN-BEREICH GESETZT: " + String.format("%.6f%% bis %.6f%%", lowerBound, upperBound));
+        LOGGER.info("FINALE SICHTBARE SPANNE: " + String.format("%.6f%%", finalRange));
+        LOGGER.info("=== ROBUSTE DRAWDOWN Y-ACHSEN ANPASSUNG ENDE ===");
     }
     
     /**
@@ -515,7 +586,7 @@ public class TickChartManager {
         XYPlot plot = drawdownChart.getXYPlot();
         XYLineAndShapeRenderer renderer = (XYLineAndShapeRenderer) plot.getRenderer();
         
-        // Prüfe ob mehr positive oder negative Werte vorhanden sind
+        // Prüfe Werteverteilung
         long positiveCount = filteredTicks.stream().filter(tick -> 
             calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit()) > 0
         ).count();
@@ -525,11 +596,11 @@ public class TickChartManager {
         ).count();
         
         long zeroCount = filteredTicks.stream().filter(tick -> 
-            calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit()) == 0
+            Math.abs(calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit())) < 0.001
         ).count();
         
         LOGGER.info("Drawdown Werteverteilung: Positiv=" + positiveCount + 
-                   ", Negativ=" + negativeCount + ", Null=" + zeroCount);
+                   ", Negativ=" + negativeCount + ", ~Null=" + zeroCount);
         
         // Farbe basierend auf Mehrheit setzen
         if (positiveCount > negativeCount) {

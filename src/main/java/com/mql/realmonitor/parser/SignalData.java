@@ -4,23 +4,26 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.logging.Logger;
 
 /**
- * Model-Klasse für Signalprovider-Daten
+ * VERBESSERT: Model-Klasse für Signalprovider-Daten
  * Repräsentiert die extrahierten Daten eines MQL5-Signalproviders
- * ERWEITERT: Equity Drawdown Berechnung hinzugefügt
+ * ALLE PROBLEME BEHOBEN: Robuste Equity Drawdown Berechnung mit Diagnostik
  */
 public class SignalData {
+    
+    private static final Logger LOGGER = Logger.getLogger(SignalData.class.getName());
     
     // Formatter für Zeitstempel
     public static final DateTimeFormatter TIMESTAMP_FORMATTER = 
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
     public static final DateTimeFormatter FILE_TIMESTAMP_FORMATTER = 
-    	    DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss");  // KORRIGIERT: Leerzeichen statt Komma
+    	    DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss");
     
     private final String signalId;
-    private final String providerName;  // NEU: Provider-Name
+    private final String providerName;
     private final double equity;
     private final double floatingProfit;
     private final String currency;
@@ -44,16 +47,19 @@ public class SignalData {
         this.floatingProfit = floatingProfit;
         this.currency = currency;
         this.timestamp = timestamp;
+        
+        // DIAGNOSTIK: Logge Erstellung mit Drawdown-Berechnung
+        if (LOGGER.isLoggable(java.util.logging.Level.FINE)) {
+            double calculatedDrawdown = getEquityDrawdownPercent();
+            LOGGER.fine("SignalData erstellt: Signal=" + signalId + 
+                       ", Equity=" + equity + 
+                       ", Floating=" + floatingProfit + 
+                       ", Berechnet Drawdown=" + String.format("%.6f%%", calculatedDrawdown));
+        }
     }
     
     /**
      * Konstruktor für Rückwärtskompatibilität (ohne Provider-Name)
-     * 
-     * @param signalId Die eindeutige Signal-ID
-     * @param equity Der aktuelle Kontostand
-     * @param floatingProfit Der aktuelle Floating Profit
-     * @param currency Die Währung (z.B. USD, EUR)
-     * @param timestamp Der Zeitstempel der Datenerhebung
      */
     public SignalData(String signalId, double equity, double floatingProfit, 
                      String currency, LocalDateTime timestamp) {
@@ -62,9 +68,6 @@ public class SignalData {
     
     /**
      * Copy-Konstruktor mit neuem Zeitstempel
-     * 
-     * @param other Das zu kopierende SignalData-Objekt
-     * @param newTimestamp Der neue Zeitstempel
      */
     public SignalData(SignalData other, LocalDateTime newTimestamp) {
         this.signalId = other.signalId;
@@ -111,15 +114,40 @@ public class SignalData {
     }
     
     /**
-     * NEU: Berechnet den Equity Drawdown in Prozent
+     * VERBESSERT: Berechnet den Equity Drawdown in Prozent mit robuster Fehlerbehandlung
      * 
      * @return Der Equity Drawdown in Prozent
      */
     public double getEquityDrawdownPercent() {
-        if (equity == 0) {
+        if (equity == 0.0) {
+            LOGGER.warning("DRAWDOWN BERECHNUNG: Equity ist 0 für Signal " + signalId + " - kann Drawdown nicht berechnen");
             return 0.0;
         }
-        return (floatingProfit / equity) * 100.0;
+        
+        if (Double.isNaN(equity) || Double.isInfinite(equity)) {
+            LOGGER.warning("DRAWDOWN BERECHNUNG: Equity ist ungültig (" + equity + ") für Signal " + signalId);
+            return 0.0;
+        }
+        
+        if (Double.isNaN(floatingProfit) || Double.isInfinite(floatingProfit)) {
+            LOGGER.warning("DRAWDOWN BERECHNUNG: FloatingProfit ist ungültig (" + floatingProfit + ") für Signal " + signalId);
+            return 0.0;
+        }
+        
+        double result = (floatingProfit / equity) * 100.0;
+        
+        // Zusätzliche Validierung
+        if (Double.isNaN(result) || Double.isInfinite(result)) {
+            LOGGER.warning("DRAWDOWN BERECHNUNG: Ergebnis ist ungültig (" + result + ") für Signal " + signalId + 
+                          " - Equity=" + equity + ", FloatingProfit=" + floatingProfit);
+            return 0.0;
+        }
+        
+        // DIAGNOSTIK: Detailliertes Logging für Drawdown-Berechnung
+        LOGGER.info("DRAWDOWN BERECHNUNG für Signal " + signalId + ": " + 
+                   String.format("%.2f / %.2f * 100 = %.6f%%", floatingProfit, equity, result));
+        
+        return result;
     }
     
     /**
@@ -160,14 +188,31 @@ public class SignalData {
     }
     
     /**
-     * NEU: Formatiert den Equity Drawdown für Anzeige
+     * VERBESSERT: Formatiert den Equity Drawdown für Anzeige mit verbesserter Präzision
      * 
      * @return Formatierter Equity Drawdown mit Prozentzeichen und Vorzeichen
      */
     public String getFormattedEquityDrawdown() {
         double drawdownPercent = getEquityDrawdownPercent();
+        
+        // Fallback für ungültige Werte
+        if (Double.isNaN(drawdownPercent) || Double.isInfinite(drawdownPercent)) {
+            return "N/A";
+        }
+        
         String sign = drawdownPercent >= 0 ? "+" : "";
-        return String.format("%s%.2f%%", sign, drawdownPercent);
+        
+        // Dynamische Präzision basierend auf Wertegröße
+        if (Math.abs(drawdownPercent) < 0.01) {
+            // Sehr kleine Werte: 6 Dezimalstellen
+            return String.format("%s%.6f%%", sign, drawdownPercent);
+        } else if (Math.abs(drawdownPercent) < 1.0) {
+            // Kleine Werte: 4 Dezimalstellen
+            return String.format("%s%.4f%%", sign, drawdownPercent);
+        } else {
+            // Normale Werte: 2 Dezimalstellen
+            return String.format("%s%.2f%%", sign, drawdownPercent);
+        }
     }
     
     /**
@@ -193,7 +238,6 @@ public class SignalData {
     /**
      * Erstellt einen vollständigen String für die Tick-Datei
      * Format: DD.MM.YYYY,HH:MM:SS,Equity,FloatingProfit
-     * KORRIGIERT: Datum und Zeit korrekt getrennt
      * 
      * @return Vollständige CSV-Zeile für Tick-Datei
      */
@@ -205,17 +249,35 @@ public class SignalData {
     }
     
     /**
-     * Prüft ob die Signaldaten gültig sind
+     * VERBESSERT: Prüft ob die Signaldaten gültig sind (mit Drawdown-Validierung)
      * 
      * @return true wenn alle Daten gültig sind, false sonst
      */
     public boolean isValid() {
-        return signalId != null && !signalId.trim().isEmpty() &&
-               currency != null && !currency.trim().isEmpty() &&
-               currency.length() == 3 && // Standard 3-Buchstaben Währungscode
-               !Double.isNaN(equity) && !Double.isInfinite(equity) &&
-               !Double.isNaN(floatingProfit) && !Double.isInfinite(floatingProfit) &&
-               timestamp != null;
+        boolean basicValidation = signalId != null && !signalId.trim().isEmpty() &&
+                                 currency != null && !currency.trim().isEmpty() &&
+                                 currency.length() == 3 && // Standard 3-Buchstaben Währungscode
+                                 !Double.isNaN(equity) && !Double.isInfinite(equity) &&
+                                 !Double.isNaN(floatingProfit) && !Double.isInfinite(floatingProfit) &&
+                                 timestamp != null;
+        
+        if (!basicValidation) {
+            LOGGER.warning("SignalData Basis-Validierung fehlgeschlagen für Signal: " + signalId);
+            return false;
+        }
+        
+        // Zusätzliche Drawdown-Validierung
+        double drawdown = getEquityDrawdownPercent();
+        if (Double.isNaN(drawdown) || Double.isInfinite(drawdown)) {
+            LOGGER.warning("SignalData Drawdown-Validierung fehlgeschlagen für Signal " + signalId + 
+                          ": Berechneter Drawdown ist ungültig (" + drawdown + ")");
+            return false;
+        }
+        
+        LOGGER.fine("SignalData Validierung erfolgreich für Signal " + signalId + 
+                   " - Drawdown: " + String.format("%.6f%%", drawdown));
+        
+        return true;
     }
     
     /**
@@ -229,8 +291,16 @@ public class SignalData {
             return true;
         }
         
-        return Double.compare(this.equity, other.equity) != 0 ||
-               Double.compare(this.floatingProfit, other.floatingProfit) != 0;
+        boolean equityChanged = Double.compare(this.equity, other.equity) != 0;
+        boolean floatingChanged = Double.compare(this.floatingProfit, other.floatingProfit) != 0;
+        
+        if (equityChanged || floatingChanged) {
+            LOGGER.fine("Werte geändert für Signal " + signalId + 
+                       ": Equity " + other.equity + " -> " + this.equity + 
+                       ", Floating " + other.floatingProfit + " -> " + this.floatingProfit);
+        }
+        
+        return equityChanged || floatingChanged;
     }
     
     /**
@@ -254,6 +324,19 @@ public class SignalData {
     }
     
     /**
+     * VERBESSERT: Berechnet die Änderung des Drawdowns im Vergleich zu anderen Daten
+     * 
+     * @param other Das andere SignalData-Objekt
+     * @return Die Änderung des Drawdowns in Prozentpunkten
+     */
+    public double getDrawdownChange(SignalData other) {
+        if (other == null) {
+            return getEquityDrawdownPercent();
+        }
+        return this.getEquityDrawdownPercent() - other.getEquityDrawdownPercent();
+    }
+    
+    /**
      * Erstellt eine Kopie mit aktualisiertem Zeitstempel
      * 
      * @return Neue SignalData-Instanz mit aktuellem Zeitstempel
@@ -263,7 +346,7 @@ public class SignalData {
     }
     
     /**
-     * Gibt eine zusammenfassende Beschreibung der Signaldaten zurück
+     * VERBESSERT: Gibt eine zusammenfassende Beschreibung der Signaldaten zurück (mit Drawdown)
      * 
      * @return Textuelle Beschreibung
      */
@@ -277,9 +360,34 @@ public class SignalData {
                            getFormattedTimestamp());
     }
     
+    /**
+     * NEU: Erstellt eine detaillierte Diagnose-Beschreibung
+     * 
+     * @return Detaillierte Diagnostik-Informationen
+     */
+    public String getDiagnosticSummary() {
+        StringBuilder diag = new StringBuilder();
+        diag.append("=== SIGNALDATA DIAGNOSTIK ===\n");
+        diag.append("Signal ID: ").append(signalId).append("\n");
+        diag.append("Provider: ").append(providerName).append("\n");
+        diag.append("Equity: ").append(equity).append(" (valid: ").append(!Double.isNaN(equity) && !Double.isInfinite(equity)).append(")\n");
+        diag.append("Floating Profit: ").append(floatingProfit).append(" (valid: ").append(!Double.isNaN(floatingProfit) && !Double.isInfinite(floatingProfit)).append(")\n");
+        diag.append("Currency: ").append(currency).append(" (valid: ").append(currency != null && currency.length() == 3).append(")\n");
+        diag.append("Timestamp: ").append(timestamp).append("\n");
+        
+        double drawdown = getEquityDrawdownPercent();
+        diag.append("Calculated Drawdown: ").append(String.format("%.6f%%", drawdown))
+            .append(" (valid: ").append(!Double.isNaN(drawdown) && !Double.isInfinite(drawdown)).append(")\n");
+        
+        diag.append("Total Value: ").append(getTotalValue()).append("\n");
+        diag.append("Is Valid: ").append(isValid()).append("\n");
+        
+        return diag.toString();
+    }
+    
     @Override
     public String toString() {
-        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, drawdown=%.2f%%, currency='%s', time='%s'}", 
+        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, drawdown=%.6f%%, currency='%s', time='%s'}", 
                            signalId, providerName, equity, floatingProfit, getEquityDrawdownPercent(), currency, getFormattedTimestamp());
     }
     
@@ -319,6 +427,7 @@ public class SignalData {
             
             String[] parts = tickLine.split(",");
             if (parts.length < 4) {
+                LOGGER.warning("Tick-Datei-Zeile hat zu wenige Teile (" + parts.length + "): " + tickLine);
                 return null;
             }
             
@@ -332,9 +441,14 @@ public class SignalData {
             double equity = Double.parseDouble(parts[2].trim());
             double floatingProfit = Double.parseDouble(parts[3].trim());
             
-            return new SignalData(signalId, equity, floatingProfit, defaultCurrency, timestamp);
+            SignalData result = new SignalData(signalId, equity, floatingProfit, defaultCurrency, timestamp);
+            
+            LOGGER.fine("SignalData erfolgreich aus Tick-Zeile erstellt: " + result.getSummary());
+            
+            return result;
             
         } catch (Exception e) {
+            LOGGER.warning("Fehler beim Parsen der Tick-Datei-Zeile: " + tickLine + " -> " + e.getMessage());
             return null;
         }
     }

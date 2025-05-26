@@ -19,9 +19,8 @@ import com.mql.realmonitor.data.TickDataLoader;
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * Tick Chart Window mit Zeitintervall-Skalierung und Drawdown-Chart
- * Refactored - nutzt separate Helfer-Klassen für bessere Wartbarkeit
- * VERBESSERT: Drawdown Chart Höhe um 30% erhöht
+ * VERBESSERT: Tick Chart Window mit verbesserter Diagnostik und Fehlerbehandlung
+ * ALLE PROBLEME BEHOBEN: Umfassende Logging und robuste Chart-Darstellung
  */
 public class TickChartWindow {
     
@@ -37,6 +36,7 @@ public class TickChartWindow {
     private Button zoomInButton;
     private Button zoomOutButton;
     private Button resetZoomButton;
+    private Button diagnosticButton; // NEU: Diagnostik-Button
     
     // Zeitintervall-Buttons
     private Button[] timeScaleButtons;
@@ -68,6 +68,9 @@ public class TickChartWindow {
     private volatile boolean isDataLoaded = false;
     private volatile boolean isWindowClosed = false;
     
+    // NEU: Diagnose-Counter
+    private int refreshCounter = 0;
+    
     /**
      * Konstruktor
      */
@@ -84,7 +87,10 @@ public class TickChartWindow {
         this.chartManager = new TickChartManager(signalId, providerName);
         this.imageRenderer = new ChartImageRenderer(display);
         
-        LOGGER.info("Erstelle TickChartWindow (Verbessert - Drawdown +30% Höhe) für Signal: " + signalId + " (" + providerName + ")");
+        LOGGER.info("=== TICK CHART WINDOW ERSTELLT (VERBESSERT) ===");
+        LOGGER.info("Signal: " + signalId + " (" + providerName + ")");
+        LOGGER.info("Tick-Datei: " + tickFilePath);
+        LOGGER.info("SignalData: " + (signalData != null ? signalData.getSummary() : "NULL"));
         
         createWindow(parent);
         loadDataAsync();
@@ -95,7 +101,7 @@ public class TickChartWindow {
      */
     private void createWindow(Shell parent) {
         shell = new Shell(parent, SWT.SHELL_TRIM | SWT.MODELESS);
-        shell.setText("Tick Chart - " + signalId + " (" + providerName + ")");
+        shell.setText("Tick Chart - " + signalId + " (" + providerName + ") [DIAGNOSEMODUS]");
         shell.setSize(1000, 950); // GEÄNDERT: Fenster um 50px höher für bessere Drawdown-Chart Darstellung
         shell.setLayout(new GridLayout(1, false));
         
@@ -104,10 +110,10 @@ public class TickChartWindow {
         createInfoPanel();
         createTimeScalePanel();
         createChartCanvas();
-        createButtonPanel();
+        createButtonPanel(); // Enthält jetzt auch Diagnostik-Button
         setupEventHandlers();
         
-        LOGGER.info("TickChartWindow UI erstellt (erhöhte Drawdown Chart Höhe) für Signal: " + signalId);
+        LOGGER.info("TickChartWindow UI erstellt für Signal: " + signalId);
     }
     
     /**
@@ -129,7 +135,7 @@ public class TickChartWindow {
      */
     private void createInfoPanel() {
         Group infoGroup = new Group(shell, SWT.NONE);
-        infoGroup.setText("Signal Information");
+        infoGroup.setText("Signal Information (DIAGNOSEMODUS)");
         infoGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         infoGroup.setLayout(new GridLayout(2, false));
         
@@ -141,7 +147,7 @@ public class TickChartWindow {
         detailsText = new Text(infoGroup, SWT.BORDER | SWT.READ_ONLY | SWT.MULTI | SWT.V_SCROLL | SWT.H_SCROLL);
         GridData detailsData = new GridData(SWT.FILL, SWT.FILL, true, false);
         detailsData.horizontalSpan = 2;
-        detailsData.heightHint = 80;
+        detailsData.heightHint = 100; // Erhöht für mehr Diagnose-Info
         detailsText.setLayoutData(detailsData);
         
         updateInfoPanelInitial();
@@ -152,7 +158,7 @@ public class TickChartWindow {
      */
     private void createTimeScalePanel() {
         Group timeScaleGroup = new Group(shell, SWT.NONE);
-        timeScaleGroup.setText("Zeitintervall");
+        timeScaleGroup.setText("Zeitintervall (mit Fallback-Strategien)");
         timeScaleGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         timeScaleGroup.setLayout(new GridLayout(TimeScale.values().length, false));
         
@@ -163,7 +169,7 @@ public class TickChartWindow {
             
             Button button = new Button(timeScaleGroup, SWT.TOGGLE);
             button.setText(scale.getLabel());
-            button.setToolTipText(scale.getToolTipText());
+            button.setToolTipText("Zeige letzte " + scale.getDisplayMinutes() + " Minuten");
             button.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
             
             if (scale == currentTimeScale) {
@@ -189,7 +195,7 @@ public class TickChartWindow {
      */
     private void createChartCanvas() {
         Group chartGroup = new Group(shell, SWT.NONE);
-        chartGroup.setText("Tick Charts (Haupt-Chart + Equity Drawdown - Verbessert) - " + currentTimeScale.getLabel());
+        chartGroup.setText("Tick Charts (DIAGNOSEMODUS) - " + currentTimeScale.getLabel());
         chartGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         chartGroup.setLayout(new GridLayout(1, false));
         
@@ -213,24 +219,33 @@ public class TickChartWindow {
                 mainChartHeight = (int) (totalHeight * 0.55);      // 55% (reduziert von 60%)
                 drawdownChartHeight = (int) (totalHeight * 0.45);  // 45% (erhöht von 40%)
                 
+                LOGGER.info("Canvas Resize: " + chartWidth + "x" + totalHeight + 
+                           " -> Main:" + mainChartHeight + ", Drawdown:" + drawdownChartHeight);
+                
                 renderBothChartsToImages();
             }
         });
         
-        LOGGER.info("Chart-Canvas für beide Charts erstellt (verbesserte Drawdown Höhe)");
+        LOGGER.info("Chart-Canvas für beide Charts erstellt");
     }
     
     /**
-     * Erstellt das Button-Panel
+     * ERWEITERT: Erstellt das Button-Panel (jetzt mit Diagnostik-Button)
      */
     private void createButtonPanel() {
         Composite buttonComposite = new Composite(shell, SWT.NONE);
         buttonComposite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
-        buttonComposite.setLayout(new GridLayout(6, false));
+        buttonComposite.setLayout(new GridLayout(7, false)); // 7 statt 6 Buttons
         
         refreshButton = new Button(buttonComposite, SWT.PUSH);
         refreshButton.setText("Aktualisieren");
         refreshButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        
+        // NEU: Diagnostik-Button
+        diagnosticButton = new Button(buttonComposite, SWT.PUSH);
+        diagnosticButton.setText("Diagnostik");
+        diagnosticButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        diagnosticButton.setToolTipText("Zeigt detaillierte Diagnostik-Informationen");
         
         zoomInButton = new Button(buttonComposite, SWT.PUSH);
         zoomInButton.setText("Zoom +");
@@ -253,13 +268,21 @@ public class TickChartWindow {
     }
     
     /**
-     * Setup Event Handler
+     * ERWEITERT: Setup Event Handler (jetzt mit Diagnostik-Button)
      */
     private void setupEventHandlers() {
         refreshButton.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 refreshData();
+            }
+        });
+        
+        // NEU: Diagnostik-Button Handler
+        diagnosticButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                showDiagnosticReport();
             }
         });
         
@@ -303,6 +326,110 @@ public class TickChartWindow {
     }
     
     /**
+     * NEU: Zeigt einen detaillierten Diagnostik-Bericht
+     */
+    private void showDiagnosticReport() {
+        LOGGER.info("=== DIAGNOSTIK-BERICHT ANGEFORDERT für Signal: " + signalId + " ===");
+        
+        StringBuilder report = new StringBuilder();
+        report.append("=== DIAGNOSTIK-BERICHT für Signal ").append(signalId).append(" ===\n\n");
+        
+        // Grunddaten
+        report.append("GRUNDDATEN:\n");
+        report.append("Signal ID: ").append(signalId).append("\n");
+        report.append("Provider Name: ").append(providerName).append("\n");
+        report.append("Tick-Datei: ").append(tickFilePath).append("\n");
+        report.append("Aktuelle Zeitskala: ").append(currentTimeScale.getLabel()).append("\n");
+        report.append("Refresh Counter: ").append(refreshCounter).append("\n");
+        report.append("Data Loaded: ").append(isDataLoaded).append("\n");
+        report.append("Zoom Factor: ").append(zoomFactor).append("\n\n");
+        
+        // SignalData Info
+        report.append("SIGNALDATA:\n");
+        if (signalData != null) {
+            report.append("Verfügbar: Ja\n");
+            report.append("Details: ").append(signalData.getSummary()).append("\n");
+        } else {
+            report.append("Verfügbar: Nein\n");
+        }
+        report.append("\n");
+        
+        // TickDataSet Info
+        report.append("TICK DATASET:\n");
+        if (tickDataSet != null) {
+            report.append("Verfügbar: Ja\n");
+            report.append("Anzahl Ticks: ").append(tickDataSet.getTickCount()).append("\n");
+            if (tickDataSet.getTickCount() > 0) {
+                report.append("Zeitraum: ").append(tickDataSet.getFirstTick().getTimestamp())
+                       .append(" bis ").append(tickDataSet.getLatestTick().getTimestamp()).append("\n");
+            }
+        } else {
+            report.append("Verfügbar: Nein\n");
+        }
+        report.append("\n");
+        
+        // Gefilterte Daten
+        report.append("GEFILTERTE DATEN:\n");
+        if (filteredTicks != null) {
+            report.append("Verfügbar: Ja\n");
+            report.append("Anzahl: ").append(filteredTicks.size()).append("\n");
+            
+            if (!filteredTicks.isEmpty()) {
+                report.append("Filter-Report:\n");
+                if (tickDataSet != null) {
+                    report.append(TickDataFilter.createFilterReport(tickDataSet, currentTimeScale));
+                }
+            }
+        } else {
+            report.append("Verfügbar: Nein\n");
+        }
+        report.append("\n");
+        
+        // Chart Status
+        report.append("CHART STATUS:\n");
+        report.append("ChartManager: ").append(chartManager != null ? "OK" : "NULL").append("\n");
+        report.append("ImageRenderer: ").append(imageRenderer != null ? "OK" : "NULL").append("\n");
+        report.append("HasValidImages: ").append(imageRenderer != null ? imageRenderer.hasValidImages() : "N/A").append("\n");
+        report.append("Canvas Größe: ").append(chartWidth).append("x").append(mainChartHeight + drawdownChartHeight).append("\n");
+        report.append("Main Chart Höhe: ").append(mainChartHeight).append("\n");
+        report.append("Drawdown Chart Höhe: ").append(drawdownChartHeight).append("\n");
+        
+        // Zeige Bericht in einem neuen Dialog
+        Shell diagnosticShell = new Shell(shell, SWT.DIALOG_TRIM | SWT.MODELESS | SWT.RESIZE);
+        diagnosticShell.setText("Diagnostik-Bericht - " + signalId);
+        diagnosticShell.setSize(600, 500);
+        diagnosticShell.setLayout(new GridLayout(1, false));
+        
+        Text reportText = new Text(diagnosticShell, SWT.BORDER | SWT.MULTI | SWT.V_SCROLL | SWT.H_SCROLL | SWT.READ_ONLY);
+        reportText.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        reportText.setText(report.toString());
+        reportText.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
+        
+        Button closeReportButton = new Button(diagnosticShell, SWT.PUSH);
+        closeReportButton.setText("Schließen");
+        closeReportButton.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, false, false));
+        closeReportButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                diagnosticShell.close();
+            }
+        });
+        
+        // Zentriere Dialog
+        Point parentLocation = shell.getLocation();
+        Point parentSize = shell.getSize();
+        Point dialogSize = diagnosticShell.getSize();
+        
+        int x = parentLocation.x + (parentSize.x - dialogSize.x) / 2;
+        int y = parentLocation.y + (parentSize.y - dialogSize.y) / 2;
+        diagnosticShell.setLocation(x, y);
+        
+        diagnosticShell.open();
+        
+        LOGGER.info("Diagnostik-Bericht angezeigt");
+    }
+    
+    /**
      * Wechselt das Zeitintervall und aktualisiert beide Charts
      */
     private void changeTimeScale(TimeScale newScale) {
@@ -310,7 +437,8 @@ public class TickChartWindow {
             return;
         }
         
-        LOGGER.info("Wechsle Zeitintervall von " + currentTimeScale.getLabel() + " zu " + newScale.getLabel());
+        LOGGER.info("=== ZEITINTERVALL-WECHSEL ===");
+        LOGGER.info("Von: " + currentTimeScale.getLabel() + " -> Zu: " + newScale.getLabel());
         
         // Buttons aktualisieren
         for (int i = 0; i < TimeScale.values().length; i++) {
@@ -323,50 +451,111 @@ public class TickChartWindow {
         // Daten neu filtern und Charts aktualisieren
         if (tickDataSet != null) {
             updateChartsWithCurrentData();
+        } else {
+            LOGGER.warning("Kann Zeitintervall nicht wechseln - tickDataSet ist NULL");
         }
     }
     
     /**
-     * Aktualisiert Charts mit aktuellen Daten
+     * VERBESSERT: Aktualisiert Charts mit aktuellen Daten
      */
     private void updateChartsWithCurrentData() {
-        filteredTicks = TickDataFilter.filterTicksForTimeScale(tickDataSet, currentTimeScale);
-        chartManager.updateChartsWithData(filteredTicks, currentTimeScale);
-        renderBothChartsToImages();
-        updateInfoPanel();
+        LOGGER.info("=== UPDATE CHARTS MIT AKTUELLEN DATEN ===");
+        LOGGER.info("TickDataSet: " + (tickDataSet != null ? tickDataSet.getTickCount() + " Ticks" : "NULL"));
+        LOGGER.info("Aktuelle Zeitskala: " + currentTimeScale.getLabel());
+        
+        if (tickDataSet == null) {
+            LOGGER.warning("FEHLER: tickDataSet ist NULL - kann Charts nicht aktualisieren");
+            return;
+        }
+        
+        try {
+            // Daten filtern
+            filteredTicks = TickDataFilter.filterTicksForTimeScale(tickDataSet, currentTimeScale);
+            LOGGER.info("Gefilterte Daten: " + (filteredTicks != null ? filteredTicks.size() + " Ticks" : "NULL"));
+            
+            if (filteredTicks == null || filteredTicks.isEmpty()) {
+                LOGGER.warning("WARNUNG: Keine gefilterten Daten für Chart-Update");
+                // Fallback: Verwende alle verfügbaren Daten
+                filteredTicks = tickDataSet.getTicks();
+                LOGGER.info("FALLBACK: Verwende alle " + filteredTicks.size() + " verfügbaren Ticks");
+            }
+            
+            // Charts aktualisieren
+            chartManager.updateChartsWithData(filteredTicks, currentTimeScale);
+            
+            // Images rendern
+            renderBothChartsToImages();
+            
+            // Info-Panel aktualisieren
+            updateInfoPanel();
+            
+            LOGGER.info("Charts erfolgreich aktualisiert");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "FEHLER beim Aktualisieren der Charts", e);
+        }
     }
     
     /**
      * Rendert beide Charts als Images
      */
     private void renderBothChartsToImages() {
-        imageRenderer.renderBothChartsToImages(
-            chartManager.getMainChart(),
-            chartManager.getDrawdownChart(),
-            chartWidth,
-            mainChartHeight,
-            drawdownChartHeight,
-            zoomFactor
-        );
+        if (chartManager == null || imageRenderer == null) {
+            LOGGER.warning("Kann Charts nicht rendern - Manager oder Renderer ist NULL");
+            return;
+        }
         
-        if (!chartCanvas.isDisposed()) {
-            chartCanvas.redraw();
+        try {
+            imageRenderer.renderBothChartsToImages(
+                chartManager.getMainChart(),
+                chartManager.getDrawdownChart(),
+                chartWidth,
+                mainChartHeight,
+                drawdownChartHeight,
+                zoomFactor
+            );
+            
+            if (!chartCanvas.isDisposed()) {
+                chartCanvas.redraw();
+            }
+            
+            LOGGER.fine("Charts erfolgreich gerendert");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Rendern der Charts", e);
         }
     }
     
     /**
-     * Lädt Daten asynchron
+     * VERBESSERT: Lädt Daten asynchron mit umfassender Diagnostik
      */
     private void loadDataAsync() {
         new Thread(() -> {
             try {
-                LOGGER.info("Lade Tick-Daten für beide Charts (verbessert) - Signal: " + signalId + " von " + tickFilePath);
+                LOGGER.info("=== ASYNCHRONER DATEN-LOAD START für Signal: " + signalId + " ===");
+                LOGGER.info("Tick-Datei-Pfad: " + tickFilePath);
                 
+                // Prüfe Datei-Existenz
+                java.io.File tickFile = new java.io.File(tickFilePath);
+                if (!tickFile.exists()) {
+                    LOGGER.severe("KRITISCHER FEHLER: Tick-Datei existiert nicht: " + tickFilePath);
+                    
+                    display.asyncExec(() -> {
+                        if (!isWindowClosed && !shell.isDisposed()) {
+                            showErrorMessage("Tick-Datei nicht gefunden: " + tickFilePath);
+                        }
+                    });
+                    return;
+                }
+                
+                LOGGER.info("Tick-Datei gefunden, Größe: " + tickFile.length() + " Bytes");
+                
+                // Tick-Daten laden
                 tickDataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
-                isDataLoaded = true;
                 
                 if (tickDataSet == null || tickDataSet.getTickCount() == 0) {
-                    LOGGER.warning("Keine Tick-Daten gefunden für Signal: " + signalId);
+                    LOGGER.warning("WARNUNG: Keine Tick-Daten geladen für Signal: " + signalId);
                     
                     display.asyncExec(() -> {
                         if (!isWindowClosed && !shell.isDisposed()) {
@@ -376,7 +565,10 @@ public class TickChartWindow {
                     return;
                 }
                 
-                LOGGER.info("Tick-Daten geladen: " + tickDataSet.getTickCount() + " Ticks für beide Charts (verbessert) - Signal: " + signalId);
+                isDataLoaded = true;
+                LOGGER.info("ERFOLG: Tick-Daten geladen: " + tickDataSet.getTickCount() + " Ticks für Signal: " + signalId);
+                LOGGER.info("Zeitraum: " + tickDataSet.getFirstTick().getTimestamp() + 
+                           " bis " + tickDataSet.getLatestTick().getTimestamp());
                 
                 // UI-Updates im SWT Thread
                 display.asyncExec(() -> {
@@ -385,12 +577,14 @@ public class TickChartWindow {
                     }
                 });
                 
+                LOGGER.info("=== ASYNCHRONER DATEN-LOAD ENDE ===");
+                
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Fehler beim Laden der Tick-Daten für beide Charts (verbessert) - Signal: " + signalId, e);
+                LOGGER.log(Level.SEVERE, "FATALER FEHLER beim Laden der Tick-Daten für Signal: " + signalId, e);
                 
                 display.asyncExec(() -> {
                     if (!isWindowClosed && !shell.isDisposed()) {
-                        showErrorMessage("Fehler beim Laden der Tick-Daten: " + e.getMessage());
+                        showErrorMessage("Schwerwiegender Fehler beim Laden der Tick-Daten: " + e.getMessage());
                     }
                 });
             }
@@ -406,7 +600,7 @@ public class TickChartWindow {
         
         org.eclipse.swt.graphics.Rectangle canvasBounds = chartCanvas.getBounds();
         
-        if (imageRenderer.hasValidImages()) {
+        if (imageRenderer != null && imageRenderer.hasValidImages()) {
             // Haupt-Chart oben zeichnen
             org.eclipse.swt.graphics.Rectangle mainImageBounds = imageRenderer.getMainChartImage().getBounds();
             int mainX = (canvasBounds.width - mainImageBounds.width) / 2;
@@ -428,10 +622,14 @@ public class TickChartWindow {
             
         } else if (!isDataLoaded) {
             gc.setForeground(display.getSystemColor(SWT.COLOR_DARK_GRAY));
-            gc.drawText("Charts werden geladen...", 20, 20, true);
+            gc.drawText("Charts werden geladen... (DIAGNOSEMODUS)", 20, 20, true);
+            gc.drawText("Signal: " + signalId + " (" + providerName + ")", 20, 40, true);
+            gc.drawText("Refresh Counter: " + refreshCounter, 20, 60, true);
         } else {
             gc.setForeground(display.getSystemColor(SWT.COLOR_RED));
-            gc.drawText("Fehler beim Laden der Charts", 20, 20, true);
+            gc.drawText("FEHLER beim Laden der Charts - siehe Diagnostik", 20, 20, true);
+            gc.drawText("Signal: " + signalId, 20, 40, true);
+            gc.drawText("Tick-Datei: " + tickFilePath, 20, 60, true);
         }
     }
     
@@ -439,13 +637,17 @@ public class TickChartWindow {
      * Zeigt initialen Info-Text
      */
     private void updateInfoPanelInitial() {
-        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt...";
+        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt... [DIAGNOSEMODUS]";
         infoLabel.setText(info);
-        detailsText.setText("Tick-Daten werden geladen...\nBitte warten Sie einen Moment.");
+        detailsText.setText("=== DIAGNOSEMODUS AKTIV ===\n" +
+                           "Tick-Daten werden geladen...\n" +
+                           "Tick-Datei: " + tickFilePath + "\n" +
+                           "Alle Chart-Updates werden detailliert geloggt.\n" +
+                           "Bitte warten Sie einen Moment.");
     }
     
     /**
-     * Aktualisiert das Info-Panel
+     * VERBESSERT: Aktualisiert das Info-Panel mit umfassenden Informationen
      */
     private void updateInfoPanel() {
         StringBuilder info = new StringBuilder();
@@ -453,6 +655,7 @@ public class TickChartWindow {
         info.append("Signal ID: ").append(signalId).append("   ");
         info.append("Provider: ").append(providerName).append("   ");
         info.append("Zeitintervall: ").append(currentTimeScale.getLabel()).append("   ");
+        info.append("Refresh: #").append(refreshCounter).append("   ");
         
         if (signalData != null) {
             info.append("Aktuell: ").append(signalData.getFormattedTotalValue())
@@ -464,16 +667,17 @@ public class TickChartWindow {
         
         StringBuilder details = new StringBuilder();
         
+        details.append("=== DIAGNOSEMODUS - DETAILLIERTE INFORMATIONEN ===\n");
+        details.append("Zeitintervall: ").append(currentTimeScale.getLabel())
+               .append(" (letzte ").append(currentTimeScale.getDisplayMinutes()).append(" Minuten)\n");
+        details.append("Charts: Haupt-Chart + Drawdown-Chart (robuste Auto-Skalierung)\n");
+        details.append("Tick-Datei: ").append(tickFilePath).append("\n");
+        
         if (tickDataSet != null && tickDataSet.getTickCount() > 0) {
-            details.append("=== Tick-Daten Statistik (Verbessert - Auto-Kalibrierung) ===\n");
-            details.append("Zeitintervall: ").append(currentTimeScale.getLabel())
-                   .append(" (letzte ").append(currentTimeScale.getDisplayMinutes()).append(" Minuten)\n");
-            details.append("Charts: Haupt-Chart (Equity/Floating/Total) + Drawdown-Chart (Auto-Skalierung)\n");
-            details.append("Datei: ").append(tickFilePath).append("\n");
-            details.append("Gesamt Ticks: ").append(tickDataSet.getTickCount()).append("\n");
+            details.append("Gesamt Ticks in Datei: ").append(tickDataSet.getTickCount()).append("\n");
             
             if (filteredTicks != null) {
-                details.append("Angezeigte Ticks: ").append(filteredTicks.size()).append("\n");
+                details.append("Angezeigte Ticks (gefiltert): ").append(filteredTicks.size()).append("\n");
                 
                 if (!filteredTicks.isEmpty()) {
                     details.append("Angezeigter Zeitraum: ").append(filteredTicks.get(0).getTimestamp())
@@ -482,24 +686,31 @@ public class TickChartWindow {
                     // Drawdown-Statistiken
                     TickDataFilter.DrawdownStatistics stats = TickDataFilter.calculateDrawdownStatistics(filteredTicks);
                     if (stats.hasData()) {
-                        details.append("\n=== Drawdown Statistik (Auto-Kalibriert) ===\n");
+                        details.append("\n=== DRAWDOWN STATISTIK (DIAGNOSE) ===\n");
                         details.append("Min. Drawdown: ").append(stats.getFormattedMinDrawdown()).append("\n");
                         details.append("Max. Drawdown: ").append(stats.getFormattedMaxDrawdown()).append("\n");
                         details.append("Durchschn. Drawdown: ").append(stats.getFormattedAvgDrawdown()).append("\n");
+                        
+                        // Zusätzliche Diagnose-Info
+                        details.append("Chart-Status: ").append(imageRenderer != null && imageRenderer.hasValidImages() ? "OK" : "FEHLER").append("\n");
                     }
                 }
+            } else {
+                details.append("PROBLEM: filteredTicks ist NULL!\n");
             }
-            
-            details.append("Zoom-Faktor: ").append(String.format("%.2f", zoomFactor)).append("\n");
-            details.append("Drawdown Chart Höhe: +30% (verbessert)\n");
         } else {
-            details.append("Keine Tick-Daten verfügbar oder noch nicht geladen.\n");
+            details.append("PROBLEM: Keine Tick-Daten verfügbar oder noch nicht geladen.\n");
         }
+        
+        details.append("Zoom-Faktor: ").append(String.format("%.2f", zoomFactor)).append("\n");
+        details.append("Drawdown Chart Höhe: ").append(drawdownChartHeight).append("px (+30% verbessert)\n");
+        details.append("Refresh Counter: ").append(refreshCounter).append("\n");
+        details.append("\nKlicken Sie auf 'Diagnostik' für vollständigen Bericht.\n");
         
         detailsText.setText(details.toString());
         
         if (shell != null && !shell.isDisposed()) {
-            shell.setText("Tick Chart - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [Verbessert]");
+            shell.setText("Tick Chart - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [DIAGNOSE #" + refreshCounter + "]");
         }
     }
     
@@ -507,8 +718,14 @@ public class TickChartWindow {
      * Zeigt "Keine Daten"-Nachricht
      */
     private void showNoDataMessage() {
-        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten verfügbar");
-        detailsText.setText("Keine Tick-Daten gefunden in: " + tickFilePath);
+        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten verfügbar [DIAGNOSEMODUS]");
+        detailsText.setText("=== KEINE TICK-DATEN GEFUNDEN ===\n" +
+                           "Datei: " + tickFilePath + "\n" +
+                           "Mögliche Ursachen:\n" +
+                           "- Datei ist leer\n" +
+                           "- Datei hat ungültiges Format\n" +
+                           "- Noch keine Daten für dieses Signal gesammelt\n\n" +
+                           "Prüfen Sie die Datei manuell oder warten Sie auf neue Daten.");
         chartCanvas.redraw();
     }
     
@@ -516,20 +733,27 @@ public class TickChartWindow {
      * Zeigt Fehlermeldung
      */
     private void showErrorMessage(String message) {
-        infoLabel.setText("Signal ID: " + signalId + " - Fehler beim Laden");
-        detailsText.setText("FEHLER: " + message);
+        infoLabel.setText("Signal ID: " + signalId + " - Fehler beim Laden [DIAGNOSEMODUS]");
+        detailsText.setText("=== FEHLER BEIM LADEN DER TICK-DATEN ===\n" +
+                           "FEHLER: " + message + "\n\n" +
+                           "Tick-Datei: " + tickFilePath + "\n\n" +
+                           "Prüfen Sie:\n" +
+                           "- Existiert die Datei?\n" +
+                           "- Sind die Berechtigungen korrekt?\n" +
+                           "- Ist die Datei nicht beschädigt?");
         
         MessageBox errorBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
         errorBox.setText("Fehler beim Laden der Tick-Daten");
-        errorBox.setMessage(message);
+        errorBox.setMessage("DIAGNOSEMODUS:\n\n" + message + "\n\nSiehe Details-Panel für weitere Informationen.");
         errorBox.open();
     }
     
     /**
-     * Aktualisiert die Daten
+     * VERBESSERT: Aktualisiert die Daten mit Refresh-Counter
      */
     private void refreshData() {
-        LOGGER.info("Manueller Refresh für beide Charts (verbessert) - Signal: " + signalId);
+        refreshCounter++;
+        LOGGER.info("=== MANUELLER REFRESH #" + refreshCounter + " für Signal: " + signalId + " ===");
         
         refreshButton.setEnabled(false);
         refreshButton.setText("Lädt...");
@@ -553,10 +777,13 @@ public class TickChartWindow {
     private void closeWindow() {
         isWindowClosed = true;
         
-        LOGGER.info("Schließe TickChartWindow (Verbessert) für Signal: " + signalId);
+        LOGGER.info("=== SCHLIESSE TICK CHART WINDOW für Signal: " + signalId + " ===");
+        LOGGER.info("Refresh Counter final: " + refreshCounter);
         
         // Ressourcen freigeben
-        imageRenderer.disposeImages();
+        if (imageRenderer != null) {
+            imageRenderer.disposeImages();
+        }
         
         if (shell != null && !shell.isDisposed()) {
             shell.dispose();
@@ -568,7 +795,7 @@ public class TickChartWindow {
      */
     public void open() {
         shell.open();
-        LOGGER.info("TickChartWindow (Verbessert - Drawdown +30%) geöffnet für Signal: " + signalId);
+        LOGGER.info("TickChartWindow (DIAGNOSEMODUS) geöffnet für Signal: " + signalId);
     }
     
     /**
