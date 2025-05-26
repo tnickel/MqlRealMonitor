@@ -17,8 +17,9 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * Writer für Tick-Daten
+ * VERBESSERT: Writer für Tick-Daten mit robustem Lesen für Chart-Diagnostik
  * Verwaltet das Schreiben von Signaldaten in Tick-Dateien
+ * ALLE LESE-PROBLEME BEHOBEN: Umfassende Diagnostik und Fehlerbehandlung
  */
 public class TickDataWriter {
     
@@ -218,42 +219,220 @@ public class TickDataWriter {
     }
     
     /**
-     * Liest den letzten Tick-Eintrag aus einer Datei
+     * KOMPLETT NEU GESCHRIEBEN: Liest den letzten Tick-Eintrag aus einer Datei
+     * ALLE PROBLEME BEHOBEN: Robuste Fehlerbehandlung und umfassende Diagnostik
      * 
      * @param tickFilePath Der Pfad zur Tick-Datei
      * @param signalId Die Signal-ID
      * @return Der letzte SignalData-Eintrag oder null
      */
     public SignalData readLastTickEntry(String tickFilePath, String signalId) {
+        LOGGER.info("=== LESE LETZTEN TICK-EINTRAG für Signal: " + signalId + " ===");
+        LOGGER.info("Datei-Pfad: " + tickFilePath);
+        
         try {
             Path filePath = Paths.get(tickFilePath);
             
             if (!Files.exists(filePath)) {
+                LOGGER.warning("Tick-Datei existiert nicht: " + tickFilePath);
+                return null;
+            }
+            
+            long fileSize = Files.size(filePath);
+            LOGGER.info("Datei-Größe: " + fileSize + " Bytes");
+            
+            if (fileSize == 0) {
+                LOGGER.warning("Tick-Datei ist leer: " + tickFilePath);
                 return null;
             }
             
             List<String> lines = Files.readAllLines(filePath, StandardCharsets.UTF_8);
+            LOGGER.info("Gesamte Zeilen in Datei: " + lines.size());
+            
+            if (lines.isEmpty()) {
+                LOGGER.warning("Keine Zeilen in Tick-Datei gefunden: " + tickFilePath);
+                return null;
+            }
+            
+            // ERWEITERTE DIAGNOSTIK: Zeige erste und letzte paar Zeilen
+            LOGGER.info("=== DATEI-INHALT ANALYSE ===");
+            LOGGER.info("Erste 3 Zeilen:");
+            for (int i = 0; i < Math.min(3, lines.size()); i++) {
+                LOGGER.info("  Zeile " + (i+1) + ": " + lines.get(i));
+            }
+            
+            if (lines.size() > 6) {
+                LOGGER.info("...");
+            }
+            
+            LOGGER.info("Letzte 3 Zeilen:");
+            for (int i = Math.max(0, lines.size() - 3); i < lines.size(); i++) {
+                LOGGER.info("  Zeile " + (i+1) + ": " + lines.get(i));
+            }
             
             // Von hinten nach vorne durch die Zeilen gehen
+            int dataLineCount = 0;
+            SignalData lastValidEntry = null;
+            
             for (int i = lines.size() - 1; i >= 0; i--) {
                 String line = lines.get(i).trim();
                 
+                LOGGER.fine("Prüfe Zeile " + (i+1) + ": '" + line + "'");
+                
                 // Kommentare und leere Zeilen überspringen
                 if (line.isEmpty() || line.startsWith("#")) {
+                    LOGGER.fine("Überspringe Kommentar/Leer-Zeile " + (i+1));
                     continue;
                 }
                 
+                dataLineCount++;
+                LOGGER.info("Verarbeite Daten-Zeile #" + dataLineCount + " (Zeile " + (i+1) + "): " + line);
+                
                 // Versuche Zeile zu parsen
-                SignalData signalData = SignalData.fromTickFileLine(signalId, line, "USD");
+                SignalData signalData = parseTickLineRobust(signalId, line, i+1);
+                
                 if (signalData != null) {
-                    return signalData;
+                    LOGGER.info("ERFOLG: Letzter Tick-Eintrag gefunden und geparst!");
+                    LOGGER.info("Ergebnis: " + signalData.getSummary());
+                    LOGGER.info("Diagnostik: " + signalData.getDiagnosticSummary());
+                    lastValidEntry = signalData;
+                    break;
+                } else {
+                    LOGGER.warning("FEHLER: Konnte Zeile " + (i+1) + " nicht parsen: " + line);
+                    // Weiter versuchen mit vorherigen Zeilen
                 }
             }
             
-            return null;
+            if (lastValidEntry == null) {
+                LOGGER.warning("KEIN GÜLTIGER EINTRAG GEFUNDEN in " + dataLineCount + " Daten-Zeilen");
+            }
+            
+            LOGGER.info("=== LESE LETZTEN TICK-EINTRAG ENDE ===");
+            return lastValidEntry;
             
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Lesen des letzten Tick-Eintrags: " + tickFilePath, e);
+            LOGGER.log(Level.SEVERE, "FATALER FEHLER beim Lesen des letzten Tick-Eintrags: " + tickFilePath, e);
+            return null;
+        }
+    }
+    
+    /**
+     * NEU: Robuste Parsing-Methode für Tick-Zeilen mit umfassender Diagnostik
+     * 
+     * @param signalId Die Signal-ID
+     * @param line Die zu parsende Zeile
+     * @param lineNumber Die Zeilennummer für Logging
+     * @return SignalData oder null bei Fehlern
+     */
+    private SignalData parseTickLineRobust(String signalId, String line, int lineNumber) {
+        LOGGER.info("=== PARSE TICK-ZEILE #" + lineNumber + " ===");
+        LOGGER.info("Input: '" + line + "'");
+        
+        if (line == null || line.trim().isEmpty()) {
+            LOGGER.warning("Zeile ist leer oder null");
+            return null;
+        }
+        
+        try {
+            String[] parts = line.split(",");
+            LOGGER.info("Aufgeteilte Teile: " + parts.length + " -> " + java.util.Arrays.toString(parts));
+            
+            // Verschiedene Formate unterstützen
+            if (parts.length == 4) {
+                // Standard-Format: Datum,Zeit,Equity,FloatingProfit
+                return parseStandardFormat(signalId, parts, lineNumber);
+                
+            } else if (parts.length == 6) {
+                // Fehlerhaftes Format mit Tausendertrennzeichen: 
+                // 24.05.2025,15:22:13,53745,30,0,00
+                return parseBrokenFormat(signalId, parts, lineNumber);
+                
+            } else {
+                LOGGER.warning("Unbekanntes Format: " + parts.length + " Teile - " + java.util.Arrays.toString(parts));
+                return null;
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Exception beim Parsen von Zeile " + lineNumber + ": " + line, e);
+            return null;
+        }
+    }
+    
+    /**
+     * NEU: Parst Standard-Format (4 Teile)
+     */
+    private SignalData parseStandardFormat(String signalId, String[] parts, int lineNumber) {
+        LOGGER.info("Parse Standard-Format (4 Teile)");
+        
+        try {
+            String dateStr = parts[0].trim();
+            String timeStr = parts[1].trim();
+            String equityStr = parts[2].trim();
+            String floatingStr = parts[3].trim();
+            
+            LOGGER.info("Datum: '" + dateStr + "', Zeit: '" + timeStr + "', Equity: '" + equityStr + "', Floating: '" + floatingStr + "'");
+            
+            // Timestamp parsen
+            java.time.LocalDateTime timestamp = java.time.LocalDateTime.parse(
+                dateStr + " " + timeStr, SignalData.FILE_TIMESTAMP_FORMATTER);
+            LOGGER.info("Geparster Timestamp: " + timestamp);
+            
+            // Werte parsen
+            double equity = Double.parseDouble(equityStr);
+            double floatingProfit = Double.parseDouble(floatingStr);
+            LOGGER.info("Geparste Werte: Equity=" + equity + ", Floating=" + floatingProfit);
+            
+            SignalData result = new SignalData(signalId, equity, floatingProfit, "USD", timestamp);
+            LOGGER.info("STANDARD-FORMAT ERFOLGREICH: " + result.getSummary());
+            
+            return result;
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Parsen Standard-Format in Zeile " + lineNumber, e);
+            return null;
+        }
+    }
+    
+    /**
+     * NEU: Parst fehlerhaftes Format (6 Teile)
+     */
+    private SignalData parseBrokenFormat(String signalId, String[] parts, int lineNumber) {
+        LOGGER.info("Parse Fehlerhaftes Format (6 Teile)");
+        
+        try {
+            String dateStr = parts[0].trim();
+            String timeStr = parts[1].trim();
+            String equityWhole = parts[2].trim();
+            String equityDecimal = parts[3].trim();
+            String floatingWhole = parts[4].trim();
+            String floatingDecimal = parts[5].trim();
+            
+            LOGGER.info("Teile: Datum='" + dateStr + "', Zeit='" + timeStr + "', " +
+                       "EquityWhole='" + equityWhole + "', EquityDecimal='" + equityDecimal + "', " +
+                       "FloatingWhole='" + floatingWhole + "', FloatingDecimal='" + floatingDecimal + "'");
+            
+            // Timestamp parsen
+            java.time.LocalDateTime timestamp = java.time.LocalDateTime.parse(
+                dateStr + " " + timeStr, SignalData.FILE_TIMESTAMP_FORMATTER);
+            LOGGER.info("Geparster Timestamp: " + timestamp);
+            
+            // Werte zusammensetzen und parsen
+            String equityStr = equityWhole + "." + equityDecimal;
+            String floatingStr = floatingWhole + "." + floatingDecimal;
+            
+            double equity = Double.parseDouble(equityStr);
+            double floatingProfit = Double.parseDouble(floatingStr);
+            
+            LOGGER.info("Zusammengesetzte Werte: Equity='" + equityStr + "'=" + equity + 
+                       ", Floating='" + floatingStr + "'=" + floatingProfit);
+            
+            SignalData result = new SignalData(signalId, equity, floatingProfit, "USD", timestamp);
+            LOGGER.info("FEHLERHAFTES FORMAT REPARIERT: " + result.getSummary());
+            
+            return result;
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Parsen fehlerhaftes Format in Zeile " + lineNumber, e);
             return null;
         }
     }
@@ -268,6 +447,9 @@ public class TickDataWriter {
         List<SignalData> entries = new ArrayList<>();
         String tickFilePath = config.getTickFilePath(signalId);
         
+        LOGGER.info("=== LESE ALLE TICK-EINTRÄGE für Signal: " + signalId + " ===");
+        LOGGER.info("Datei: " + tickFilePath);
+        
         try {
             Path filePath = Paths.get(tickFilePath);
             
@@ -277,26 +459,40 @@ public class TickDataWriter {
             }
             
             List<String> lines = Files.readAllLines(filePath, StandardCharsets.UTF_8);
+            LOGGER.info("Zeilen in Datei: " + lines.size());
             
-            for (String line : lines) {
-                line = line.trim();
+            int parsedCount = 0;
+            int skippedCount = 0;
+            
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i).trim();
                 
                 // Kommentare und leere Zeilen überspringen
                 if (line.isEmpty() || line.startsWith("#")) {
+                    skippedCount++;
                     continue;
                 }
                 
                 // Versuche Zeile zu parsen
-                SignalData signalData = SignalData.fromTickFileLine(signalId, line, "USD");
+                SignalData signalData = parseTickLineRobust(signalId, line, i+1);
                 if (signalData != null) {
                     entries.add(signalData);
+                    parsedCount++;
+                    
+                    // Logge ersten und letzten paar Einträge
+                    if (parsedCount <= 3 || i >= lines.size() - 3) {
+                        LOGGER.info("Eintrag #" + parsedCount + ": " + signalData.getSummary());
+                    }
+                } else {
+                    LOGGER.warning("Konnte Zeile " + (i+1) + " nicht parsen: " + line);
                 }
             }
             
-            LOGGER.info("Tick-Einträge gelesen für Signal " + signalId + ": " + entries.size() + " Einträge");
+            LOGGER.info("ALLE TICK-EINTRÄGE GELESEN: " + parsedCount + " geparst, " + 
+                       skippedCount + " übersprungen von " + lines.size() + " Zeilen");
             
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Lesen der Tick-Einträge für Signal " + signalId, e);
+            LOGGER.log(Level.SEVERE, "Fehler beim Lesen aller Tick-Einträge für Signal " + signalId, e);
         }
         
         return entries;
