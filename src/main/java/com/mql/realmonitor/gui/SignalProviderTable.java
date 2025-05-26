@@ -5,16 +5,11 @@ import java.util.Map;
 import java.util.logging.Logger;
 
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.events.MouseAdapter;
-import org.eclipse.swt.events.MouseEvent;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Menu;
-import org.eclipse.swt.widgets.MenuItem;
-import org.eclipse.swt.widgets.MessageBox;
 import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.TableColumn;
 import org.eclipse.swt.widgets.TableItem;
@@ -22,34 +17,22 @@ import org.eclipse.swt.widgets.TableItem;
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * Tabelle für die Anzeige der Signalprovider-Daten
- * Verwaltet die SWT-Tabelle mit allen Provider-Informationen
- * ERWEITERT: Equity Drawdown Spalte hinzugefügt
+ * Refactored: Tabelle für die Anzeige der Signalprovider-Daten
+ * Kern-Tabellenfunktionen - Kontextmenü und Hilfsfunktionen ausgelagert
+ * MODULAR: Verwendet separate Klassen für erweiterte Funktionalität
  */
 public class SignalProviderTable {
     
     private static final Logger LOGGER = Logger.getLogger(SignalProviderTable.class.getName());
     
-    // Spalten-Indizes - ERWEITERT: EQUITY_DRAWDOWN hinzugefügt, nachfolgende Indizes erhöht
-    private static final int COL_SIGNAL_ID = 0;
-    private static final int COL_PROVIDER_NAME = 1;
-    private static final int COL_STATUS = 2;
-    private static final int COL_EQUITY = 3;
-    private static final int COL_FLOATING = 4;
-    private static final int COL_EQUITY_DRAWDOWN = 5;  // NEU: Equity Drawdown
-    private static final int COL_TOTAL = 6;            // Index erhöht
-    private static final int COL_CURRENCY = 7;         // Index erhöht
-    private static final int COL_LAST_UPDATE = 8;      // Index erhöht
-    private static final int COL_CHANGE = 9;           // Index erhöht
-    
-    // Spalten-Definitionen - ERWEITERT: Equity Drawdown hinzugefügt
+    // Spalten-Definitionen
     private static final String[] COLUMN_TEXTS = {
         "Signal ID", 
         "Provider Name",
         "Status", 
         "Kontostand", 
         "Floating Profit", 
-        "Equity Drawdown",     // NEU
+        "Equity Drawdown",
         "Gesamtwert", 
         "Währung", 
         "Letzte Aktualisierung", 
@@ -62,14 +45,17 @@ public class SignalProviderTable {
         100,  // Status
         120,  // Kontostand
         120,  // Floating Profit
-        100,  // Equity Drawdown - NEU
+        100,  // Equity Drawdown
         120,  // Gesamtwert
         70,   // Währung
         150,  // Letzte Aktualisierung
         120   // Änderung
     };
     
+    // Komponenten
     private final MqlRealMonitorGUI parentGui;
+    private final ProviderTableHelper tableHelper;
+    private final SignalProviderContextMenu contextMenu;
     
     // SWT Komponenten
     private Table table;
@@ -84,11 +70,43 @@ public class SignalProviderTable {
         this.signalIdToItem = new HashMap<>();
         this.lastSignalData = new HashMap<>();
         
+        // Helfer-Klassen initialisieren
+        this.tableHelper = new ProviderTableHelper(parentGui);
+        this.contextMenu = new SignalProviderContextMenu(parentGui);
+        
+        // Callbacks für das Kontextmenü setzen
+        setupContextMenuCallbacks();
+        
+        // Tabelle erstellen
         createTable(parent);
         createColumns();
-        setupTableBehavior();
         
-        LOGGER.info("SignalProviderTable initialisiert mit " + COLUMN_TEXTS.length + " Spalten (inkl. Equity Drawdown)");
+        // Tabellenverhalten mit Kontextmenü konfigurieren
+        contextMenu.setupTableBehavior(table);
+        
+        LOGGER.info("SignalProviderTable (Refactored) initialisiert mit " + COLUMN_TEXTS.length + " Spalten - Modular aufgeteilt");
+    }
+    
+    /**
+     * Konfiguriert die Callbacks für das Kontextmenü
+     */
+    private void setupContextMenuCallbacks() {
+        contextMenu.setCallbacks(
+            // updateProviderStatus callback
+            (statusInfo) -> {
+                String[] parts = statusInfo.split(":", 2);
+                if (parts.length == 2) {
+                    updateProviderStatus(parts[0], parts[1]);
+                }
+            },
+            // getLastSignalData callback
+            () -> lastSignalData,
+            // removeFromMapping callback
+            (signalId, item) -> {
+                signalIdToItem.remove(signalId);
+                lastSignalData.remove(signalId);
+            }
+        );
     }
     
     /**
@@ -118,7 +136,7 @@ public class SignalProviderTable {
             columns[i].addSelectionListener(new SelectionAdapter() {
                 @Override
                 public void widgetSelected(SelectionEvent e) {
-                    sortTable(columnIndex);
+                    tableHelper.sortTable(table, columns, columnIndex, signalIdToItem::put);
                 }
             });
         }
@@ -127,128 +145,7 @@ public class SignalProviderTable {
     }
     
     /**
-     * Konfiguriert das Tabellenverhalten
-     */
-    private void setupTableBehavior() {
-        // NEU: Doppelklick für Tick-Chart
-        table.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseDoubleClick(MouseEvent e) {
-                TableItem[] selection = table.getSelection();
-                if (selection.length > 0) {
-                    openTickChart(selection[0]);
-                }
-            }
-        });
-        
-        // Rechtsklick-Kontextmenü
-        Menu contextMenu = new Menu(table);
-        table.setMenu(contextMenu);
-        
-        // Menü-Items
-        MenuItem refreshItem = new MenuItem(contextMenu, SWT.PUSH);
-        refreshItem.setText("Ausgewählte aktualisieren");
-        refreshItem.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                refreshSelectedProviders();
-            }
-        });
-        
-        MenuItem detailsItem = new MenuItem(contextMenu, SWT.PUSH);
-        detailsItem.setText("Details anzeigen");
-        detailsItem.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                showSelectedProviderDetails();
-            }
-        });
-        
-        new MenuItem(contextMenu, SWT.SEPARATOR);
-        
-        // NEU: Tick-Chart Menü-Item
-        MenuItem chartItem = new MenuItem(contextMenu, SWT.PUSH);
-        chartItem.setText("Tick-Chart öffnen");
-        chartItem.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                openTickChartForSelected();
-            }
-        });
-        
-        new MenuItem(contextMenu, SWT.SEPARATOR);
-        
-        MenuItem removeItem = new MenuItem(contextMenu, SWT.PUSH);
-        removeItem.setText("Aus Tabelle entfernen");
-        removeItem.addSelectionListener(new SelectionAdapter() {
-            @Override
-            public void widgetSelected(SelectionEvent e) {
-                removeSelectedProviders();
-            }
-        });
-    }
-    
-    /**
-     * NEU: Öffnet das Tick-Chart für eine Tabellenzeile
-     * 
-     * @param item Das Tabellen-Item
-     */
-    private void openTickChart(TableItem item) {
-        String signalId = item.getText(COL_SIGNAL_ID);
-        String providerName = item.getText(COL_PROVIDER_NAME);
-        SignalData signalData = lastSignalData.get(signalId);
-        
-        if (signalData == null) {
-            parentGui.showError("Fehler", "Keine Signaldaten für " + signalId + " verfügbar.");
-            return;
-        }
-        
-        // Tick-Datei-Pfad erstellen
-        String tickFilePath = parentGui.getMonitor().getConfig().getTickFilePath(signalId);
-        
-        try {
-            // Tick-Chart-Fenster öffnen
-            TickChartWindow chartWindow = new TickChartWindow(
-                parentGui.getShell(), 
-                parentGui, 
-                signalId, 
-                providerName, 
-                signalData, 
-                tickFilePath
-            );
-            chartWindow.open();
-            
-            LOGGER.info("Tick-Chart geöffnet für Signal: " + signalId + " (" + providerName + ")");
-            
-        } catch (Exception e) {
-            LOGGER.severe("Fehler beim Öffnen des Tick-Charts: " + e.getMessage());
-            parentGui.showError("Fehler beim Öffnen des Tick-Charts", 
-                               "Konnte Tick-Chart für " + signalId + " nicht öffnen:\n" + e.getMessage());
-        }
-    }
-    
-    /**
-     * NEU: Öffnet Tick-Chart für ausgewählte Provider
-     */
-    private void openTickChartForSelected() {
-        TableItem[] selectedItems = table.getSelection();
-        
-        if (selectedItems.length == 0) {
-            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen Provider aus.");
-            return;
-        }
-        
-        if (selectedItems.length > 1) {
-            parentGui.showInfo("Mehrfachauswahl", "Bitte wählen Sie nur einen Provider für das Tick-Chart aus.");
-            return;
-        }
-        
-        openTickChart(selectedItems[0]);
-    }
-    
-    /**
      * Aktualisiert die Daten eines Providers (Thread-sicher)
-     * ERWEITERT: Equity Drawdown Spalte hinzugefügt
      * 
      * @param signalData Die aktualisierten Signaldaten
      */
@@ -266,35 +163,35 @@ public class SignalProviderTable {
             signalIdToItem.put(signalId, item);
         }
         
-        // Änderung berechnen
+        // Änderung berechnen über Helper
         SignalData lastData = lastSignalData.get(signalId);
-        String changeText = calculateChangeText(signalData, lastData);
-        Color changeColor = getChangeColor(signalData, lastData);
+        String changeText = tableHelper.calculateChangeText(signalData, lastData);
+        Color changeColor = tableHelper.getChangeColor(signalData, lastData);
         
-        // Tabellendaten setzen - ERWEITERT: Equity Drawdown hinzugefügt
-        item.setText(COL_SIGNAL_ID, signalId);
-        item.setText(COL_PROVIDER_NAME, signalData.getProviderName());
-        item.setText(COL_STATUS, "OK");
-        item.setText(COL_EQUITY, signalData.getFormattedEquity());
-        item.setText(COL_FLOATING, signalData.getFormattedFloatingProfit());
-        item.setText(COL_EQUITY_DRAWDOWN, signalData.getFormattedEquityDrawdown());  // NEU
-        item.setText(COL_TOTAL, signalData.getFormattedTotalValue());
-        item.setText(COL_CURRENCY, signalData.getCurrency());
-        item.setText(COL_LAST_UPDATE, signalData.getFormattedTimestamp());
-        item.setText(COL_CHANGE, changeText);
+        // Tabellendaten setzen
+        item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
+        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, signalData.getProviderName());
+        item.setText(ProviderTableHelper.COL_STATUS, "OK");
+        item.setText(ProviderTableHelper.COL_EQUITY, signalData.getFormattedEquity());
+        item.setText(ProviderTableHelper.COL_FLOATING, signalData.getFormattedFloatingProfit());
+        item.setText(ProviderTableHelper.COL_EQUITY_DRAWDOWN, signalData.getFormattedEquityDrawdown());
+        item.setText(ProviderTableHelper.COL_TOTAL, signalData.getFormattedTotalValue());
+        item.setText(ProviderTableHelper.COL_CURRENCY, signalData.getCurrency());
+        item.setText(ProviderTableHelper.COL_LAST_UPDATE, signalData.getFormattedTimestamp());
+        item.setText(ProviderTableHelper.COL_CHANGE, changeText);
         
-        // Farben setzen - ERWEITERT: Equity Drawdown Farbe hinzugefügt
-        item.setForeground(COL_FLOATING, getFloatingProfitColor(signalData.getFloatingProfit()));
-        item.setForeground(COL_EQUITY_DRAWDOWN, getEquityDrawdownColor(signalData.getEquityDrawdownPercent()));  // NEU
-        item.setForeground(COL_CHANGE, changeColor);
+        // Farben setzen über Helper
+        item.setForeground(ProviderTableHelper.COL_FLOATING, tableHelper.getFloatingProfitColor(signalData.getFloatingProfit()));
+        item.setForeground(ProviderTableHelper.COL_EQUITY_DRAWDOWN, tableHelper.getEquityDrawdownColor(signalData.getEquityDrawdownPercent()));
+        item.setForeground(ProviderTableHelper.COL_CHANGE, changeColor);
         
         // Status-Farbe
-        item.setForeground(COL_STATUS, parentGui.getGreenColor());
+        item.setForeground(ProviderTableHelper.COL_STATUS, parentGui.getGreenColor());
         
         // Daten im Cache speichern
         lastSignalData.put(signalId, signalData);
         
-        LOGGER.fine("Provider-Daten aktualisiert (inkl. Equity Drawdown): " + signalData.getSummary());
+        LOGGER.fine("Provider-Daten aktualisiert (Modular): " + signalData.getSummary());
     }
     
     /**
@@ -313,364 +210,58 @@ public class SignalProviderTable {
         }
         
         // Bestehenden Status aktualisieren
-        item.setText(COL_STATUS, status);
+        item.setText(ProviderTableHelper.COL_STATUS, status);
         
-        // Status-Farbe basierend auf Text
-        Color statusColor = getStatusColor(status);
-        item.setForeground(COL_STATUS, statusColor);
+        // Status-Farbe über Helper setzen
+        Color statusColor = tableHelper.getStatusColor(status);
+        item.setForeground(ProviderTableHelper.COL_STATUS, statusColor);
         
         LOGGER.fine("Provider-Status aktualisiert: " + signalId + " -> " + status);
     }
     
     /**
-     * Berechnet den Änderungstext
+     * Fügt einen leeren Provider-Eintrag hinzu (nur mit Signal-ID)
+     * Wird beim Vorladen der Favoriten verwendet
      * 
-     * @param current Die aktuellen Daten
-     * @param previous Die vorherigen Daten
-     * @return Der Änderungstext
+     * @param signalId Die Signal-ID
+     * @param initialStatus Der initiale Status
      */
-    private String calculateChangeText(SignalData current, SignalData previous) {
-        if (previous == null) {
-            return "Neu";
-        }
-        
-        double equityChange = current.getEquityChange(previous);
-        double floatingChange = current.getFloatingProfitChange(previous);
-        
-        if (equityChange == 0.0 && floatingChange == 0.0) {
-            return "Unverändert";
-        }
-        
-        StringBuilder change = new StringBuilder();
-        
-        if (equityChange != 0.0) {
-            change.append(String.format("E: %+.2f", equityChange));
-        }
-        
-        if (floatingChange != 0.0) {
-            if (change.length() > 0) {
-                change.append(", ");
-            }
-            change.append(String.format("F: %+.2f", floatingChange));
-        }
-        
-        return change.toString();
-    }
-    
-    /**
-     * Bestimmt die Farbe für Änderungen
-     * 
-     * @param current Die aktuellen Daten
-     * @param previous Die vorherigen Daten
-     * @return Die Farbe für die Änderung
-     */
-    private Color getChangeColor(SignalData current, SignalData previous) {
-        if (previous == null) {
-            return parentGui.getGrayColor();
-        }
-        
-        double totalChange = (current.getEquityChange(previous) + 
-                            current.getFloatingProfitChange(previous));
-        
-        if (totalChange > 0) {
-            return parentGui.getGreenColor();
-        } else if (totalChange < 0) {
-            return parentGui.getRedColor();
-        } else {
-            return parentGui.getGrayColor();
-        }
-    }
-    
-    /**
-     * Bestimmt die Farbe für Floating Profit
-     * 
-     * @param floatingProfit Der Floating Profit Wert
-     * @return Die entsprechende Farbe
-     */
-    private Color getFloatingProfitColor(double floatingProfit) {
-        if (floatingProfit > 0) {
-            return parentGui.getGreenColor();
-        } else if (floatingProfit < 0) {
-            return parentGui.getRedColor();
-        } else {
-            return null; // Standard-Farbe
-        }
-    }
-    
-    /**
-     * NEU: Bestimmt die Farbe für Equity Drawdown
-     * 
-     * @param equityDrawdownPercent Der Equity Drawdown in Prozent
-     * @return Die entsprechende Farbe
-     */
-    private Color getEquityDrawdownColor(double equityDrawdownPercent) {
-        if (equityDrawdownPercent > 0) {
-            return parentGui.getGreenColor();  // Grün für positive Drawdowns
-        } else if (equityDrawdownPercent < 0) {
-            return parentGui.getRedColor();    // Rot für negative Drawdowns
-        } else {
-            return null; // Standard-Farbe für 0%
-        }
-    }
-    
-    /**
-     * Bestimmt die Farbe für den Status
-     * 
-     * @param status Der Status-Text
-     * @return Die entsprechende Farbe
-     */
-    private Color getStatusColor(String status) {
-        if (status == null) {
-            return parentGui.getGrayColor();
-        }
-        
-        String lowerStatus = status.toLowerCase();
-        
-        if (lowerStatus.contains("ok") || lowerStatus.contains("erfolg")) {
-            return parentGui.getGreenColor();
-        } else if (lowerStatus.contains("error") || lowerStatus.contains("fehler")) {
-            return parentGui.getRedColor();
-        } else if (lowerStatus.contains("loading") || lowerStatus.contains("downloading") || lowerStatus.contains("lädt")) {
-            return parentGui.getGrayColor();
-        } else {
-            return null; // Standard-Farbe
-        }
-    }
-    
-    /**
-     * Sortiert die Tabelle nach der angegebenen Spalte
-     * ERWEITERT: Equity Drawdown Spalte für numerische Sortierung hinzugefügt
-     * 
-     * @param columnIndex Der Index der Spalte
-     */
-    private void sortTable(int columnIndex) {
-        TableItem[] items = table.getItems();
-        
-        if (items.length <= 1) {
+    public void addEmptyProviderEntry(String signalId, String initialStatus) {
+        if (signalId == null || signalId.trim().isEmpty()) {
             return;
         }
         
-        // Ermittele Sortierrichtung
-        boolean ascending = table.getSortDirection() != SWT.UP;
-        table.setSortDirection(ascending ? SWT.UP : SWT.DOWN);
-        table.setSortColumn(columns[columnIndex]);
-        
-        // Sortiere Items
-        java.util.Arrays.sort(items, (item1, item2) -> {
-            String text1 = item1.getText(columnIndex);
-            String text2 = item2.getText(columnIndex);
-            
-            int result = compareTableText(text1, text2, columnIndex);
-            return ascending ? result : -result;
-        });
-        
-        // Tabelle neu aufbauen
-        rebuildTableWithSortedItems(items);
-    }
-    
-    /**
-     * Vergleicht zwei Tabellen-Texte für Sortierung
-     * ERWEITERT: Equity Drawdown Spalte für numerische Sortierung hinzugefügt
-     * 
-     * @param text1 Erster Text
-     * @param text2 Zweiter Text
-     * @param columnIndex Spalten-Index für spezielle Behandlung
-     * @return Vergleichsresultat
-     */
-    private int compareTableText(String text1, String text2, int columnIndex) {
-        // Für numerische Spalten versuche numerische Sortierung - ERWEITERT: COL_EQUITY_DRAWDOWN hinzugefügt
-        if (columnIndex == COL_EQUITY || columnIndex == COL_FLOATING || 
-            columnIndex == COL_EQUITY_DRAWDOWN || columnIndex == COL_TOTAL) {
-            try {
-                // Extrahiere Zahlen aus formatiertem Text
-                double num1 = extractNumber(text1);
-                double num2 = extractNumber(text2);
-                return Double.compare(num1, num2);
-            } catch (Exception e) {
-                // Fall back zu String-Vergleich
-            }
-        }
-        
-        // Standard String-Vergleich
-        return text1.compareToIgnoreCase(text2);
-    }
-    
-    /**
-     * Extrahiert eine Zahl aus formatiertem Text
-     * ERWEITERT: Unterstützt auch Prozent-Zeichen für Equity Drawdown
-     * 
-     * @param text Der formatierte Text
-     * @return Die extrahierte Zahl
-     */
-    private double extractNumber(String text) throws NumberFormatException {
-        if (text == null || text.trim().isEmpty()) {
-            return 0.0;
-        }
-        
-        // Entferne alles außer Zahlen, Dezimalpunkt, Minus und Prozentzeichen
-        String cleanText = text.replaceAll("[^0-9.+%-]", "").trim();
-        
-        // Entferne Prozentzeichen für die Berechnung
-        if (cleanText.endsWith("%")) {
-            cleanText = cleanText.substring(0, cleanText.length() - 1);
-        }
-        
-        if (cleanText.isEmpty()) {
-            return 0.0;
-        }
-        
-        return Double.parseDouble(cleanText);
-    }
-    
-    /**
-     * Baut die Tabelle mit sortierten Items neu auf
-     * 
-     * @param sortedItems Die sortierten Items
-     */
-    private void rebuildTableWithSortedItems(TableItem[] sortedItems) {
-        // Speichere Daten
-        String[][] itemData = new String[sortedItems.length][];
-        Color[][] itemColors = new Color[sortedItems.length][];
-        
-        for (int i = 0; i < sortedItems.length; i++) {
-            TableItem item = sortedItems[i];
-            itemData[i] = new String[columns.length];
-            itemColors[i] = new Color[columns.length];
-            
-            for (int j = 0; j < columns.length; j++) {
-                itemData[i][j] = item.getText(j);
-                itemColors[i][j] = item.getForeground(j);
-            }
-            
-            item.dispose();
-        }
-        
-        // Neue Items erstellen
-        for (int i = 0; i < itemData.length; i++) {
-            TableItem newItem = new TableItem(table, SWT.NONE);
-            newItem.setText(itemData[i]);
-            
-            for (int j = 0; j < itemColors[i].length; j++) {
-                if (itemColors[i][j] != null) {
-                    newItem.setForeground(j, itemColors[i][j]);
-                }
-            }
-            
-            // Update Mapping
-            String signalId = itemData[i][COL_SIGNAL_ID];
-            signalIdToItem.put(signalId, newItem);
-        }
-    }
-    
-    /**
-     * Zeigt Details für einen Provider an
-     * ERWEITERT: Equity Drawdown in Details hinzugefügt
-     * 
-     * @param item Das Tabellen-Item
-     */
-    private void showSignalDetails(TableItem item) {
-        String signalId = item.getText(COL_SIGNAL_ID);
-        String providerName = item.getText(COL_PROVIDER_NAME);
-        SignalData signalData = lastSignalData.get(signalId);
-        
-        StringBuilder details = new StringBuilder();
-        details.append("Signal Provider Details\n\n");
-        details.append("Signal ID: ").append(signalId).append("\n");
-        details.append("Provider Name: ").append(providerName).append("\n");
-        details.append("Status: ").append(item.getText(COL_STATUS)).append("\n");
-        details.append("Kontostand: ").append(item.getText(COL_EQUITY)).append("\n");
-        details.append("Floating Profit: ").append(item.getText(COL_FLOATING)).append("\n");
-        details.append("Equity Drawdown: ").append(item.getText(COL_EQUITY_DRAWDOWN)).append("\n");  // NEU
-        details.append("Gesamtwert: ").append(item.getText(COL_TOTAL)).append("\n");
-        details.append("Währung: ").append(item.getText(COL_CURRENCY)).append("\n");
-        details.append("Letzte Aktualisierung: ").append(item.getText(COL_LAST_UPDATE)).append("\n");
-        details.append("Änderung: ").append(item.getText(COL_CHANGE)).append("\n");
-        
-        if (signalData != null) {
-            details.append("\nZusätzliche Informationen:\n");
-            details.append("Vollständige URL: ").append(parentGui.getMonitor().getConfig().buildSignalUrl(signalId)).append("\n");
-            details.append("Tick-Datei: ").append(parentGui.getMonitor().getConfig().getTickFilePath(signalId)).append("\n");
-        }
-        
-        parentGui.showInfo("Signal Provider Details", details.toString());
-    }
-    
-    /**
-     * Aktualisiert ausgewählte Provider
-     */
-    private void refreshSelectedProviders() {
-        TableItem[] selectedItems = table.getSelection();
-        
-        if (selectedItems.length == 0) {
-            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen oder mehrere Provider aus.");
+        // Prüfen ob bereits vorhanden
+        if (signalIdToItem.containsKey(signalId)) {
+            LOGGER.fine("Provider bereits in Tabelle: " + signalId);
             return;
         }
         
-        for (TableItem item : selectedItems) {
-            String signalId = item.getText(COL_SIGNAL_ID);
-            updateProviderStatus(signalId, "Aktualisiere...");
+        // Neuen leeren Eintrag erstellen
+        TableItem item = new TableItem(table, SWT.NONE);
+        
+        // Nur Signal-ID und Status setzen, Rest bleibt leer
+        item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
+        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, "Lädt...");  
+        item.setText(ProviderTableHelper.COL_STATUS, initialStatus != null ? initialStatus : "Nicht geladen");
+        item.setText(ProviderTableHelper.COL_EQUITY, "");
+        item.setText(ProviderTableHelper.COL_FLOATING, "");
+        item.setText(ProviderTableHelper.COL_EQUITY_DRAWDOWN, "");
+        item.setText(ProviderTableHelper.COL_TOTAL, "");
+        item.setText(ProviderTableHelper.COL_CURRENCY, "");
+        item.setText(ProviderTableHelper.COL_LAST_UPDATE, "");
+        item.setText(ProviderTableHelper.COL_CHANGE, "");
+        
+        // Status-Farbe über Helper setzen
+        Color statusColor = tableHelper.getStatusColor(initialStatus);
+        if (statusColor != null) {
+            item.setForeground(ProviderTableHelper.COL_STATUS, statusColor);
         }
         
-        // Manuellen Refresh triggern
-        parentGui.getMonitor().manualRefresh();
-    }
-    
-    /**
-     * Zeigt Details für ausgewählte Provider
-     */
-    private void showSelectedProviderDetails() {
-        TableItem[] selectedItems = table.getSelection();
+        // In Map eintragen
+        signalIdToItem.put(signalId, item);
         
-        if (selectedItems.length == 0) {
-            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen Provider aus.");
-            return;
-        }
-        
-        if (selectedItems.length == 1) {
-            showSignalDetails(selectedItems[0]);
-        } else {
-            StringBuilder summary = new StringBuilder();
-            summary.append("Ausgewählte Provider (").append(selectedItems.length).append("):\n\n");
-            
-            for (TableItem item : selectedItems) {
-                summary.append("• ").append(item.getText(COL_SIGNAL_ID))
-                       .append(" (").append(item.getText(COL_PROVIDER_NAME)).append(")")
-                       .append(" - ").append(item.getText(COL_STATUS))
-                       .append(" (").append(item.getText(COL_TOTAL)).append(")")
-                       .append(" [DD: ").append(item.getText(COL_EQUITY_DRAWDOWN)).append("]")  // NEU: Drawdown anzeigen
-                       .append("\n");
-            }
-            
-            parentGui.showInfo("Ausgewählte Provider", summary.toString());
-        }
-    }
-    
-    /**
-     * Entfernt ausgewählte Provider aus der Tabelle
-     */
-    private void removeSelectedProviders() {
-        TableItem[] selectedItems = table.getSelection();
-        
-        if (selectedItems.length == 0) {
-            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen oder mehrere Provider aus.");
-            return;
-        }
-        
-        MessageBox confirmBox = new MessageBox(parentGui.getShell(), SWT.YES | SWT.NO | SWT.ICON_QUESTION);
-        confirmBox.setText("Provider entfernen");
-        confirmBox.setMessage("Möchten Sie " + selectedItems.length + " Provider aus der Tabelle entfernen?\n\n" +
-                             "Dies entfernt sie nur aus der Anzeige, nicht aus der Favoriten-Datei.");
-        
-        if (confirmBox.open() == SWT.YES) {
-            for (TableItem item : selectedItems) {
-                String signalId = item.getText(COL_SIGNAL_ID);
-                signalIdToItem.remove(signalId);
-                lastSignalData.remove(signalId);
-                item.dispose();
-            }
-            
-            LOGGER.info("Provider aus Tabelle entfernt: " + selectedItems.length + " Einträge");
-        }
+        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (Modular): " + signalId);
     }
     
     /**
@@ -690,7 +281,7 @@ public class SignalProviderTable {
         signalIdToItem.clear();
         lastSignalData.clear();
         
-        LOGGER.info("Alle Provider aus Tabelle entfernt");
+        LOGGER.info("Alle Provider aus Tabelle entfernt (Modular)");
     }
     
     /**
@@ -703,48 +294,20 @@ public class SignalProviderTable {
     }
     
     /**
-     * NEU: Fügt einen leeren Provider-Eintrag hinzu (nur mit Signal-ID)
-     * Wird beim Vorladen der Favoriten verwendet
-     * ERWEITERT: Equity Drawdown Spalte mit leerem Inhalt hinzugefügt
+     * Gibt den ProviderTableHelper zurück
      * 
-     * @param signalId Die Signal-ID
-     * @param initialStatus Der initiale Status
+     * @return Der ProviderTableHelper
      */
-    public void addEmptyProviderEntry(String signalId, String initialStatus) {
-        if (signalId == null || signalId.trim().isEmpty()) {
-            return;
-        }
-        
-        // Prüfen ob bereits vorhanden
-        if (signalIdToItem.containsKey(signalId)) {
-            LOGGER.fine("Provider bereits in Tabelle: " + signalId);
-            return;
-        }
-        
-        // Neuen leeren Eintrag erstellen
-        TableItem item = new TableItem(table, SWT.NONE);
-        
-        // Nur Signal-ID und Status setzen, Rest bleibt leer - ERWEITERT: Equity Drawdown leer lassen
-        item.setText(COL_SIGNAL_ID, signalId);
-        item.setText(COL_PROVIDER_NAME, "Lädt...");  
-        item.setText(COL_STATUS, initialStatus != null ? initialStatus : "Nicht geladen");
-        item.setText(COL_EQUITY, "");
-        item.setText(COL_FLOATING, "");
-        item.setText(COL_EQUITY_DRAWDOWN, "");  // NEU: Leer lassen
-        item.setText(COL_TOTAL, "");
-        item.setText(COL_CURRENCY, "");
-        item.setText(COL_LAST_UPDATE, "");
-        item.setText(COL_CHANGE, "");
-        
-        // Status-Farbe setzen
-        Color statusColor = getStatusColor(initialStatus);
-        if (statusColor != null) {
-            item.setForeground(COL_STATUS, statusColor);
-        }
-        
-        // In Map eintragen
-        signalIdToItem.put(signalId, item);
-        
-        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (inkl. Equity Drawdown Spalte): " + signalId);
+    public ProviderTableHelper getTableHelper() {
+        return tableHelper;
+    }
+    
+    /**
+     * Gibt das SignalProviderContextMenu zurück
+     * 
+     * @return Das SignalProviderContextMenu
+     */
+    public SignalProviderContextMenu getContextMenu() {
+        return contextMenu;
     }
 }
