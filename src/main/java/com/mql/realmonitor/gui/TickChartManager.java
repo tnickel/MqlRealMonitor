@@ -21,7 +21,7 @@ import com.mql.realmonitor.data.TickDataLoader;
 /**
  * Verwaltet die JFreeChart Objekte für Tick-Charts
  * Erstellt und konfiguriert Haupt-Chart und Drawdown-Chart
- * KORRIGIERT: Auto-Kalibrierung mit verbessertem Debug-Logging und korrigierter Werteberechnung
+ * VERBESSERT: Ein-Punkt-Darstellung im Drawdown-Chart mit Shapes
  */
 public class TickChartManager {
     
@@ -57,7 +57,7 @@ public class TickChartManager {
     private void createBothCharts() {
         createMainChart();
         createDrawdownChart();
-        LOGGER.info("Beide Charts (Haupt + Drawdown mit korrigierter Auto-Kalibrierung) erstellt für Signal: " + signalId);
+        LOGGER.info("Beide Charts (Haupt + Drawdown mit Ein-Punkt-Fix) erstellt für Signal: " + signalId);
     }
     
     /**
@@ -161,6 +161,7 @@ public class TickChartManager {
     
     /**
      * Konfiguriert den Drawdown-Chart
+     * VERBESSERT: Shapes immer sichtbar für Ein-Punkt-Darstellung
      */
     private void configureDrawdownChart() {
         XYPlot plot = drawdownChart.getXYPlot();
@@ -168,7 +169,10 @@ public class TickChartManager {
         
         // Linien-Renderer konfigurieren
         renderer.setSeriesLinesVisible(0, true);
-        renderer.setSeriesShapesVisible(0, false);
+        renderer.setSeriesShapesVisible(0, true); // GEÄNDERT: Shapes immer sichtbar für einzelne Punkte
+        
+        // Shape-Größe für bessere Sichtbarkeit einzelner Punkte
+        renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-3, -3, 6, 6));
         
         // Farbe für Drawdown
         renderer.setSeriesPaint(0, new Color(200, 0, 200)); // Magenta für Drawdown
@@ -203,6 +207,7 @@ public class TickChartManager {
     
     /**
      * Aktualisiert beide Charts mit gefilterten Daten
+     * VERBESSERT: Dynamische Renderer-Anpassung für Ein-Punkt-Daten
      */
     public void updateChartsWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         if (filteredTicks.isEmpty() || mainChart == null || drawdownChart == null) {
@@ -255,6 +260,9 @@ public class TickChartManager {
             // Chart-Titel aktualisieren
             updateChartTitles(timeScale, filteredTicks.size());
             
+            // NEU: Renderer für Drawdown-Chart anpassen basierend auf Datenpunkt-Anzahl
+            adjustDrawdownChartRenderer(filteredTicks.size());
+            
             // Y-Achsen-Bereiche anpassen
             adjustMainChartYAxisRange(filteredTicks);
             adjustDrawdownChartYAxisRangeAutoCalibrated(filteredTicks);
@@ -266,6 +274,41 @@ public class TickChartManager {
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler beim Aktualisieren der Chart-Daten", e);
+        }
+    }
+    
+    /**
+     * NEU: Passt den Drawdown-Chart Renderer basierend auf Datenpunkt-Anzahl an
+     * 
+     * @param tickCount Anzahl der Datenpunkte
+     */
+    private void adjustDrawdownChartRenderer(int tickCount) {
+        if (drawdownChart == null) {
+            return;
+        }
+        
+        XYPlot plot = drawdownChart.getXYPlot();
+        XYLineAndShapeRenderer renderer = (XYLineAndShapeRenderer) plot.getRenderer();
+        
+        if (tickCount <= 1) {
+            // Bei einem Datenpunkt: Nur Shapes anzeigen, keine Linien
+            renderer.setSeriesLinesVisible(0, false);
+            renderer.setSeriesShapesVisible(0, true);
+            renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Größere Punkte
+            LOGGER.info("Drawdown-Chart: Ein-Punkt-Modus aktiviert (nur Shapes)");
+            
+        } else if (tickCount <= 3) {
+            // Bei wenigen Datenpunkten: Linien und Shapes anzeigen
+            renderer.setSeriesLinesVisible(0, true);
+            renderer.setSeriesShapesVisible(0, true);
+            renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-3, -3, 6, 6));
+            LOGGER.info("Drawdown-Chart: Wenig-Punkte-Modus aktiviert (Linien + Shapes)");
+            
+        } else {
+            // Bei vielen Datenpunkten: Nur Linien anzeigen
+            renderer.setSeriesLinesVisible(0, true);
+            renderer.setSeriesShapesVisible(0, false);
+            LOGGER.info("Drawdown-Chart: Viel-Punkte-Modus aktiviert (nur Linien)");
         }
     }
     
@@ -336,8 +379,8 @@ public class TickChartManager {
     }
     
     /**
-     * KORRIGIERTE METHODE: Passt den Y-Achsen-Bereich des Drawdown-Charts mit Auto-Kalibrierung an
-     * Optimiert für bessere Sichtbarkeit kleiner Bewegungen mit detailliertem Debug-Logging
+     * VERBESSERTE METHODE: Passt den Y-Achsen-Bereich des Drawdown-Charts mit Auto-Kalibrierung an
+     * Optimiert für bessere Sichtbarkeit kleiner Bewegungen mit verbesserter Ein-Punkt-Handhabung
      */
     private void adjustDrawdownChartYAxisRangeAutoCalibrated(List<TickDataLoader.TickData> filteredTicks) {
         if (drawdownChart == null || filteredTicks.isEmpty()) {
@@ -369,7 +412,7 @@ public class TickChartManager {
             return;
         }
         
-        // KORRIGIERTE AUTO-KALIBRIERUNG für bessere Sichtbarkeit
+        // VERBESSERTE AUTO-KALIBRIERUNG für Ein-Punkt-Daten
         double dataRange = maxDrawdown - minDrawdown;
         double maxAbsValue = Math.max(Math.abs(minDrawdown), Math.abs(maxDrawdown));
         
@@ -379,7 +422,28 @@ public class TickChartManager {
         double lowerBound, upperBound;
         String calibrationType;
         
-        if (maxAbsValue < 0.001) {
+        // SPEZIELLE BEHANDLUNG FÜR EIN-PUNKT-DATEN
+        if (filteredTicks.size() == 1) {
+            double singleValue = minDrawdown; // minDrawdown == maxDrawdown bei einem Punkt
+            
+            if (Math.abs(singleValue) < 0.001) {
+                // Sehr kleiner Wert - symmetrischer Bereich um den Wert
+                lowerBound = singleValue - 0.002;
+                upperBound = singleValue + 0.002;
+            } else if (Math.abs(singleValue) < 0.1) {
+                // Kleiner Wert - Bereich um den Wert
+                double padding = Math.max(Math.abs(singleValue) * 0.5, 0.01);
+                lowerBound = singleValue - padding;
+                upperBound = singleValue + padding;
+            } else {
+                // Größerer Wert - proportionaler Bereich
+                double padding = Math.abs(singleValue) * 0.3;
+                lowerBound = singleValue - padding;
+                upperBound = singleValue + padding;
+            }
+            calibrationType = "Ein-Punkt-Spezial (Wert: " + String.format("%.6f%%", singleValue) + ")";
+            
+        } else if (maxAbsValue < 0.001) {
             // Ultra kleine Werte (< 0.001%) - sehr sehr feiner Bereich
             lowerBound = Math.min(minDrawdown - 0.0005, -0.001);
             upperBound = Math.max(maxDrawdown + 0.0005, 0.001);
@@ -423,10 +487,10 @@ public class TickChartManager {
         
         // Sicherstellen, dass der Bereich nicht zu klein wird
         double finalRange = upperBound - lowerBound;
-        if (finalRange < 0.002) {  // Minimaler Bereich von 0.002%
+        if (finalRange < 0.004) {  // ERHÖHT: Minimaler Bereich von 0.004% (war 0.002%)
             double center = (upperBound + lowerBound) / 2;
-            lowerBound = center - 0.001;
-            upperBound = center + 0.001;
+            lowerBound = center - 0.002;
+            upperBound = center + 0.002;
             calibrationType += " + Min-Bereich-Korrektur";
         }
         
