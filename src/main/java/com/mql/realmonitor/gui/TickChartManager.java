@@ -21,6 +21,7 @@ import com.mql.realmonitor.data.TickDataLoader;
 /**
  * Verwaltet die JFreeChart Objekte für Tick-Charts
  * Erstellt und konfiguriert Haupt-Chart und Drawdown-Chart
+ * VERBESSERT: Auto-Kalibrierung der Y-Achse für bessere Sichtbarkeit kleiner Bewegungen
  */
 public class TickChartManager {
     
@@ -56,7 +57,7 @@ public class TickChartManager {
     private void createBothCharts() {
         createMainChart();
         createDrawdownChart();
-        LOGGER.info("Beide Charts (Haupt + Drawdown) erstellt für Signal: " + signalId);
+        LOGGER.info("Beide Charts (Haupt + Drawdown mit Auto-Kalibrierung) erstellt für Signal: " + signalId);
     }
     
     /**
@@ -102,7 +103,7 @@ public class TickChartManager {
         
         // Drawdown-Chart erstellen
         drawdownChart = ChartFactory.createTimeSeriesChart(
-            "Equity Drawdown (%)",
+            "Equity Drawdown (%) - Auto-Kalibriert",  // GEÄNDERT: Titel zeigt Auto-Kalibrierung an
             "Zeit",
             "Prozent (%)",
             drawdownDataset,
@@ -191,13 +192,13 @@ public class TickChartManager {
         plot.setRangeZeroBaselineStroke(new BasicStroke(1.0f));
         
         // Achsen-Labels
-        plot.getRangeAxis().setLabel("Drawdown (%)");
+        plot.getRangeAxis().setLabel("Drawdown (%) - Auto-Kalibriert");  // GEÄNDERT
         plot.getDomainAxis().setLabel("Zeit");
         
         // Y-Achse manuell konfigurieren
-        plot.getRangeAxis().setAutoRange(true);
-        plot.getRangeAxis().setLowerMargin(0.1); // 10% Margin unten
-        plot.getRangeAxis().setUpperMargin(0.1); // 10% Margin oben
+        plot.getRangeAxis().setAutoRange(false);  // GEÄNDERT: Deaktiviere Auto-Range für manuelle Kontrolle
+        plot.getRangeAxis().setLowerMargin(0.05); // 5% Margin unten (reduziert)
+        plot.getRangeAxis().setUpperMargin(0.05); // 5% Margin oben (reduziert)
     }
     
     /**
@@ -232,12 +233,12 @@ public class TickChartManager {
             
             // Y-Achsen-Bereiche anpassen
             adjustMainChartYAxisRange(filteredTicks);
-            adjustDrawdownChartYAxisRange(filteredTicks);
+            adjustDrawdownChartYAxisRangeAutoCalibrated(filteredTicks);  // GEÄNDERT: Neue Methode
             
             // Drawdown-Chart Farben aktualisieren
             updateDrawdownChartColors(filteredTicks);
             
-            LOGGER.info("Beide Charts aktualisiert mit " + filteredTicks.size() + " gefilterten Ticks für " + timeScale.getLabel());
+            LOGGER.info("Beide Charts aktualisiert mit " + filteredTicks.size() + " gefilterten Ticks für " + timeScale.getLabel() + " (Auto-Kalibrierung aktiv)");
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler beim Aktualisieren der Chart-Daten", e);
@@ -261,7 +262,8 @@ public class TickChartManager {
         mainChart.setTitle("Tick Daten - " + signalId + " (" + providerName + ") - " + 
                           timeScale.getLabel() + " (" + tickCount + " Ticks)");
         
-        drawdownChart.setTitle("Equity Drawdown (%) - " + signalId + " (" + providerName + ") - " + timeScale.getLabel());
+        drawdownChart.setTitle("Equity Drawdown (%) - " + signalId + " (" + providerName + ") - " + 
+                              timeScale.getLabel() + " [Auto-Kalibriert]");  // GEÄNDERT
     }
     
     /**
@@ -304,9 +306,10 @@ public class TickChartManager {
     }
     
     /**
-     * Passt den Y-Achsen-Bereich des Drawdown-Charts an
+     * NEUE METHODE: Passt den Y-Achsen-Bereich des Drawdown-Charts mit Auto-Kalibrierung an
+     * Optimiert für bessere Sichtbarkeit kleiner Bewegungen
      */
-    private void adjustDrawdownChartYAxisRange(List<TickDataLoader.TickData> filteredTicks) {
+    private void adjustDrawdownChartYAxisRangeAutoCalibrated(List<TickDataLoader.TickData> filteredTicks) {
         if (drawdownChart == null || filteredTicks.isEmpty()) {
             return;
         }
@@ -322,14 +325,55 @@ public class TickChartManager {
             calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit())
         ).max().orElse(0.0);
         
-        // Symmetrischer Bereich um 0
+        // VERBESSERTE AUTO-KALIBRIERUNG für bessere Sichtbarkeit
+        double dataRange = maxDrawdown - minDrawdown;
         double maxAbsValue = Math.max(Math.abs(minDrawdown), Math.abs(maxDrawdown));
-        double padding = Math.max(maxAbsValue * 0.1, 1.0); // Mindestens 1% Padding
         
-        plot.getRangeAxis().setRange(-maxAbsValue - padding, maxAbsValue + padding);
+        double lowerBound, upperBound;
+        
+        if (maxAbsValue < 0.01) {
+            // Extrem kleine Werte (< 0.01%) - sehr feiner Bereich
+            lowerBound = Math.min(minDrawdown - 0.005, -0.01);
+            upperBound = Math.max(maxDrawdown + 0.005, 0.01);
+            LOGGER.fine("Auto-Kalibrierung: Extrem kleine Werte - Bereich: " + lowerBound + "% bis " + upperBound + "%");
+            
+        } else if (maxAbsValue < 0.1) {
+            // Sehr kleine Werte (< 0.1%) - feiner Bereich
+            double padding = Math.max(dataRange * 0.2, 0.02);  // 20% der Datenspanne oder min. 0.02%
+            lowerBound = minDrawdown - padding;
+            upperBound = maxDrawdown + padding;
+            LOGGER.fine("Auto-Kalibrierung: Sehr kleine Werte - Bereich: " + lowerBound + "% bis " + upperBound + "%");
+            
+        } else if (maxAbsValue < 1.0) {
+            // Kleine Werte (< 1%) - adaptiver Bereich
+            double padding = Math.max(dataRange * 0.15, 0.05);  // 15% der Datenspanne oder min. 0.05%
+            lowerBound = minDrawdown - padding;
+            upperBound = maxDrawdown + padding;
+            LOGGER.fine("Auto-Kalibrierung: Kleine Werte - Bereich: " + lowerBound + "% bis " + upperBound + "%");
+            
+        } else {
+            // Normale/große Werte (>= 1%) - Standard symmetrischer Bereich
+            double padding = Math.max(maxAbsValue * 0.1, 0.1);  // 10% des Max-Werts oder min. 0.1%
+            lowerBound = -maxAbsValue - padding;
+            upperBound = maxAbsValue + padding;
+            LOGGER.fine("Auto-Kalibrierung: Normale Werte - Symmetrischer Bereich: " + lowerBound + "% bis " + upperBound + "%");
+        }
+        
+        // Sicherstellen, dass der Bereich nicht zu klein wird
+        double finalRange = upperBound - lowerBound;
+        if (finalRange < 0.02) {  // Minimaler Bereich von 0.02%
+            double center = (upperBound + lowerBound) / 2;
+            lowerBound = center - 0.01;
+            upperBound = center + 0.01;
+            LOGGER.fine("Auto-Kalibrierung: Bereich zu klein - auf minimal 0.02% erweitert");
+        }
+        
+        // Y-Achsen-Bereich setzen
+        plot.getRangeAxis().setRange(lowerBound, upperBound);
         plot.getDomainAxis().setAutoRange(true);
         
-        LOGGER.fine("Drawdown Y-Achse angepasst: " + (-maxAbsValue - padding) + " bis " + (maxAbsValue + padding));
+        LOGGER.info("Drawdown Y-Achse auto-kalibriert: " + String.format("%.4f%% bis %.4f%% (Datenbereich: %.4f%% bis %.4f%%)", 
+                   lowerBound, upperBound, minDrawdown, maxDrawdown));
     }
     
     /**
