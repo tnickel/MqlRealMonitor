@@ -19,19 +19,27 @@ import org.jfree.data.time.TimeSeriesCollection;
 import com.mql.realmonitor.data.TickDataLoader;
 
 /**
- * VEREINFACHT: Verwaltet nur den Drawdown-Chart (Haupt-Chart entfernt)
- * Erstellt und konfiguriert ausschließlich den Drawdown-Chart
- * ALLE PROBLEME BEHOBEN: Robuste Diagnostik und Fehlerbehandlung nur für Drawdown
+ * ERWEITERT: Verwaltet jetzt sowohl Drawdown-Chart als auch Profit-Chart
+ * Kombiniert beide Chart-Manager für eine einheitliche Verwaltung
+ * Drawdown-Chart + NEU: Profit-Chart mit Kontostand und Gesamtwert
  */
 public class TickChartManager {
     
     private static final Logger LOGGER = Logger.getLogger(TickChartManager.class.getName());
     
-    // Chart Komponenten - NUR DRAWDOWN
+    // Chart Komponenten - BEIDE CHARTS
     private JFreeChart drawdownChart;
+    private JFreeChart profitChart;
     
     // TimeSeries für Drawdown-Chart
     private TimeSeries drawdownPercentSeries;
+    
+    // TimeSeries für Profit-Chart
+    private TimeSeries equitySeries;      // Kontostand (grün)
+    private TimeSeries totalValueSeries;  // Gesamtwert (gelb)
+    
+    // NEU: Separater Profit-Chart-Manager
+    private ProfitChartManager profitChartManager;
     
     private final String signalId;
     private final String providerName;
@@ -45,7 +53,10 @@ public class TickChartManager {
     public TickChartManager(String signalId, String providerName) {
         this.signalId = signalId;
         this.providerName = providerName;
+        
+        // Beide Charts erstellen
         createDrawdownChart();
+        createProfitChart();
     }
     
     /**
@@ -74,6 +85,20 @@ public class TickChartManager {
         configureDrawdownChart();
         
         LOGGER.info("=== DRAWDOWN-CHART ERSTELLT für Signal: " + signalId + " ===");
+    }
+    
+    /**
+     * NEU: Erstellt den Profit-Chart über den separaten Manager
+     */
+    private void createProfitChart() {
+        profitChartManager = new ProfitChartManager(signalId, providerName);
+        profitChart = profitChartManager.getProfitChart();
+        
+        // Direkte Referenzen für Konsistenz
+        equitySeries = profitChartManager.getEquitySeries();
+        totalValueSeries = profitChartManager.getTotalValueSeries();
+        
+        LOGGER.info("=== PROFIT-CHART ERSTELLT für Signal: " + signalId + " ===");
     }
     
     /**
@@ -115,29 +140,46 @@ public class TickChartManager {
         plot.getRangeAxis().setLabel("Drawdown (%) - DIAGNOSEMODUS");
         plot.getDomainAxis().setLabel("Zeit");
         
-        // Y-Achse manuell konfigurieren
+        // Y-Achse manuell konfigurieren für intelligente Skalierung
         plot.getRangeAxis().setAutoRange(false);  // Deaktiviere Auto-Range für manuelle Kontrolle
         plot.getRangeAxis().setLowerMargin(0.05); // 5% Margin
         plot.getRangeAxis().setUpperMargin(0.05); // 5% Margin
     }
     
     /**
-     * VEREINFACHT: Aktualisiert nur den Drawdown-Chart mit gefilterten Daten
+     * ERWEITERT: Aktualisiert BEIDE Charts mit gefilterten Daten
      */
-    public void updateDrawdownChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
+    public void updateChartsWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         updateCounter++;
         
-        LOGGER.info("=== DRAWDOWN CHART UPDATE #" + updateCounter + " GESTARTET für Signal: " + signalId + " ===");
+        LOGGER.info("=== BEIDE CHARTS UPDATE #" + updateCounter + " GESTARTET für Signal: " + signalId + " ===");
         LOGGER.info("Input-Daten: filteredTicks=" + (filteredTicks != null ? filteredTicks.size() : "NULL") + 
                    ", timeScale=" + (timeScale != null ? timeScale.getLabel() : "NULL"));
         
-        if (filteredTicks == null) {
-            LOGGER.severe("KRITISCHER FEHLER: filteredTicks ist NULL!");
+        if (filteredTicks == null || filteredTicks.isEmpty()) {
+            LOGGER.warning("Keine Daten für Chart-Updates");
             return;
         }
         
-        if (filteredTicks.isEmpty()) {
-            LOGGER.warning("WARNUNG: Keine gefilterten Ticks - Chart bleibt leer!");
+        // 1. Drawdown-Chart aktualisieren
+        updateDrawdownChartWithData(filteredTicks, timeScale);
+        
+        // 2. Profit-Chart über Manager aktualisieren
+        if (profitChartManager != null) {
+            profitChartManager.updateProfitChartWithData(filteredTicks, timeScale);
+        }
+        
+        LOGGER.info("=== BEIDE CHARTS UPDATE #" + updateCounter + " ERFOLGREICH ABGESCHLOSSEN ===");
+    }
+    
+    /**
+     * VEREINFACHT: Aktualisiert nur den Drawdown-Chart (für Rückwärtskompatibilität)
+     */
+    public void updateDrawdownChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
+        LOGGER.info("=== DRAWDOWN CHART UPDATE GESTARTET ===");
+        
+        if (filteredTicks == null || filteredTicks.isEmpty()) {
+            LOGGER.warning("WARNUNG: Keine gefilterten Ticks für Drawdown-Chart!");
             return;
         }
         
@@ -148,23 +190,6 @@ public class TickChartManager {
         
         try {
             LOGGER.info("Anzahl gefilterte Ticks: " + filteredTicks.size());
-            
-            // Beispiel-Daten loggen für Diagnostik
-            if (filteredTicks.size() > 0) {
-                TickDataLoader.TickData firstTick = filteredTicks.get(0);
-                TickDataLoader.TickData lastTick = filteredTicks.get(filteredTicks.size() - 1);
-                LOGGER.info("ERSTER TICK: " + formatTickForLog(firstTick));
-                LOGGER.info("LETZTER TICK: " + formatTickForLog(lastTick));
-                
-                // ALLE Ticks loggen wenn wenige vorhanden
-                if (filteredTicks.size() <= 10) {
-                    LOGGER.info("=== ALLE TICKS (wenige Daten) ===");
-                    for (int i = 0; i < filteredTicks.size(); i++) {
-                        TickDataLoader.TickData tick = filteredTicks.get(i);
-                        LOGGER.info("TICK #" + (i+1) + ": " + formatTickForLog(tick));
-                    }
-                }
-            }
             
             // Chart Serie leeren
             LOGGER.info("Leere Drawdown-Chart-Serie...");
@@ -187,10 +212,12 @@ public class TickChartManager {
                     drawdownPercentSeries.add(second, drawdownPercent);
                     
                     // DETAILLIERTES LOGGING für jeden Datenpunkt
-                    LOGGER.info("DRAWDOWN TICK #" + (i+1) + " HINZUGEFÜGT: Zeit=" + tick.getTimestamp() + 
-                               ", Equity=" + tick.getEquity() + 
-                               ", Floating=" + tick.getFloatingProfit() + 
-                               ", Berechnet Drawdown=" + String.format("%.6f%%", drawdownPercent));
+                    if (i < 3 || i >= filteredTicks.size() - 3) {
+                        LOGGER.info("DRAWDOWN TICK #" + (i+1) + " HINZUGEFÜGT: Zeit=" + tick.getTimestamp() + 
+                                   ", Equity=" + tick.getEquity() + 
+                                   ", Floating=" + tick.getFloatingProfit() + 
+                                   ", Berechnet Drawdown=" + String.format("%.6f%%", drawdownPercent));
+                    }
                     
                     addedCount++;
                     
@@ -205,7 +232,7 @@ public class TickChartManager {
             checkDrawdownSeriesStatus();
             
             // Chart-Titel aktualisieren
-            updateChartTitle(timeScale, filteredTicks.size());
+            updateDrawdownChartTitle(timeScale, filteredTicks.size());
             
             // Renderer für Drawdown-Chart anpassen basierend auf Datenpunkt-Anzahl
             adjustDrawdownChartRenderer(filteredTicks.size());
@@ -216,25 +243,11 @@ public class TickChartManager {
             // Drawdown-Chart Farben aktualisieren
             updateDrawdownChartColors(filteredTicks);
             
-            LOGGER.info("=== DRAWDOWN CHART UPDATE #" + updateCounter + " ERFOLGREICH ABGESCHLOSSEN ===");
+            LOGGER.info("=== DRAWDOWN CHART UPDATE ERFOLGREICH ABGESCHLOSSEN ===");
             
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "FATALER FEHLER im Drawdown Chart Update #" + updateCounter + " für Signal " + signalId, e);
+            LOGGER.log(Level.SEVERE, "FATALER FEHLER im Drawdown Chart Update für Signal " + signalId, e);
         }
-    }
-    
-    /**
-     * Formatiert einen Tick für das Logging
-     */
-    private String formatTickForLog(TickDataLoader.TickData tick) {
-        if (tick == null) {
-            return "NULL";
-        }
-        return "Zeit=" + tick.getTimestamp() + 
-               ", Equity=" + tick.getEquity() + 
-               ", Floating=" + tick.getFloatingProfit() + 
-               ", Total=" + tick.getTotalValue() +
-               ", Berechnet_Drawdown=" + String.format("%.6f%%", calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit()));
     }
     
     /**
@@ -247,7 +260,7 @@ public class TickChartManager {
         // Detaillierte Drawdown-Serie Analyse
         if (drawdownPercentSeries != null && drawdownPercentSeries.getItemCount() > 0) {
             LOGGER.info("=== DRAWDOWN SERIE DETAILS ===");
-            for (int i = 0; i < drawdownPercentSeries.getItemCount(); i++) {
+            for (int i = 0; i < Math.min(3, drawdownPercentSeries.getItemCount()); i++) {
                 org.jfree.data.time.RegularTimePeriod period = drawdownPercentSeries.getTimePeriod(i);
                 Number value = drawdownPercentSeries.getValue(i);
                 LOGGER.info("Drawdown Item #" + (i+1) + ": Zeit=" + period + ", Wert=" + value + "%");
@@ -266,9 +279,9 @@ public class TickChartManager {
     }
     
     /**
-     * Aktualisiert den Chart-Titel
+     * Aktualisiert den Drawdown-Chart-Titel
      */
-    private void updateChartTitle(TimeScale timeScale, int tickCount) {
+    private void updateDrawdownChartTitle(TimeScale timeScale, int tickCount) {
         if (drawdownChart != null) {
             drawdownChart.setTitle("Equity Drawdown (%) - " + signalId + " (" + providerName + ") - " + 
                                   (timeScale != null ? timeScale.getLabel() : "Unbekannt") + " [DIAGNOSE #" + updateCounter + "]");
@@ -356,7 +369,9 @@ public class TickChartManager {
             if (drawdown < minDrawdown) minDrawdown = drawdown;
             if (drawdown > maxDrawdown) maxDrawdown = drawdown;
             
-            LOGGER.info("Drawdown-Wert #" + (i+1) + ": " + String.format("%.6f%%", drawdown));
+            if (i < 3) { // Nur erste 3 loggen
+                LOGGER.info("Drawdown-Wert #" + (i+1) + ": " + String.format("%.6f%%", drawdown));
+            }
         }
         
         LOGGER.info("DRAWDOWN-BEREICH: Min=" + String.format("%.6f%%", minDrawdown) + 
@@ -433,7 +448,6 @@ public class TickChartManager {
         
         LOGGER.info("STRATEGIE ANGEWENDET: " + strategie);
         LOGGER.info("Y-ACHSEN-BEREICH GESETZT: " + String.format("%.6f%% bis %.6f%%", lowerBound, upperBound));
-        LOGGER.info("FINALE SICHTBARE SPANNE: " + String.format("%.6f%%", finalRange));
         LOGGER.info("=== ROBUSTE DRAWDOWN Y-ACHSEN ANPASSUNG ENDE ===");
     }
     
@@ -457,12 +471,7 @@ public class TickChartManager {
             calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit()) < 0
         ).count();
         
-        long zeroCount = filteredTicks.stream().filter(tick -> 
-            Math.abs(calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit())) < 0.001
-        ).count();
-        
-        LOGGER.info("Drawdown Werteverteilung: Positiv=" + positiveCount + 
-                   ", Negativ=" + negativeCount + ", ~Null=" + zeroCount);
+        LOGGER.info("Drawdown Werteverteilung: Positiv=" + positiveCount + ", Negativ=" + negativeCount);
         
         // Farbe basierend auf Mehrheit setzen
         if (positiveCount > negativeCount) {
@@ -477,17 +486,31 @@ public class TickChartManager {
         }
     }
     
-    // Getter-Methoden - NUR DRAWDOWN
+    // Getter-Methoden - BEIDE CHARTS
     public JFreeChart getDrawdownChart() {
         return drawdownChart;
     }
     
     /**
-     * @deprecated Der Haupt-Chart wurde entfernt - verwende getDrawdownChart()
+     * NEU: Gibt den Profit-Chart zurück
+     */
+    public JFreeChart getProfitChart() {
+        return profitChart;
+    }
+    
+    /**
+     * NEU: Gibt den Profit-Chart-Manager zurück
+     */
+    public ProfitChartManager getProfitChartManager() {
+        return profitChartManager;
+    }
+    
+    /**
+     * @deprecated Der Haupt-Chart wurde entfernt - verwende getDrawdownChart() oder getProfitChart()
      */
     @Deprecated
     public JFreeChart getMainChart() {
-        LOGGER.warning("getMainChart() aufgerufen - Haupt-Chart wurde entfernt! Verwende getDrawdownChart()");
+        LOGGER.warning("getMainChart() aufgerufen - Haupt-Chart wurde entfernt! Verwende getDrawdownChart() oder getProfitChart()");
         return null;
     }
 }

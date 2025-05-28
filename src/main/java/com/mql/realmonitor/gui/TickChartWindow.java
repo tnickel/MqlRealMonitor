@@ -5,6 +5,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.ScrolledComposite;
 import org.eclipse.swt.events.PaintEvent;
 import org.eclipse.swt.events.PaintListener;
 import org.eclipse.swt.events.SelectionAdapter;
@@ -19,8 +20,8 @@ import com.mql.realmonitor.data.TickDataLoader;
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * VEREINFACHT: Tick Chart Window nur mit Drawdown-Chart (Haupt-Chart entfernt)
- * ALLE PROBLEME BEHOBEN: Umfassende Logging und robuste Chart-Darstellung nur für Drawdown
+ * ERWEITERT: Tick Chart Window mit BEIDEN Charts (Drawdown + Profit) und Scrolling
+ * NEUE FEATURES: Scrollbares Layout, Profit-Chart, verbesserte Diagnostik
  */
 public class TickChartWindow {
     
@@ -28,7 +29,10 @@ public class TickChartWindow {
     
     // UI Komponenten
     private Shell shell;
-    private Canvas chartCanvas;
+    private ScrolledComposite scrolledComposite;  // NEU: Für Scrolling
+    private Composite chartsContainer;           // NEU: Container für beide Charts
+    private Canvas drawdownCanvas;               // Drawdown-Chart Canvas
+    private Canvas profitCanvas;                 // NEU: Profit-Chart Canvas
     private Label infoLabel;
     private Text detailsText;
     private Button refreshButton;
@@ -58,9 +62,11 @@ public class TickChartWindow {
     private final MqlRealMonitorGUI parentGui;
     private final Display display;
     
-    // Chart-Dimensionen - NUR DRAWDOWN CHART
+    // Chart-Dimensionen - BEIDE CHARTS
     private int chartWidth = 800;
-    private int drawdownChartHeight = 600;  // GEÄNDERT: Volle Höhe für Drawdown-Chart
+    private int drawdownChartHeight = 400;   // GEÄNDERT: Reduziert für zwei Charts
+    private int profitChartHeight = 400;     // NEU: Höhe für Profit-Chart
+    private int totalChartHeight = 850;      // NEU: Gesamthöhe (beide Charts + Abstand)
     private double zoomFactor = 1.0;
     
     // Status-Flags
@@ -86,33 +92,33 @@ public class TickChartWindow {
         this.chartManager = new TickChartManager(signalId, providerName);
         this.imageRenderer = new ChartImageRenderer(display);
         
-        LOGGER.info("=== DRAWDOWN CHART WINDOW ERSTELLT (NUR DRAWDOWN) ===");
+        LOGGER.info("=== ERWEITERTE CHART WINDOW ERSTELLT (DRAWDOWN + PROFIT) ===");
         LOGGER.info("Signal: " + signalId + " (" + providerName + ")");
         LOGGER.info("Tick-Datei: " + tickFilePath);
-        LOGGER.info("SignalData: " + (signalData != null ? signalData.getSummary() : "NULL"));
+        LOGGER.info("Chart-Dimensionen: " + chartWidth + "x" + drawdownChartHeight + " + " + chartWidth + "x" + profitChartHeight);
         
         createWindow(parent);
         loadDataAsync();
     }
     
     /**
-     * Erstellt das Hauptfenster
+     * ERWEITERT: Erstellt das Hauptfenster mit Scrolling
      */
     private void createWindow(Shell parent) {
         shell = new Shell(parent, SWT.SHELL_TRIM | SWT.MODELESS);
-        shell.setText("Drawdown Chart - " + signalId + " (" + providerName + ") [DIAGNOSEMODUS]");
-        shell.setSize(1000, 800); // GEÄNDERT: Optimiert für Drawdown-Chart
+        shell.setText("Charts - " + signalId + " (" + providerName + ") [DRAWDOWN + PROFIT]");
+        shell.setSize(1000, 900); // GEÄNDERT: Größer für beide Charts
         shell.setLayout(new GridLayout(1, false));
         
         centerWindow(parent);
         
         createInfoPanel();
         createTimeScalePanel();
-        createChartCanvas();
+        createScrollableChartsArea();  // NEU: Scrollbereich
         createButtonPanel();
         setupEventHandlers();
         
-        LOGGER.info("DrawdownChartWindow UI erstellt für Signal: " + signalId);
+        LOGGER.info("Erweiterte ChartWindow UI erstellt für Signal: " + signalId);
     }
     
     /**
@@ -130,11 +136,11 @@ public class TickChartWindow {
     }
     
     /**
-     * Erstellt das Info-Panel
+     * ERWEITERT: Erstellt das Info-Panel
      */
     private void createInfoPanel() {
         Group infoGroup = new Group(shell, SWT.NONE);
-        infoGroup.setText("Signal Information (DIAGNOSEMODUS - NUR DRAWDOWN)");
+        infoGroup.setText("Signal Information (DRAWDOWN + PROFIT CHARTS)");
         infoGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         infoGroup.setLayout(new GridLayout(2, false));
         
@@ -157,7 +163,7 @@ public class TickChartWindow {
      */
     private void createTimeScalePanel() {
         Group timeScaleGroup = new Group(shell, SWT.NONE);
-        timeScaleGroup.setText("Zeitintervall (Drawdown-Chart mit Fallback-Strategien)");
+        timeScaleGroup.setText("Zeitintervall (Beide Charts mit Fallback-Strategien)");
         timeScaleGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         timeScaleGroup.setLayout(new GridLayout(TimeScale.values().length, false));
         
@@ -190,38 +196,98 @@ public class TickChartWindow {
     }
     
     /**
-     * GEÄNDERT: Chart-Canvas erstellen - NUR DRAWDOWN
+     * NEU: Erstellt scrollbaren Charts-Bereich mit beiden Charts
      */
-    private void createChartCanvas() {
-        Group chartGroup = new Group(shell, SWT.NONE);
-        chartGroup.setText("Drawdown Chart (DIAGNOSEMODUS) - " + currentTimeScale.getLabel());
-        chartGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-        chartGroup.setLayout(new GridLayout(1, false));
+    private void createScrollableChartsArea() {
+        Group chartsGroup = new Group(shell, SWT.NONE);
+        chartsGroup.setText("Charts (Scrollbar) - " + currentTimeScale.getLabel());
+        chartsGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        chartsGroup.setLayout(new GridLayout(1, false));
         
-        chartCanvas = new Canvas(chartGroup, SWT.BORDER | SWT.DOUBLE_BUFFERED);
-        chartCanvas.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-        chartCanvas.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
+        // ScrolledComposite erstellen
+        scrolledComposite = new ScrolledComposite(chartsGroup, SWT.BORDER | SWT.H_SCROLL | SWT.V_SCROLL);
+        scrolledComposite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        scrolledComposite.setExpandHorizontal(true);
+        scrolledComposite.setExpandVertical(true);
         
-        chartCanvas.addPaintListener(new PaintListener() {
+        // Container für Charts erstellen
+        chartsContainer = new Composite(scrolledComposite, SWT.NONE);
+        chartsContainer.setLayout(new GridLayout(1, false));
+        chartsContainer.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
+        
+        // 1. Drawdown-Chart Canvas
+        createDrawdownCanvas();
+        
+        // Trennlinie
+        Label separator = new Label(chartsContainer, SWT.SEPARATOR | SWT.HORIZONTAL);
+        separator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        
+        // 2. Profit-Chart Canvas
+        createProfitCanvas();
+        
+        // ScrolledComposite konfigurieren
+        scrolledComposite.setContent(chartsContainer);
+        scrolledComposite.setMinSize(chartWidth, totalChartHeight);
+        
+        // Resize-Handler für ScrolledComposite
+        scrolledComposite.addListener(SWT.Resize, event -> {
+            updateChartDimensions();
+            renderBothChartsToImages();
+        });
+        
+        LOGGER.info("Scrollbarer Charts-Bereich erstellt mit beiden Charts");
+    }
+    
+    /**
+     * NEU: Erstellt das Drawdown-Chart Canvas
+     */
+    private void createDrawdownCanvas() {
+        // Label für Drawdown-Chart
+        Label drawdownLabel = new Label(chartsContainer, SWT.NONE);
+        drawdownLabel.setText("Equity Drawdown Chart (%)");
+        drawdownLabel.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, true, false));
+        drawdownLabel.setFont(parentGui.getBoldFont());
+        
+        drawdownCanvas = new Canvas(chartsContainer, SWT.BORDER | SWT.DOUBLE_BUFFERED);
+        GridData drawdownData = new GridData(SWT.FILL, SWT.FILL, true, false);
+        drawdownData.heightHint = drawdownChartHeight;
+        drawdownCanvas.setLayoutData(drawdownData);
+        drawdownCanvas.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
+        
+        drawdownCanvas.addPaintListener(new PaintListener() {
             @Override
             public void paintControl(PaintEvent e) {
-                paintDrawdownChart(e.gc);  // GEÄNDERT: Nur Drawdown-Chart zeichnen
+                paintDrawdownChart(e.gc);
             }
         });
         
-        chartCanvas.addListener(SWT.Resize, event -> {
-            Point size = chartCanvas.getSize();
-            if (size.x > 0 && size.y > 0) {
-                chartWidth = size.x;
-                drawdownChartHeight = size.y;  // GEÄNDERT: Volle Höhe für Drawdown
-                
-                LOGGER.info("Canvas Resize: " + chartWidth + "x" + drawdownChartHeight + " (nur Drawdown)");
-                
-                renderDrawdownChartToImage();  // GEÄNDERT: Nur Drawdown rendern
+        LOGGER.info("Drawdown-Chart Canvas erstellt");
+    }
+    
+    /**
+     * NEU: Erstellt das Profit-Chart Canvas
+     */
+    private void createProfitCanvas() {
+        // Label für Profit-Chart
+        Label profitLabel = new Label(chartsContainer, SWT.NONE);
+        profitLabel.setText("Profit-Entwicklung Chart (Grün: Kontostand, Gelb: Gesamtwert)");
+        profitLabel.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, true, false));
+        profitLabel.setFont(parentGui.getBoldFont());
+        
+        profitCanvas = new Canvas(chartsContainer, SWT.BORDER | SWT.DOUBLE_BUFFERED);
+        GridData profitData = new GridData(SWT.FILL, SWT.FILL, true, false);
+        profitData.heightHint = profitChartHeight;
+        profitCanvas.setLayoutData(profitData);
+        profitCanvas.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
+        
+        profitCanvas.addPaintListener(new PaintListener() {
+            @Override
+            public void paintControl(PaintEvent e) {
+                paintProfitChart(e.gc);
             }
         });
         
-        LOGGER.info("Chart-Canvas für Drawdown-Chart erstellt");
+        LOGGER.info("Profit-Chart Canvas erstellt");
     }
     
     /**
@@ -262,7 +328,7 @@ public class TickChartWindow {
     }
     
     /**
-     * GEÄNDERT: Setup Event Handler
+     * ERWEITERT: Setup Event Handler für beide Charts
      */
     private void setupEventHandlers() {
         refreshButton.addSelectionListener(new SelectionAdapter() {
@@ -283,7 +349,7 @@ public class TickChartWindow {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 zoomFactor *= 1.2;
-                renderDrawdownChartToImage();  // GEÄNDERT: Nur Drawdown
+                renderBothChartsToImages();  // GEÄNDERT: Beide Charts
                 LOGGER.info("Zoom In: " + zoomFactor);
             }
         });
@@ -292,7 +358,7 @@ public class TickChartWindow {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 zoomFactor /= 1.2;
-                renderDrawdownChartToImage();  // GEÄNDERT: Nur Drawdown
+                renderBothChartsToImages();  // GEÄNDERT: Beide Charts
                 LOGGER.info("Zoom Out: " + zoomFactor);
             }
         });
@@ -301,7 +367,7 @@ public class TickChartWindow {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 zoomFactor = 1.0;
-                renderDrawdownChartToImage();  // GEÄNDERT: Nur Drawdown
+                renderBothChartsToImages();  // GEÄNDERT: Beide Charts
                 LOGGER.info("Zoom Reset");
             }
         });
@@ -319,7 +385,7 @@ public class TickChartWindow {
     }
     
     /**
-     * Zeigt einen detaillierten Diagnostik-Bericht
+     * ERWEITERT: Zeigt einen detaillierten Diagnostik-Bericht für beide Charts
      */
     private void showDiagnosticReport() {
         LOGGER.info("=== DIAGNOSTIK-BERICHT ANGEFORDERT für Signal: " + signalId + " ===");
@@ -336,7 +402,7 @@ public class TickChartWindow {
         report.append("Refresh Counter: ").append(refreshCounter).append("\n");
         report.append("Data Loaded: ").append(isDataLoaded).append("\n");
         report.append("Zoom Factor: ").append(zoomFactor).append("\n");
-        report.append("Chart Typ: NUR DRAWDOWN-CHART\n\n");
+        report.append("Chart Typ: DRAWDOWN + PROFIT (DUAL-CHART)\n\n");
         
         // SignalData Info
         report.append("SIGNALDATA:\n");
@@ -379,13 +445,14 @@ public class TickChartWindow {
         }
         report.append("\n");
         
-        // Chart Status
-        report.append("DRAWDOWN CHART STATUS:\n");
+        // ERWEITERT: Chart Status für beide Charts
+        report.append("CHARTS STATUS:\n");
         report.append("ChartManager: ").append(chartManager != null ? "OK" : "NULL").append("\n");
         report.append("ImageRenderer: ").append(imageRenderer != null ? "OK" : "NULL").append("\n");
         report.append("HasValidDrawdownImage: ").append(imageRenderer != null ? imageRenderer.hasValidDrawdownImage() : "N/A").append("\n");
-        report.append("Canvas Größe: ").append(chartWidth).append("x").append(drawdownChartHeight).append("\n");
-        report.append("Drawdown Chart Höhe: ").append(drawdownChartHeight).append(" (Vollbild)\n");
+        report.append("HasValidProfitImage: ").append(imageRenderer != null ? imageRenderer.hasValidProfitImage() : "N/A").append("\n");
+        report.append("Canvas Größen: ").append(chartWidth).append("x").append(drawdownChartHeight).append(" + ").append(chartWidth).append("x").append(profitChartHeight).append("\n");
+        report.append("Scroll-Container: ").append(scrolledComposite != null && !scrolledComposite.isDisposed() ? "OK" : "FEHLER").append("\n");
         
         // Zeige Bericht in einem neuen Dialog
         Shell diagnosticShell = new Shell(shell, SWT.DIALOG_TRIM | SWT.MODELESS | SWT.RESIZE);
@@ -423,7 +490,7 @@ public class TickChartWindow {
     }
     
     /**
-     * Wechselt das Zeitintervall und aktualisiert den Drawdown-Chart
+     * Wechselt das Zeitintervall und aktualisiert beide Charts
      */
     private void changeTimeScale(TimeScale newScale) {
         if (newScale == currentTimeScale) {
@@ -441,24 +508,24 @@ public class TickChartWindow {
         
         currentTimeScale = newScale;
         
-        // Daten neu filtern und Chart aktualisieren
+        // Daten neu filtern und beide Charts aktualisieren
         if (tickDataSet != null) {
-            updateChartWithCurrentData();
+            updateChartsWithCurrentData();
         } else {
             LOGGER.warning("Kann Zeitintervall nicht wechseln - tickDataSet ist NULL");
         }
     }
     
     /**
-     * GEÄNDERT: Aktualisiert Drawdown-Chart mit aktuellen Daten
+     * ERWEITERT: Aktualisiert beide Charts mit aktuellen Daten
      */
-    private void updateChartWithCurrentData() {
-        LOGGER.info("=== UPDATE DRAWDOWN CHART MIT AKTUELLEN DATEN ===");
+    private void updateChartsWithCurrentData() {
+        LOGGER.info("=== UPDATE BEIDE CHARTS MIT AKTUELLEN DATEN ===");
         LOGGER.info("TickDataSet: " + (tickDataSet != null ? tickDataSet.getTickCount() + " Ticks" : "NULL"));
         LOGGER.info("Aktuelle Zeitskala: " + currentTimeScale.getLabel());
         
         if (tickDataSet == null) {
-            LOGGER.warning("FEHLER: tickDataSet ist NULL - kann Chart nicht aktualisieren");
+            LOGGER.warning("FEHLER: tickDataSet ist NULL - kann Charts nicht aktualisieren");
             return;
         }
         
@@ -474,47 +541,72 @@ public class TickChartWindow {
                 LOGGER.info("FALLBACK: Verwende alle " + filteredTicks.size() + " verfügbaren Ticks");
             }
             
-            // GEÄNDERT: Nur Drawdown-Chart aktualisieren
-            chartManager.updateDrawdownChartWithData(filteredTicks, currentTimeScale);
+            // ERWEITERT: Beide Charts über ChartManager aktualisieren
+            chartManager.updateChartsWithData(filteredTicks, currentTimeScale);
             
-            // Image rendern
-            renderDrawdownChartToImage();
+            // Images rendern
+            renderBothChartsToImages();
             
             // Info-Panel aktualisieren
             updateInfoPanel();
             
-            LOGGER.info("Drawdown-Chart erfolgreich aktualisiert");
+            LOGGER.info("Beide Charts erfolgreich aktualisiert");
             
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "FEHLER beim Aktualisieren des Drawdown-Charts", e);
+            LOGGER.log(Level.SEVERE, "FEHLER beim Aktualisieren der Charts", e);
         }
     }
     
     /**
-     * NEU: Rendert nur den Drawdown-Chart als Image
+     * NEU: Rendert beide Charts als Images
      */
-    private void renderDrawdownChartToImage() {
+    private void renderBothChartsToImages() {
         if (chartManager == null || imageRenderer == null) {
-            LOGGER.warning("Kann Drawdown-Chart nicht rendern - Manager oder Renderer ist NULL");
+            LOGGER.warning("Kann Charts nicht rendern - Manager oder Renderer ist NULL");
             return;
         }
         
         try {
-            imageRenderer.renderDrawdownChartToImage(
+            imageRenderer.renderBothChartsToImages(
                 chartManager.getDrawdownChart(),
+                chartManager.getProfitChart(),
                 chartWidth,
                 drawdownChartHeight,
+                profitChartHeight,
                 zoomFactor
             );
             
-            if (!chartCanvas.isDisposed()) {
-                chartCanvas.redraw();
+            // Beide Canvas neu zeichnen
+            if (!drawdownCanvas.isDisposed()) {
+                drawdownCanvas.redraw();
+            }
+            if (!profitCanvas.isDisposed()) {
+                profitCanvas.redraw();
             }
             
-            LOGGER.fine("Drawdown-Chart erfolgreich gerendert");
+            LOGGER.fine("Beide Charts erfolgreich gerendert");
             
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Rendern des Drawdown-Charts", e);
+            LOGGER.log(Level.WARNING, "Fehler beim Rendern der Charts", e);
+        }
+    }
+    
+    /**
+     * NEU: Aktualisiert Chart-Dimensionen basierend auf Container-Größe
+     */
+    private void updateChartDimensions() {
+        if (scrolledComposite == null || scrolledComposite.isDisposed()) {
+            return;
+        }
+        
+        Point size = scrolledComposite.getSize();
+        if (size.x > 0 && size.y > 0) {
+            chartWidth = Math.max(400, size.x - 50); // Mindestbreite mit Padding
+            
+            LOGGER.info("Chart-Dimensionen aktualisiert: " + chartWidth + "x" + drawdownChartHeight + " + " + chartWidth + "x" + profitChartHeight);
+            
+            // ScrolledComposite Minimum Size aktualisieren
+            scrolledComposite.setMinSize(chartWidth, totalChartHeight);
         }
     }
     
@@ -564,7 +656,7 @@ public class TickChartWindow {
                 // UI-Updates im SWT Thread
                 display.asyncExec(() -> {
                     if (!isWindowClosed && !shell.isDisposed()) {
-                        updateChartWithCurrentData();
+                        updateChartsWithCurrentData();
                     }
                 });
                 
@@ -579,36 +671,62 @@ public class TickChartWindow {
                     }
                 });
             }
-        }, "TickDataLoader-Drawdown-" + signalId).start();
+        }, "TickDataLoader-DualChart-" + signalId).start();
     }
     
     /**
-     * GEÄNDERT: Zeichnet nur den Drawdown-Chart auf dem Canvas
+     * NEU: Zeichnet den Drawdown-Chart auf seinem Canvas
      */
     private void paintDrawdownChart(GC gc) {
         gc.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
-        gc.fillRectangle(chartCanvas.getBounds());
+        gc.fillRectangle(drawdownCanvas.getBounds());
         
-        org.eclipse.swt.graphics.Rectangle canvasBounds = chartCanvas.getBounds();
+        org.eclipse.swt.graphics.Rectangle canvasBounds = drawdownCanvas.getBounds();
         
         if (imageRenderer != null && imageRenderer.hasValidDrawdownImage()) {
-            // Drawdown-Chart zentriert zeichnen (nutzt jetzt die volle Höhe)
-            org.eclipse.swt.graphics.Rectangle drawdownImageBounds = imageRenderer.getDrawdownChartImage().getBounds();
-            int drawdownX = (canvasBounds.width - drawdownImageBounds.width) / 2;
-            int drawdownY = (canvasBounds.height - drawdownImageBounds.height) / 2;  // Zentriert vertikal
+            // Drawdown-Chart zentriert zeichnen
+            org.eclipse.swt.graphics.Rectangle imagesBounds = imageRenderer.getDrawdownChartImage().getBounds();
+            int x = (canvasBounds.width - imagesBounds.width) / 2;
+            int y = (canvasBounds.height - imagesBounds.height) / 2;
             
-            gc.drawImage(imageRenderer.getDrawdownChartImage(), Math.max(0, drawdownX), Math.max(0, drawdownY));
+            gc.drawImage(imageRenderer.getDrawdownChartImage(), Math.max(0, x), Math.max(0, y));
             
         } else if (!isDataLoaded) {
             gc.setForeground(display.getSystemColor(SWT.COLOR_DARK_GRAY));
-            gc.drawText("Drawdown-Chart wird geladen... (DIAGNOSEMODUS)", 20, 20, true);
+            gc.drawText("Drawdown-Chart wird geladen...", 20, 20, true);
             gc.drawText("Signal: " + signalId + " (" + providerName + ")", 20, 40, true);
-            gc.drawText("Refresh Counter: " + refreshCounter, 20, 60, true);
         } else {
             gc.setForeground(display.getSystemColor(SWT.COLOR_RED));
-            gc.drawText("FEHLER beim Laden des Drawdown-Charts - siehe Diagnostik", 20, 20, true);
+            gc.drawText("FEHLER beim Laden des Drawdown-Charts", 20, 20, true);
             gc.drawText("Signal: " + signalId, 20, 40, true);
-            gc.drawText("Tick-Datei: " + tickFilePath, 20, 60, true);
+        }
+    }
+    
+    /**
+     * NEU: Zeichnet den Profit-Chart auf seinem Canvas
+     */
+    private void paintProfitChart(GC gc) {
+        gc.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
+        gc.fillRectangle(profitCanvas.getBounds());
+        
+        org.eclipse.swt.graphics.Rectangle canvasBounds = profitCanvas.getBounds();
+        
+        if (imageRenderer != null && imageRenderer.hasValidProfitImage()) {
+            // Profit-Chart zentriert zeichnen
+            org.eclipse.swt.graphics.Rectangle imagesBounds = imageRenderer.getProfitChartImage().getBounds();
+            int x = (canvasBounds.width - imagesBounds.width) / 2;
+            int y = (canvasBounds.height - imagesBounds.height) / 2;
+            
+            gc.drawImage(imageRenderer.getProfitChartImage(), Math.max(0, x), Math.max(0, y));
+            
+        } else if (!isDataLoaded) {
+            gc.setForeground(display.getSystemColor(SWT.COLOR_DARK_GRAY));
+            gc.drawText("Profit-Chart wird geladen...", 20, 20, true);
+            gc.drawText("Grün: Kontostand, Gelb: Gesamtwert", 20, 40, true);
+        } else {
+            gc.setForeground(display.getSystemColor(SWT.COLOR_RED));
+            gc.drawText("FEHLER beim Laden des Profit-Charts", 20, 20, true);
+            gc.drawText("Signal: " + signalId, 20, 40, true);
         }
     }
     
@@ -616,18 +734,19 @@ public class TickChartWindow {
      * Zeigt initialen Info-Text
      */
     private void updateInfoPanelInitial() {
-        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt... [DRAWDOWN-CHART-MODUS]";
+        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt... [DUAL-CHART-MODUS]";
         infoLabel.setText(info);
-        detailsText.setText("=== DRAWDOWN-CHART-MODUS AKTIV ===\n" +
+        detailsText.setText("=== DUAL-CHART-MODUS AKTIV ===\n" +
                            "Tick-Daten werden geladen...\n" +
                            "Tick-Datei: " + tickFilePath + "\n" +
-                           "Nur Drawdown-Chart wird angezeigt (Haupt-Chart entfernt).\n" +
-                           "Alle Chart-Updates werden detailliert geloggt.\n" +
+                           "CHART 1: Drawdown-Chart (Magenta)\n" +
+                           "CHART 2: Profit-Chart (Grün: Kontostand, Gelb: Gesamtwert)\n" +
+                           "Fenster ist scrollbar für beide Charts.\n" +
                            "Bitte warten Sie einen Moment.");
     }
     
     /**
-     * GEÄNDERT: Aktualisiert das Info-Panel - nur Drawdown-Chart
+     * ERWEITERT: Aktualisiert das Info-Panel für beide Charts
      */
     private void updateInfoPanel() {
         StringBuilder info = new StringBuilder();
@@ -647,10 +766,12 @@ public class TickChartWindow {
         
         StringBuilder details = new StringBuilder();
         
-        details.append("=== DRAWDOWN-CHART-MODUS - DETAILLIERTE INFORMATIONEN ===\n");
+        details.append("=== DUAL-CHART-MODUS - DETAILLIERTE INFORMATIONEN ===\n");
         details.append("Zeitintervall: ").append(currentTimeScale.getLabel())
                .append(" (letzte ").append(currentTimeScale.getDisplayMinutes()).append(" Minuten)\n");
-        details.append("Chart: Drawdown-Chart (robuste Auto-Skalierung, Vollbild)\n");
+        details.append("Chart 1: Drawdown-Chart (robuste Auto-Skalierung)\n");
+        details.append("Chart 2: Profit-Chart (Grün: Kontostand, Gelb: Gesamtwert)\n");
+        details.append("Layout: Scrollbar für beide Charts vertikal\n");
         details.append("Tick-Datei: ").append(tickFilePath).append("\n");
         
         if (tickDataSet != null && tickDataSet.getTickCount() > 0) {
@@ -666,14 +787,26 @@ public class TickChartWindow {
                     // Drawdown-Statistiken
                     TickDataFilter.DrawdownStatistics stats = TickDataFilter.calculateDrawdownStatistics(filteredTicks);
                     if (stats.hasData()) {
-                        details.append("\n=== DRAWDOWN STATISTIK (DIAGNOSE) ===\n");
+                        details.append("\n=== DRAWDOWN STATISTIK ===\n");
                         details.append("Min. Drawdown: ").append(stats.getFormattedMinDrawdown()).append("\n");
                         details.append("Max. Drawdown: ").append(stats.getFormattedMaxDrawdown()).append("\n");
                         details.append("Durchschn. Drawdown: ").append(stats.getFormattedAvgDrawdown()).append("\n");
-                        
-                        // Zusätzliche Diagnose-Info
-                        details.append("Chart-Status: ").append(imageRenderer != null && imageRenderer.hasValidDrawdownImage() ? "OK" : "FEHLER").append("\n");
                     }
+                    
+                    // Profit-Statistiken
+                    double minEquity = filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getEquity).min().orElse(0);
+                    double maxEquity = filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getEquity).max().orElse(0);
+                    double minTotal = filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getTotalValue).min().orElse(0);
+                    double maxTotal = filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getTotalValue).max().orElse(0);
+                    
+                    details.append("\n=== PROFIT STATISTIK ===\n");
+                    details.append("Kontostand-Bereich: ").append(String.format("%.2f - %.2f", minEquity, maxEquity)).append("\n");
+                    details.append("Gesamtwert-Bereich: ").append(String.format("%.2f - %.2f", minTotal, maxTotal)).append("\n");
+                    
+                    // Chart-Status
+                    details.append("\n=== CHART STATUS ===\n");
+                    details.append("Drawdown-Chart: ").append(imageRenderer != null && imageRenderer.hasValidDrawdownImage() ? "OK" : "FEHLER").append("\n");
+                    details.append("Profit-Chart: ").append(imageRenderer != null && imageRenderer.hasValidProfitImage() ? "OK" : "FEHLER").append("\n");
                 }
             } else {
                 details.append("PROBLEM: filteredTicks ist NULL!\n");
@@ -683,14 +816,14 @@ public class TickChartWindow {
         }
         
         details.append("Zoom-Faktor: ").append(String.format("%.2f", zoomFactor)).append("\n");
-        details.append("Drawdown Chart Höhe: ").append(drawdownChartHeight).append("px (Vollbild)\n");
+        details.append("Chart-Dimensionen: ").append(chartWidth).append("x").append(drawdownChartHeight).append(" + ").append(chartWidth).append("x").append(profitChartHeight).append("\n");
         details.append("Refresh Counter: ").append(refreshCounter).append("\n");
         details.append("\nKlicken Sie auf 'Diagnostik' für vollständigen Bericht.\n");
         
         detailsText.setText(details.toString());
         
         if (shell != null && !shell.isDisposed()) {
-            shell.setText("Drawdown Chart - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [DIAGNOSE #" + refreshCounter + "]");
+            shell.setText("Charts - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [DUAL #" + refreshCounter + "]");
         }
     }
     
@@ -698,7 +831,7 @@ public class TickChartWindow {
      * Zeigt "Keine Daten"-Nachricht
      */
     private void showNoDataMessage() {
-        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten verfügbar [DRAWDOWN-CHART-MODUS]");
+        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten verfügbar [DUAL-CHART-MODUS]");
         detailsText.setText("=== KEINE TICK-DATEN GEFUNDEN ===\n" +
                            "Datei: " + tickFilePath + "\n" +
                            "Mögliche Ursachen:\n" +
@@ -706,14 +839,15 @@ public class TickChartWindow {
                            "- Datei hat ungültiges Format\n" +
                            "- Noch keine Daten für dieses Signal gesammelt\n\n" +
                            "Prüfen Sie die Datei manuell oder warten Sie auf neue Daten.");
-        chartCanvas.redraw();
+        drawdownCanvas.redraw();
+        profitCanvas.redraw();
     }
     
     /**
      * Zeigt Fehlermeldung
      */
     private void showErrorMessage(String message) {
-        infoLabel.setText("Signal ID: " + signalId + " - Fehler beim Laden [DRAWDOWN-CHART-MODUS]");
+        infoLabel.setText("Signal ID: " + signalId + " - Fehler beim Laden [DUAL-CHART-MODUS]");
         detailsText.setText("=== FEHLER BEIM LADEN DER TICK-DATEN ===\n" +
                            "FEHLER: " + message + "\n\n" +
                            "Tick-Datei: " + tickFilePath + "\n\n" +
@@ -724,7 +858,7 @@ public class TickChartWindow {
         
         MessageBox errorBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
         errorBox.setText("Fehler beim Laden der Tick-Daten");
-        errorBox.setMessage("DRAWDOWN-CHART-MODUS:\n\n" + message + "\n\nSiehe Details-Panel für weitere Informationen.");
+        errorBox.setMessage("DUAL-CHART-MODUS:\n\n" + message + "\n\nSiehe Details-Panel für weitere Informationen.");
         errorBox.open();
     }
     
@@ -739,7 +873,8 @@ public class TickChartWindow {
         refreshButton.setText("Lädt...");
         
         isDataLoaded = false;
-        chartCanvas.redraw();
+        drawdownCanvas.redraw();
+        profitCanvas.redraw();
         
         loadDataAsync();
         
@@ -757,7 +892,7 @@ public class TickChartWindow {
     private void closeWindow() {
         isWindowClosed = true;
         
-        LOGGER.info("=== SCHLIESSE DRAWDOWN CHART WINDOW für Signal: " + signalId + " ===");
+        LOGGER.info("=== SCHLIESSE DUAL CHART WINDOW für Signal: " + signalId + " ===");
         LOGGER.info("Refresh Counter final: " + refreshCounter);
         
         // Ressourcen freigeben
@@ -775,7 +910,7 @@ public class TickChartWindow {
      */
     public void open() {
         shell.open();
-        LOGGER.info("DrawdownChartWindow (NUR DRAWDOWN-CHART) geöffnet für Signal: " + signalId);
+        LOGGER.info("DualChartWindow (DRAWDOWN + PROFIT) geöffnet für Signal: " + signalId);
     }
     
     /**

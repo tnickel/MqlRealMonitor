@@ -10,8 +10,8 @@ import org.eclipse.swt.widgets.Display;
 import org.jfree.chart.JFreeChart;
 
 /**
- * VEREINFACHT: Rendert nur den Drawdown-Chart zu SWT Images
- * Haupt-Chart wurde entfernt - nur noch Drawdown-Chart wird gerendert
+ * ERWEITERT: Rendert jetzt beide Charts - Drawdown-Chart UND Profit-Chart
+ * Verwaltet beide Chart-Images für die scrollbare Anzeige
  */
 public class ChartImageRenderer {
     
@@ -19,8 +19,9 @@ public class ChartImageRenderer {
     
     private final Display display;
     
-    // Chart-Image - NUR DRAWDOWN
+    // Chart-Images - BEIDE CHARTS
     private Image drawdownChartImage;
+    private Image profitChartImage;  // NEU
     
     /**
      * Konstruktor
@@ -30,7 +31,36 @@ public class ChartImageRenderer {
     }
     
     /**
-     * VEREINFACHT: Rendert nur den Drawdown-Chart zu einem Image
+     * ERWEITERT: Rendert beide Charts zu Images
+     * 
+     * @param drawdownChart Der Drawdown-Chart
+     * @param profitChart Der Profit-Chart (NEU)
+     * @param chartWidth Die Breite der Charts
+     * @param drawdownChartHeight Die Höhe des Drawdown-Charts
+     * @param profitChartHeight Die Höhe des Profit-Charts (NEU)
+     * @param zoomFactor Der Zoom-Faktor
+     */
+    public void renderBothChartsToImages(JFreeChart drawdownChart, JFreeChart profitChart,
+                                        int chartWidth, int drawdownChartHeight, int profitChartHeight,
+                                        double zoomFactor) {
+        LOGGER.info("=== BEIDE CHARTS RENDERN START ===");
+        LOGGER.info("Charts: Drawdown=" + (drawdownChart != null) + ", Profit=" + (profitChart != null));
+        LOGGER.info("Dimensionen: Breite=" + chartWidth + 
+                   ", Drawdown-Höhe=" + drawdownChartHeight + 
+                   ", Profit-Höhe=" + profitChartHeight + 
+                   ", Zoom=" + zoomFactor);
+        
+        // 1. Drawdown-Chart rendern
+        renderDrawdownChartToImage(drawdownChart, chartWidth, drawdownChartHeight, zoomFactor);
+        
+        // 2. Profit-Chart rendern
+        renderProfitChartToImage(profitChart, chartWidth, profitChartHeight, zoomFactor);
+        
+        LOGGER.info("=== BEIDE CHARTS RENDERN ENDE ===");
+    }
+    
+    /**
+     * Rendert nur den Drawdown-Chart zu einem Image (bestehende Methode)
      * 
      * @param drawdownChart Der Drawdown-Chart
      * @param chartWidth Die Breite des Charts
@@ -79,17 +109,52 @@ public class ChartImageRenderer {
     }
     
     /**
-     * @deprecated Der Haupt-Chart wurde entfernt - verwende renderDrawdownChartToImage()
+     * NEU: Rendert den Profit-Chart zu einem Image
+     * 
+     * @param profitChart Der Profit-Chart
+     * @param chartWidth Die Breite des Charts
+     * @param profitChartHeight Die Höhe des Profit-Charts
+     * @param zoomFactor Der Zoom-Faktor
      */
-    @Deprecated
-    public void renderBothChartsToImages(JFreeChart mainChart, JFreeChart drawdownChart,
-                                        int chartWidth, int mainChartHeight, int drawdownChartHeight,
+    public void renderProfitChartToImage(JFreeChart profitChart,
+                                        int chartWidth, int profitChartHeight,
                                         double zoomFactor) {
-        LOGGER.warning("renderBothChartsToImages() aufgerufen - Haupt-Chart wurde entfernt!");
-        LOGGER.info("Fallback: Rendere nur Drawdown-Chart");
+        if (profitChart == null || chartWidth <= 0 || profitChartHeight <= 0) {
+            LOGGER.warning("Ungültige Parameter für Profit-Chart Rendering: " +
+                          "Chart=" + (profitChart != null) + 
+                          ", Width=" + chartWidth + 
+                          ", Height=" + profitChartHeight);
+            return;
+        }
         
-        // Fallback: Verwende die neue Methode
-        renderDrawdownChartToImage(drawdownChart, chartWidth, drawdownChartHeight, zoomFactor);
+        try {
+            LOGGER.info("Rendere Profit-Chart: " + chartWidth + "x" + profitChartHeight + 
+                       " (Zoom: " + zoomFactor + ")");
+            
+            // JFreeChart als BufferedImage rendern
+            BufferedImage bufferedImage = profitChart.createBufferedImage(
+                (int)(chartWidth * zoomFactor), 
+                (int)(profitChartHeight * zoomFactor),
+                BufferedImage.TYPE_INT_RGB,
+                null
+            );
+            
+            // BufferedImage zu SWT ImageData konvertieren
+            ImageData imageData = convertBufferedImageToImageData(bufferedImage);
+            
+            // Alte Image-Ressource freigeben
+            if (profitChartImage != null && !profitChartImage.isDisposed()) {
+                profitChartImage.dispose();
+            }
+            
+            // Neue SWT Image erstellen
+            profitChartImage = new Image(display, imageData);
+            
+            LOGGER.info("Profit-Chart erfolgreich gerendert");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Rendern des Profit-Charts", e);
+        }
     }
     
     /**
@@ -119,26 +184,30 @@ public class ChartImageRenderer {
     }
     
     /**
-     * Gibt die Chart-Images frei
+     * Gibt beide Chart-Images frei
      */
     public void disposeImages() {
         if (drawdownChartImage != null && !drawdownChartImage.isDisposed()) {
             drawdownChartImage.dispose();
+            LOGGER.fine("Drawdown-Chart Image disposed");
+        }
+        
+        if (profitChartImage != null && !profitChartImage.isDisposed()) {
+            profitChartImage.dispose();
+            LOGGER.fine("Profit-Chart Image disposed");
         }
     }
     
-    // Getter-Methoden - NUR DRAWDOWN
+    // Getter-Methoden - BEIDE CHARTS
     public Image getDrawdownChartImage() {
         return drawdownChartImage;
     }
     
     /**
-     * @deprecated Der Haupt-Chart wurde entfernt - verwende getDrawdownChartImage()
+     * NEU: Gibt das Profit-Chart Image zurück
      */
-    @Deprecated
-    public Image getMainChartImage() {
-        LOGGER.warning("getMainChartImage() aufgerufen - Haupt-Chart wurde entfernt!");
-        return null;
+    public Image getProfitChartImage() {
+        return profitChartImage;
     }
     
     public boolean hasValidDrawdownImage() {
@@ -146,10 +215,25 @@ public class ChartImageRenderer {
     }
     
     /**
-     * @deprecated Verwende hasValidDrawdownImage()
+     * NEU: Prüft ob ein gültiges Profit-Chart Image vorhanden ist
+     */
+    public boolean hasValidProfitImage() {
+        return profitChartImage != null && !profitChartImage.isDisposed();
+    }
+    
+    /**
+     * NEU: Prüft ob beide Images gültig sind
+     */
+    public boolean hasValidImages() {
+        return hasValidDrawdownImage() && hasValidProfitImage();
+    }
+    
+    /**
+     * @deprecated Der Haupt-Chart wurde entfernt - verwende hasValidDrawdownImage() oder hasValidProfitImage()
      */
     @Deprecated
-    public boolean hasValidImages() {
-        return hasValidDrawdownImage();
+    public Image getMainChartImage() {
+        LOGGER.warning("getMainChartImage() aufgerufen - Haupt-Chart wurde entfernt!");
+        return null;
     }
 }
