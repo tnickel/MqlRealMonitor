@@ -1,18 +1,26 @@
 package com.mql.realmonitor.gui;
 
+import java.time.format.DateTimeFormatter;
 import java.util.logging.Logger;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.Color;
+import org.eclipse.swt.graphics.Point;
+import org.eclipse.swt.layout.GridData;
+import org.eclipse.swt.layout.GridLayout;
+import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.MessageBox;
+import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.TableColumn;
 import org.eclipse.swt.widgets.TableItem;
+import org.eclipse.swt.widgets.Text;
 
 import com.mql.realmonitor.parser.SignalData;
 
 /**
  * Hilfsfunktionen für die SignalProviderTable
+ * ERWEITERT: Zusätzliche Funktionen für Chart-Übersicht
  * Enthält Berechnungen, Sortierung und Formatierung
  */
 public class ProviderTableHelper {
@@ -141,7 +149,7 @@ public class ProviderTableHelper {
         
         String lowerStatus = status.toLowerCase();
         
-        if (lowerStatus.contains("ok") || lowerStatus.contains("erfolg")) {
+        if (lowerStatus.contains("ok") || lowerStatus.contains("erfolg") || lowerStatus.contains("geladen")) {
             return parentGui.getGreenColor();
         } else if (lowerStatus.contains("error") || lowerStatus.contains("fehler")) {
             return parentGui.getRedColor();
@@ -188,6 +196,7 @@ public class ProviderTableHelper {
     
     /**
      * Vergleicht zwei Tabellen-Texte für Sortierung
+     * ERWEITERT: Bessere Datum/Zeit-Vergleiche für Chart-Übersicht
      * 
      * @param text1 Erster Text
      * @param text2 Zweiter Text
@@ -208,12 +217,25 @@ public class ProviderTableHelper {
             }
         }
         
+        // NEU: Spezielle Behandlung für Datum/Zeit (für Chart-Übersicht relevant)
+        if (columnIndex == COL_LAST_UPDATE) {
+            try {
+                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss");
+                java.time.LocalDateTime date1 = java.time.LocalDateTime.parse(text1, formatter);
+                java.time.LocalDateTime date2 = java.time.LocalDateTime.parse(text2, formatter);
+                return date1.compareTo(date2);
+            } catch (Exception e) {
+                // Fallback zu String-Vergleich
+            }
+        }
+        
         // Standard String-Vergleich
         return text1.compareToIgnoreCase(text2);
     }
     
     /**
      * Extrahiert eine Zahl aus formatiertem Text
+     * ERWEITERT: Robustere Zahlen-Extraktion für Chart-Übersicht
      * 
      * @param text Der formatierte Text
      * @return Die extrahierte Zahl
@@ -283,7 +305,7 @@ public class ProviderTableHelper {
     }
     
     /**
-     * Zeigt Details für einen Provider an
+     * ERWEITERT: Zeigt Details für einen Provider an (mit mehr Infos für Chart-Übersicht)
      * 
      * @param item Das Tabellen-Item
      * @param lastSignalData Map mit den letzten SignalData
@@ -294,7 +316,7 @@ public class ProviderTableHelper {
         SignalData signalData = lastSignalData.get(signalId);
         
         StringBuilder details = new StringBuilder();
-        details.append("Signal Provider Details\n\n");
+        details.append("=== SIGNAL PROVIDER DETAILS ===\n\n");
         details.append("Signal ID: ").append(signalId).append("\n");
         details.append("Provider Name: ").append(providerName).append("\n");
         details.append("Status: ").append(item.getText(COL_STATUS)).append("\n");
@@ -306,13 +328,58 @@ public class ProviderTableHelper {
         details.append("Letzte Aktualisierung: ").append(item.getText(COL_LAST_UPDATE)).append("\n");
         details.append("Änderung: ").append(item.getText(COL_CHANGE)).append("\n");
         
+        // NEU: Erweiterte Details für Chart-Übersicht
         if (signalData != null) {
-            details.append("\nZusätzliche Informationen:\n");
+            details.append("\n=== ERWEITERTE INFORMATIONEN ===\n");
             details.append("Vollständige URL: ").append(parentGui.getMonitor().getConfig().buildSignalUrl(signalId)).append("\n");
             details.append("Tick-Datei: ").append(parentGui.getMonitor().getConfig().getTickFilePath(signalId)).append("\n");
+            details.append("Vollständige Daten: ").append(signalData.getSummary()).append("\n");
         }
         
-        parentGui.showInfo("Signal Provider Details", details.toString());
+        // NEU: Details in eigenem scrollbaren Fenster anzeigen (besser für Chart-Übersicht)
+        showDetailedInfoWindow(signalId, details.toString());
+    }
+    
+    /**
+     * NEU: Zeigt Details in einem separaten scrollbaren Fenster an
+     * (Nützlich für Chart-Übersicht mit vielen Details)
+     * 
+     * @param signalId Die Signal-ID für den Fenstertitel
+     * @param detailsText Der Detail-Text
+     */
+    private void showDetailedInfoWindow(String signalId, String detailsText) {
+        Shell detailsShell = new Shell(parentGui.getShell(), SWT.DIALOG_TRIM | SWT.MODELESS | SWT.RESIZE);
+        detailsShell.setText("Signal Details - " + signalId);
+        detailsShell.setSize(600, 500);
+        detailsShell.setLayout(new GridLayout(1, false));
+        
+        Text detailsTextWidget = new Text(detailsShell, SWT.BORDER | SWT.MULTI | SWT.V_SCROLL | SWT.H_SCROLL | SWT.READ_ONLY);
+        detailsTextWidget.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        detailsTextWidget.setText(detailsText);
+        detailsTextWidget.setBackground(parentGui.getDisplay().getSystemColor(SWT.COLOR_WHITE));
+        
+        Button closeButton = new Button(detailsShell, SWT.PUSH);
+        closeButton.setText("Schließen");
+        closeButton.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, false, false));
+        closeButton.addSelectionListener(new org.eclipse.swt.events.SelectionAdapter() {
+            @Override
+            public void widgetSelected(org.eclipse.swt.events.SelectionEvent e) {
+                detailsShell.close();
+            }
+        });
+        
+        // Dialog zentrieren
+        Point parentLocation = parentGui.getShell().getLocation();
+        Point parentSize = parentGui.getShell().getSize();
+        Point dialogSize = detailsShell.getSize();
+        
+        int x = parentLocation.x + (parentSize.x - dialogSize.x) / 2;
+        int y = parentLocation.y + (parentSize.y - dialogSize.y) / 2;
+        detailsShell.setLocation(x, y);
+        
+        detailsShell.open();
+        
+        LOGGER.info("Detailliertes Info-Fenster angezeigt für Signal: " + signalId);
     }
     
     /**
@@ -328,5 +395,70 @@ public class ProviderTableHelper {
                              "Dies entfernt sie nur aus der Anzeige, nicht aus der Favoriten-Datei.");
         
         return confirmBox.open() == SWT.YES;
+    }
+    
+    /**
+     * NEU: Hilfsmethode um Provider-Daten aus der Tabelle zu extrahieren
+     * (Nützlich für Chart-Übersicht zum Laden aller Provider-Informationen)
+     * 
+     * @param table Die Provider-Tabelle
+     * @return Liste mit Provider-Daten als einfache Datenklasse
+     */
+    public java.util.List<ProviderInfo> extractProviderInfoFromTable(Table table) {
+        java.util.List<ProviderInfo> providerInfos = new java.util.ArrayList<>();
+        
+        if (table == null || table.isDisposed()) {
+            LOGGER.warning("Tabelle ist null oder disposed - kann Provider-Info nicht extrahieren");
+            return providerInfos;
+        }
+        
+        TableItem[] items = table.getItems();
+        LOGGER.info("Extrahiere Provider-Info aus " + items.length + " Tabellen-Einträgen");
+        
+        for (TableItem item : items) {
+            try {
+                String signalId = item.getText(COL_SIGNAL_ID);
+                String providerName = item.getText(COL_PROVIDER_NAME);
+                String status = item.getText(COL_STATUS);
+                
+                // Nur gültige Provider hinzufügen
+                if (signalId != null && !signalId.trim().isEmpty() && 
+                    providerName != null && !providerName.trim().isEmpty() &&
+                    !"Lädt...".equals(providerName)) {
+                    
+                    ProviderInfo info = new ProviderInfo(signalId, providerName, status);
+                    providerInfos.add(info);
+                    
+                    LOGGER.fine("Provider-Info extrahiert: " + signalId + " (" + providerName + ")");
+                }
+                
+            } catch (Exception e) {
+                LOGGER.warning("Fehler beim Extrahieren der Provider-Info: " + e.getMessage());
+            }
+        }
+        
+        LOGGER.info("Provider-Info-Extraktion abgeschlossen: " + providerInfos.size() + " gültige Einträge");
+        return providerInfos;
+    }
+    
+    /**
+     * NEU: Einfache Datenklasse für Provider-Informationen
+     * (Für Chart-Übersicht zum Transport der Provider-Daten)
+     */
+    public static class ProviderInfo {
+        public final String signalId;
+        public final String providerName;
+        public final String status;
+        
+        public ProviderInfo(String signalId, String providerName, String status) {
+            this.signalId = signalId;
+            this.providerName = providerName;
+            this.status = status;
+        }
+        
+        @Override
+        public String toString() {
+            return "ProviderInfo{signalId='" + signalId + "', providerName='" + providerName + "', status='" + status + "'}";
+        }
     }
 }

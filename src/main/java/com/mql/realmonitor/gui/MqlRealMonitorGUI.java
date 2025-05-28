@@ -20,8 +20,7 @@ import java.util.logging.Level;
 
 /**
  * Haupt-GUI für MqlRealMonitor
- * Verwaltet die SWT-Oberfläche mit Tabelle und Steuerelementen
- * GEÄNDERT: Intervall in Minuten + Vorladen der Favoriten beim Start
+ * ERWEITERT: Neuer "Chart-Übersicht" Button für Signalprovider-Overview
  */
 public class MqlRealMonitorGUI {
     
@@ -41,6 +40,7 @@ public class MqlRealMonitorGUI {
     private Button stopButton;
     private Button refreshButton;
     private Button configButton;
+    private Button overviewButton; // NEU: Chart-Übersicht Button
     private Text intervalText;
     private Label countLabel;
     
@@ -62,7 +62,7 @@ public class MqlRealMonitorGUI {
         
         this.statusUpdater = new StatusUpdater(this);
         
-        // NEU: Tabelle sofort beim Erstellen initialisieren
+        // Tabelle sofort beim Erstellen initialisieren
         initializeTableWithSavedData();
     }
     
@@ -134,13 +134,12 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * Erstellt die Toolbar mit Steuerelementen
-     * GEÄNDERT: Label von "Stunden" zu "Minuten"
+     * ERWEITERT: Erstellt die Toolbar mit neuem Chart-Übersicht Button
      */
     private void createToolbar() {
         Composite toolbar = new Composite(shell, SWT.NONE);
         toolbar.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
-        toolbar.setLayout(new GridLayout(10, false));
+        toolbar.setLayout(new GridLayout(11, false)); // ERWEITERT: 11 statt 10 Spalten
         
         // Start Button
         startButton = new Button(toolbar, SWT.PUSH);
@@ -180,14 +179,26 @@ public class MqlRealMonitorGUI {
             }
         });
         
-        // Interval Label - GEÄNDERT: von "Stunden" zu "Minuten"
+        // NEU: Chart-Übersicht Button
+        overviewButton = new Button(toolbar, SWT.PUSH);
+        overviewButton.setText("📊 Chart-Übersicht");
+        overviewButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        overviewButton.setToolTipText("Öffnet eine Übersicht aller Provider mit Drawdown- und Profit-Charts");
+        overviewButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                openChartOverview();
+            }
+        });
+        
+        // Interval Label
         Label intervalLabel = new Label(toolbar, SWT.NONE);
-        intervalLabel.setText("Intervall (min):");  // GEÄNDERT
+        intervalLabel.setText("Intervall (min):");
         intervalLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
         
-        // Interval Text - GEÄNDERT: Zeigt Minuten statt Stunden
+        // Interval Text
         intervalText = new Text(toolbar, SWT.BORDER | SWT.RIGHT);
-        intervalText.setText(String.valueOf(monitor.getConfig().getIntervalMinutes())); // GEÄNDERT
+        intervalText.setText(String.valueOf(monitor.getConfig().getIntervalMinutes()));
         intervalText.setLayoutData(new GridData(40, SWT.DEFAULT));
         intervalText.addModifyListener(e -> updateInterval());
         
@@ -220,6 +231,52 @@ public class MqlRealMonitorGUI {
                 showConfiguration();
             }
         });
+    }
+    
+    /**
+     * NEU: Öffnet die Chart-Übersicht für alle Signalprovider
+     */
+    private void openChartOverview() {
+        try {
+            LOGGER.info("=== ÖFFNE CHART-ÜBERSICHT ===");
+            
+            // Prüfe ob Provider-Daten vorhanden sind
+            if (providerTable == null || providerTable.getProviderCount() == 0) {
+                showInfo("Keine Provider", 
+                        "Es sind keine Signalprovider verfügbar.\n" +
+                        "Bitte starten Sie das Monitoring oder laden Sie Provider-Daten.");
+                return;
+            }
+            
+            // Deaktiviere Button temporär
+            overviewButton.setEnabled(false);
+            overviewButton.setText("Lädt...");
+            
+            // Übersichtsfenster erstellen und öffnen
+            SignalProviderOverviewWindow overviewWindow = new SignalProviderOverviewWindow(shell, this);
+            overviewWindow.open();
+            
+            LOGGER.info("Chart-Übersicht erfolgreich geöffnet");
+            
+            // Button nach kurzer Zeit wieder aktivieren
+            display.timerExec(2000, () -> {
+                if (!overviewButton.isDisposed()) {
+                    overviewButton.setEnabled(true);
+                    overviewButton.setText("📊 Chart-Übersicht");
+                }
+            });
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen der Chart-Übersicht", e);
+            showError("Fehler beim Öffnen der Chart-Übersicht", 
+                     "Konnte Chart-Übersicht nicht öffnen:\n" + e.getMessage());
+            
+            // Button wieder aktivieren
+            if (!overviewButton.isDisposed()) {
+                overviewButton.setEnabled(true);
+                overviewButton.setText("📊 Chart-Übersicht");
+            }
+        }
     }
     
     /**
@@ -324,7 +381,6 @@ public class MqlRealMonitorGUI {
     
     /**
      * Aktualisiert das Intervall
-     * GEÄNDERT: Arbeitet jetzt mit Minuten statt Stunden
      */
     private void updateInterval() {
         try {
@@ -332,8 +388,8 @@ public class MqlRealMonitorGUI {
             if (!text.isEmpty()) {
                 int interval = Integer.parseInt(text);
                 if (interval > 0) {
-                    monitor.getConfig().setIntervalMinutes(interval); // GEÄNDERT
-                    LOGGER.info("Intervall geändert auf: " + interval + " Minuten"); // GEÄNDERT
+                    monitor.getConfig().setIntervalMinutes(interval);
+                    LOGGER.info("Intervall geändert auf: " + interval + " Minuten");
                 }
             }
         } catch (NumberFormatException e) {
@@ -343,7 +399,6 @@ public class MqlRealMonitorGUI {
     
     /**
      * Zeigt die Konfiguration an
-     * GEÄNDERT: Zeigt Minuten statt Stunden
      */
     private void showConfiguration() {
         MessageBox box = new MessageBox(shell, SWT.ICON_INFORMATION | SWT.OK);
@@ -353,7 +408,7 @@ public class MqlRealMonitorGUI {
                       "Favoriten-Datei: " + monitor.getConfig().getFavoritesFile() + "\n" +
                       "Download-Verzeichnis: " + monitor.getConfig().getDownloadDir() + "\n" +
                       "Tick-Verzeichnis: " + monitor.getConfig().getTickDir() + "\n" +
-                      "Intervall: " + monitor.getConfig().getIntervalMinutes() + " Minuten"); // GEÄNDERT
+                      "Intervall: " + monitor.getConfig().getIntervalMinutes() + " Minuten");
         box.setText("Konfiguration");
         box.open();
     }
@@ -413,8 +468,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Initialisiert die Tabelle beim Start mit gespeicherten Daten
-     * Wird direkt im Konstruktor aufgerufen - kein Timer!
+     * Initialisiert die Tabelle beim Start mit gespeicherten Daten
      */
     private void initializeTableWithSavedData() {
         try {
@@ -529,8 +583,6 @@ public class MqlRealMonitorGUI {
     
     /**
      * Aktualisiert die Statusanzeige (Thread-sicher)
-     * 
-     * @param status Der neue Status-Text
      */
     public void updateStatus(String status) {
         if (display.isDisposed()) return;
@@ -545,8 +597,6 @@ public class MqlRealMonitorGUI {
     
     /**
      * Aktualisiert Provider-Daten (Thread-sicher)
-     * 
-     * @param signalData Die aktualisierten Signaldaten
      */
     public void updateProviderData(SignalData signalData) {
         if (display.isDisposed()) return;
@@ -561,9 +611,6 @@ public class MqlRealMonitorGUI {
     
     /**
      * Aktualisiert Provider-Status (Thread-sicher)
-     * 
-     * @param signalId Die Signal-ID
-     * @param status Der neue Status
      */
     public void updateProviderStatus(String signalId, String status) {
         if (display.isDisposed()) return;
@@ -587,9 +634,6 @@ public class MqlRealMonitorGUI {
     
     /**
      * Zeigt eine Fehlermeldung an
-     * 
-     * @param title Der Titel der Fehlermeldung
-     * @param message Die Fehlermeldung
      */
     public void showError(String title, String message) {
         if (display.isDisposed()) return;
@@ -606,9 +650,6 @@ public class MqlRealMonitorGUI {
     
     /**
      * Zeigt eine Informationsmeldung an
-     * 
-     * @param title Der Titel der Meldung
-     * @param message Die Meldung
      */
     public void showInfo(String title, String message) {
         if (display.isDisposed()) return;
@@ -696,5 +737,12 @@ public class MqlRealMonitorGUI {
     
     public MqlRealMonitor getMonitor() {
         return monitor;
+    }
+    
+    /**
+     * NEU: Gibt die SignalProviderTable zurück
+     */
+    public SignalProviderTable getProviderTable() {
+        return providerTable;
     }
 }
