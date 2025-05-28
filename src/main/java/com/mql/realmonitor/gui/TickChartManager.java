@@ -19,9 +19,9 @@ import org.jfree.data.time.TimeSeriesCollection;
 import com.mql.realmonitor.data.TickDataLoader;
 
 /**
- * ERWEITERT: Verwaltet jetzt sowohl Drawdown-Chart als auch Profit-Chart
+ * KORRIGIERT: Verwaltet jetzt sowohl Drawdown-Chart als auch Profit-Chart
  * Kombiniert beide Chart-Manager für eine einheitliche Verwaltung
- * Drawdown-Chart + NEU: Profit-Chart mit Kontostand und Gesamtwert
+ * ALLE X-ACHSEN PROBLEME BEHOBEN: Korrekte Domain-Achsen-Kalibrierung
  */
 public class TickChartManager {
     
@@ -173,7 +173,7 @@ public class TickChartManager {
     }
     
     /**
-     * VEREINFACHT: Aktualisiert nur den Drawdown-Chart (für Rückwärtskompatibilität)
+     * KORRIGIERT: Aktualisiert nur den Drawdown-Chart (für Rückwärtskompatibilität)
      */
     public void updateDrawdownChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         LOGGER.info("=== DRAWDOWN CHART UPDATE GESTARTET ===");
@@ -239,6 +239,9 @@ public class TickChartManager {
             
             // Y-Achsen-Bereich anpassen
             adjustDrawdownChartYAxisRangeRobust(filteredTicks);
+            
+            // KORRIGIERT: X-Achsen-Bereich anpassen
+            adjustDrawdownChartXAxisRange(filteredTicks);
             
             // Drawdown-Chart Farben aktualisieren
             updateDrawdownChartColors(filteredTicks);
@@ -444,11 +447,107 @@ public class TickChartManager {
         
         // SCHRITT 6: Y-Achsen-Bereich setzen
         plot.getRangeAxis().setRange(lowerBound, upperBound);
-        plot.getDomainAxis().setAutoRange(true);
         
         LOGGER.info("STRATEGIE ANGEWENDET: " + strategie);
         LOGGER.info("Y-ACHSEN-BEREICH GESETZT: " + String.format("%.6f%% bis %.6f%%", lowerBound, upperBound));
         LOGGER.info("=== ROBUSTE DRAWDOWN Y-ACHSEN ANPASSUNG ENDE ===");
+    }
+    
+    /**
+     * KORRIGIERT: INTELLIGENTE X-Achsen (Zeit) Kalibrierung für Drawdown-Chart
+     * Verhindert zu enge Zeitbereiche bei wenigen Datenpunkten
+     */
+    private void adjustDrawdownChartXAxisRange(List<TickDataLoader.TickData> filteredTicks) {
+        if (drawdownChart == null || filteredTicks.isEmpty()) {
+            LOGGER.warning("Kann Drawdown X-Achse nicht anpassen: Chart=" + (drawdownChart != null) + 
+                          ", Ticks=" + (filteredTicks != null ? filteredTicks.size() : "null"));
+            return;
+        }
+        
+        LOGGER.info("=== INTELLIGENTE DRAWDOWN X-ACHSEN KALIBRIERUNG START ===");
+        
+        XYPlot plot = drawdownChart.getXYPlot();
+        
+        // Zeitbereich der Daten ermitteln
+        java.time.LocalDateTime earliestTime = filteredTicks.get(0).getTimestamp();
+        java.time.LocalDateTime latestTime = filteredTicks.get(filteredTicks.size() - 1).getTimestamp();
+        
+        LOGGER.info("ZEIT-DATEN:");
+        LOGGER.info("  Anzahl Datenpunkte: " + filteredTicks.size());
+        LOGGER.info("  Früheste Zeit: " + earliestTime);
+        LOGGER.info("  Späteste Zeit: " + latestTime);
+        
+        // Zeitspanne in Millisekunden
+        long timeSpanMillis = java.time.Duration.between(earliestTime, latestTime).toMillis();
+        LOGGER.info("  Zeitspanne: " + timeSpanMillis + " ms");
+        
+        // Domain-Achse manuell kalibrieren
+        plot.getDomainAxis().setAutoRange(false);
+        
+        java.time.LocalDateTime displayStart, displayEnd;
+        
+        if (filteredTicks.size() == 1) {
+            // Ein Datenpunkt: Erstelle sinnvollen Zeitbereich um den Punkt
+            java.time.LocalDateTime centerTime = earliestTime;
+            
+            // Standardbereich: ±30 Minuten um den Datenpunkt
+            displayStart = centerTime.minusMinutes(30);
+            displayEnd = centerTime.plusMinutes(30);
+            
+            LOGGER.info("EIN DATENPUNKT - Erstelle 1-Stunden-Fenster um " + centerTime);
+            
+        } else if (timeSpanMillis < 60000) { // Weniger als 1 Minute
+            // Sehr kurze Zeitspanne: Erweitere auf mindestens 10 Minuten
+            java.time.LocalDateTime centerTime = earliestTime.plus(java.time.Duration.ofMillis(timeSpanMillis / 2));
+            displayStart = centerTime.minusMinutes(5);
+            displayEnd = centerTime.plusMinutes(5);
+            
+            LOGGER.info("KURZE ZEITSPANNE (" + timeSpanMillis + " ms) - Erweitere auf 10 Minuten");
+            
+        } else if (timeSpanMillis < 600000) { // Weniger als 10 Minuten
+            // Kurze Zeitspanne: Füge 25% Padding hinzu
+            long paddingMillis = timeSpanMillis / 4;
+            displayStart = earliestTime.minus(java.time.Duration.ofMillis(paddingMillis));
+            displayEnd = latestTime.plus(java.time.Duration.ofMillis(paddingMillis));
+            
+            LOGGER.info("MITTLERE ZEITSPANNE - 25% Padding hinzugefügt");
+            
+        } else {
+            // Normale Zeitspanne: Füge 10% Padding hinzu
+            long paddingMillis = timeSpanMillis / 10;
+            displayStart = earliestTime.minus(java.time.Duration.ofMillis(paddingMillis));
+            displayEnd = latestTime.plus(java.time.Duration.ofMillis(paddingMillis));
+            
+            LOGGER.info("NORMALE ZEITSPANNE - 10% Padding hinzugefügt");
+        }
+        
+        // KORRIGIERT: LocalDateTime zu Date konvertieren für JFreeChart
+        try {
+            java.util.Date startDate = java.util.Date.from(displayStart.atZone(java.time.ZoneId.systemDefault()).toInstant());
+            java.util.Date endDate = java.util.Date.from(displayEnd.atZone(java.time.ZoneId.systemDefault()).toInstant());
+            
+            // KORRIGIERT: Domain-Achse als DateAxis casten für setRange mit Dates
+            if (plot.getDomainAxis() instanceof org.jfree.chart.axis.DateAxis) {
+                org.jfree.chart.axis.DateAxis dateAxis = (org.jfree.chart.axis.DateAxis) plot.getDomainAxis();
+                dateAxis.setMinimumDate(startDate);
+                dateAxis.setMaximumDate(endDate);
+                LOGGER.info("=== DRAWDOWN X-ACHSEN-BEREICH MIT DATEAXIS ERFOLGREICH GESETZT ===");
+            } else {
+                // Fallback: Verwende setRange mit numerischen Werten
+                plot.getDomainAxis().setRange(startDate.getTime(), endDate.getTime());
+                LOGGER.info("=== DRAWDOWN X-ACHSEN-BEREICH MIT NUMERISCHEN WERTEN GESETZT ===");
+            }
+            
+            LOGGER.info("Anzeige von: " + displayStart);
+            LOGGER.info("Anzeige bis: " + displayEnd);
+            LOGGER.info("Sichtbare Zeitspanne: " + java.time.Duration.between(displayStart, displayEnd).toMinutes() + " Minuten");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "FEHLER beim Setzen des Drawdown X-Achsen-Bereichs - verwende Auto-Range", e);
+            plot.getDomainAxis().setAutoRange(true);
+        }
+        
+        LOGGER.info("=== INTELLIGENTE DRAWDOWN X-ACHSEN KALIBRIERUNG ENDE ===");
     }
     
     /**

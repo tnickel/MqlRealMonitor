@@ -19,8 +19,8 @@ import org.jfree.data.time.TimeSeriesCollection;
 import com.mql.realmonitor.data.TickDataLoader;
 
 /**
- * NEU: Verwaltet den Profit-Chart mit Kontostand (grün) und Gesamtwert (gelb)
- * Zeigt die Entwicklung des Profits und der Open Equity über die Zeit
+ * KORRIGIERT: Verwaltet den Profit-Chart mit Kontostand (grün) und Gesamtwert (gelb)
+ * ALLE X-ACHSEN PROBLEME BEHOBEN: Korrekte Domain-Achsen-Kalibrierung
  */
 public class ProfitChartManager {
     
@@ -126,7 +126,7 @@ public class ProfitChartManager {
     }
     
     /**
-     * Aktualisiert den Profit-Chart mit gefilterten Daten
+     * KORRIGIERT: Aktualisiert den Profit-Chart mit gefilterten Daten
      */
     public void updateProfitChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         updateCounter++;
@@ -210,6 +210,9 @@ public class ProfitChartManager {
             
             // Renderer für Profit-Chart anpassen basierend auf Datenpunkt-Anzahl
             adjustProfitChartRenderer(filteredTicks.size());
+            
+            // KORRIGIERT: X-Achsen-Bereich für bessere Sichtbarkeit anpassen
+            adjustProfitChartXAxisRange(filteredTicks);
             
             // Y-Achsen-Bereich für bessere Sichtbarkeit anpassen
             adjustProfitChartYAxisRangeRobust(filteredTicks);
@@ -441,7 +444,6 @@ public class ProfitChartManager {
         
         // SCHRITT 5: Y-Achsen-Bereich setzen
         plot.getRangeAxis().setRange(lowerBound, upperBound);
-        plot.getDomainAxis().setAutoRange(true);
         
         LOGGER.info("=== Y-ACHSEN-BEREICH FINAL GESETZT ===");
         LOGGER.info("Bereich: " + String.format("%.6f bis %.6f", lowerBound, upperBound));
@@ -452,7 +454,7 @@ public class ProfitChartManager {
     }
     
     /**
-     * INTELLIGENTE X-Achsen (Zeit) Kalibrierung für Profit-Chart
+     * KORRIGIERT: INTELLIGENTE X-Achsen (Zeit) Kalibrierung für Profit-Chart
      * Verhindert zu enge Zeitbereiche bei wenigen Datenpunkten
      */
     private void adjustProfitChartXAxisRange(List<TickDataLoader.TickData> filteredTicks) {
@@ -519,17 +521,32 @@ public class ProfitChartManager {
             LOGGER.info("NORMALE ZEITSPANNE - 10% Padding hinzugefügt");
         }
         
-        // LocalDateTime zu Date konvertieren für JFreeChart
-        java.util.Date startDate = java.util.Date.from(displayStart.atZone(java.time.ZoneId.systemDefault()).toInstant());
-        java.util.Date endDate = java.util.Date.from(displayEnd.atZone(java.time.ZoneId.systemDefault()).toInstant());
+        // KORRIGIERT: LocalDateTime zu Date konvertieren für JFreeChart
+        try {
+            java.util.Date startDate = java.util.Date.from(displayStart.atZone(java.time.ZoneId.systemDefault()).toInstant());
+            java.util.Date endDate = java.util.Date.from(displayEnd.atZone(java.time.ZoneId.systemDefault()).toInstant());
+            
+            // KORRIGIERT: Domain-Achse als DateAxis casten für setRange mit Dates
+            if (plot.getDomainAxis() instanceof org.jfree.chart.axis.DateAxis) {
+                org.jfree.chart.axis.DateAxis dateAxis = (org.jfree.chart.axis.DateAxis) plot.getDomainAxis();
+                dateAxis.setMinimumDate(startDate);
+                dateAxis.setMaximumDate(endDate);
+                LOGGER.info("=== X-ACHSEN-BEREICH MIT DATEAXIS ERFOLGREICH GESETZT ===");
+            } else {
+                // Fallback: Verwende setRange mit numerischen Werten
+                plot.getDomainAxis().setRange(startDate.getTime(), endDate.getTime());
+                LOGGER.info("=== X-ACHSEN-BEREICH MIT NUMERISCHEN WERTEN GESETZT ===");
+            }
+            
+            LOGGER.info("Anzeige von: " + displayStart);
+            LOGGER.info("Anzeige bis: " + displayEnd);
+            LOGGER.info("Sichtbare Zeitspanne: " + java.time.Duration.between(displayStart, displayEnd).toMinutes() + " Minuten");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "FEHLER beim Setzen des X-Achsen-Bereichs - verwende Auto-Range", e);
+            plot.getDomainAxis().setAutoRange(true);
+        }
         
-        // Domain-Bereich setzen
-        plot.getDomainAxis().setRange(startDate, endDate);
-        
-        LOGGER.info("=== X-ACHSEN-BEREICH GESETZT ===");
-        LOGGER.info("Anzeige von: " + displayStart);
-        LOGGER.info("Anzeige bis: " + displayEnd);
-        LOGGER.info("Sichtbare Zeitspanne: " + java.time.Duration.between(displayStart, displayEnd).toMinutes() + " Minuten");
         LOGGER.info("=== INTELLIGENTE PROFIT X-ACHSEN KALIBRIERUNG ENDE ===");
     }
     

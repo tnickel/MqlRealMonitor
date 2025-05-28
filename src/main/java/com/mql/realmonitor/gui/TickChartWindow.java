@@ -20,8 +20,8 @@ import com.mql.realmonitor.data.TickDataLoader;
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * ERWEITERT: Tick Chart Window mit BEIDEN Charts (Drawdown + Profit) und Scrolling
- * NEUE FEATURES: Scrollbares Layout, Profit-Chart, verbesserte Diagnostik
+ * ERWEITERT: Tick Chart Window mit BEIDEN Charts (Drawdown + Profit), Scrolling und TICKDATEN-BUTTON
+ * NEUE FEATURES: Scrollbares Layout, Profit-Chart, verbesserte Diagnostik, Tickdaten-Anzeige
  */
 public class TickChartWindow {
     
@@ -41,6 +41,7 @@ public class TickChartWindow {
     private Button zoomOutButton;
     private Button resetZoomButton;
     private Button diagnosticButton;
+    private Button tickDataButton;              // NEU: Tickdaten-Button
     
     // Zeitintervall-Buttons
     private Button[] timeScaleButtons;
@@ -92,7 +93,7 @@ public class TickChartWindow {
         this.chartManager = new TickChartManager(signalId, providerName);
         this.imageRenderer = new ChartImageRenderer(display);
         
-        LOGGER.info("=== ERWEITERTE CHART WINDOW ERSTELLT (DRAWDOWN + PROFIT) ===");
+        LOGGER.info("=== ERWEITERTE CHART WINDOW ERSTELLT (DRAWDOWN + PROFIT + TICKDATEN) ===");
         LOGGER.info("Signal: " + signalId + " (" + providerName + ")");
         LOGGER.info("Tick-Datei: " + tickFilePath);
         LOGGER.info("Chart-Dimensionen: " + chartWidth + "x" + drawdownChartHeight + " + " + chartWidth + "x" + profitChartHeight);
@@ -106,7 +107,7 @@ public class TickChartWindow {
      */
     private void createWindow(Shell parent) {
         shell = new Shell(parent, SWT.SHELL_TRIM | SWT.MODELESS);
-        shell.setText("Charts - " + signalId + " (" + providerName + ") [DRAWDOWN + PROFIT]");
+        shell.setText("Charts - " + signalId + " (" + providerName + ") [DRAWDOWN + PROFIT + TICKDATEN]");
         shell.setSize(1000, 900); // GEÄNDERT: Größer für beide Charts
         shell.setLayout(new GridLayout(1, false));
         
@@ -140,7 +141,7 @@ public class TickChartWindow {
      */
     private void createInfoPanel() {
         Group infoGroup = new Group(shell, SWT.NONE);
-        infoGroup.setText("Signal Information (DRAWDOWN + PROFIT CHARTS)");
+        infoGroup.setText("Signal Information (DRAWDOWN + PROFIT CHARTS + TICKDATEN)");
         infoGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         infoGroup.setLayout(new GridLayout(2, false));
         
@@ -291,12 +292,12 @@ public class TickChartWindow {
     }
     
     /**
-     * Erstellt das Button-Panel
+     * ERWEITERT: Erstellt das Button-Panel mit Tickdaten-Button
      */
     private void createButtonPanel() {
         Composite buttonComposite = new Composite(shell, SWT.NONE);
         buttonComposite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
-        buttonComposite.setLayout(new GridLayout(7, false));
+        buttonComposite.setLayout(new GridLayout(8, false)); // GEÄNDERT: von 7 auf 8 für neuen Button
         
         refreshButton = new Button(buttonComposite, SWT.PUSH);
         refreshButton.setText("Aktualisieren");
@@ -306,6 +307,12 @@ public class TickChartWindow {
         diagnosticButton.setText("Diagnostik");
         diagnosticButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
         diagnosticButton.setToolTipText("Zeigt detaillierte Diagnostik-Informationen");
+        
+        // NEU: Tickdaten-Button
+        tickDataButton = new Button(buttonComposite, SWT.PUSH);
+        tickDataButton.setText("Tickdaten");
+        tickDataButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        tickDataButton.setToolTipText("Zeigt die rohen Tickdaten aus der Datei");
         
         zoomInButton = new Button(buttonComposite, SWT.PUSH);
         zoomInButton.setText("Zoom +");
@@ -328,7 +335,7 @@ public class TickChartWindow {
     }
     
     /**
-     * ERWEITERT: Setup Event Handler für beide Charts
+     * ERWEITERT: Setup Event Handler für beide Charts + Tickdaten-Button
      */
     private void setupEventHandlers() {
         refreshButton.addSelectionListener(new SelectionAdapter() {
@@ -342,6 +349,14 @@ public class TickChartWindow {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 showDiagnosticReport();
+            }
+        });
+        
+        // NEU: Event Handler für Tickdaten-Button
+        tickDataButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                showTickDataWindow();
             }
         });
         
@@ -385,6 +400,34 @@ public class TickChartWindow {
     }
     
     /**
+     * NEU: Öffnet das Tickdaten-Fenster mit den rohen Daten aus der Datei
+     */
+    private void showTickDataWindow() {
+        try {
+            LOGGER.info("=== TICKDATEN-FENSTER ANGEFORDERT für Signal: " + signalId + " ===");
+            LOGGER.info("Tickdaten-Datei: " + tickFilePath);
+            
+            // Erstelle TickDataDisplayWindow-Instanz
+            TickDataDisplayWindow tickDataWindow = new TickDataDisplayWindow(parentGui);
+            
+            // Öffne das Tickdaten-Fenster
+            tickDataWindow.showTickDataWindow(signalId, providerName);
+            
+            LOGGER.info("Tickdaten-Fenster erfolgreich geöffnet für Signal: " + signalId);
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen des Tickdaten-Fensters für Signal: " + signalId, e);
+            
+            // Zeige Fehlermeldung
+            MessageBox errorBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
+            errorBox.setText("Fehler beim Öffnen der Tickdaten");
+            errorBox.setMessage("Konnte Tickdaten-Fenster für Signal " + signalId + " nicht öffnen:\n\n" + 
+                               e.getMessage() + "\n\nTick-Datei: " + tickFilePath);
+            errorBox.open();
+        }
+    }
+    
+    /**
      * ERWEITERT: Zeigt einen detaillierten Diagnostik-Bericht für beide Charts
      */
     private void showDiagnosticReport() {
@@ -402,7 +445,7 @@ public class TickChartWindow {
         report.append("Refresh Counter: ").append(refreshCounter).append("\n");
         report.append("Data Loaded: ").append(isDataLoaded).append("\n");
         report.append("Zoom Factor: ").append(zoomFactor).append("\n");
-        report.append("Chart Typ: DRAWDOWN + PROFIT (DUAL-CHART)\n\n");
+        report.append("Chart Typ: DRAWDOWN + PROFIT (DUAL-CHART) + TICKDATEN\n\n");
         
         // SignalData Info
         report.append("SIGNALDATA:\n");
@@ -445,7 +488,7 @@ public class TickChartWindow {
         }
         report.append("\n");
         
-        // ERWEITERT: Chart Status für beide Charts
+        // ERWEITERT: Chart Status für beide Charts + Tickdaten
         report.append("CHARTS STATUS:\n");
         report.append("ChartManager: ").append(chartManager != null ? "OK" : "NULL").append("\n");
         report.append("ImageRenderer: ").append(imageRenderer != null ? "OK" : "NULL").append("\n");
@@ -453,6 +496,7 @@ public class TickChartWindow {
         report.append("HasValidProfitImage: ").append(imageRenderer != null ? imageRenderer.hasValidProfitImage() : "N/A").append("\n");
         report.append("Canvas Größen: ").append(chartWidth).append("x").append(drawdownChartHeight).append(" + ").append(chartWidth).append("x").append(profitChartHeight).append("\n");
         report.append("Scroll-Container: ").append(scrolledComposite != null && !scrolledComposite.isDisposed() ? "OK" : "FEHLER").append("\n");
+        report.append("Tickdaten-Button: ").append(tickDataButton != null && !tickDataButton.isDisposed() ? "OK" : "FEHLER").append("\n");
         
         // Zeige Bericht in einem neuen Dialog
         Shell diagnosticShell = new Shell(shell, SWT.DIALOG_TRIM | SWT.MODELESS | SWT.RESIZE);
@@ -671,7 +715,7 @@ public class TickChartWindow {
                     }
                 });
             }
-        }, "TickDataLoader-DualChart-" + signalId).start();
+        }, "TickDataLoader-DualChart-Tickdaten-" + signalId).start();
     }
     
     /**
@@ -734,19 +778,20 @@ public class TickChartWindow {
      * Zeigt initialen Info-Text
      */
     private void updateInfoPanelInitial() {
-        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt... [DUAL-CHART-MODUS]";
+        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt... [DUAL-CHART-MODUS + TICKDATEN]";
         infoLabel.setText(info);
-        detailsText.setText("=== DUAL-CHART-MODUS AKTIV ===\n" +
+        detailsText.setText("=== DUAL-CHART-MODUS + TICKDATEN AKTIV ===\n" +
                            "Tick-Daten werden geladen...\n" +
                            "Tick-Datei: " + tickFilePath + "\n" +
                            "CHART 1: Drawdown-Chart (Magenta)\n" +
                            "CHART 2: Profit-Chart (Grün: Kontostand, Gelb: Gesamtwert)\n" +
+                           "TICKDATEN: Button für rohe Datenansicht verfügbar\n" +
                            "Fenster ist scrollbar für beide Charts.\n" +
                            "Bitte warten Sie einen Moment.");
     }
     
     /**
-     * ERWEITERT: Aktualisiert das Info-Panel für beide Charts
+     * ERWEITERT: Aktualisiert das Info-Panel für beide Charts + Tickdaten
      */
     private void updateInfoPanel() {
         StringBuilder info = new StringBuilder();
@@ -766,11 +811,12 @@ public class TickChartWindow {
         
         StringBuilder details = new StringBuilder();
         
-        details.append("=== DUAL-CHART-MODUS - DETAILLIERTE INFORMATIONEN ===\n");
+        details.append("=== DUAL-CHART-MODUS + TICKDATEN - DETAILLIERTE INFORMATIONEN ===\n");
         details.append("Zeitintervall: ").append(currentTimeScale.getLabel())
                .append(" (letzte ").append(currentTimeScale.getDisplayMinutes()).append(" Minuten)\n");
         details.append("Chart 1: Drawdown-Chart (robuste Auto-Skalierung)\n");
         details.append("Chart 2: Profit-Chart (Grün: Kontostand, Gelb: Gesamtwert)\n");
+        details.append("Tickdaten: Button für scrollbare Rohdaten-Anzeige\n");
         details.append("Layout: Scrollbar für beide Charts vertikal\n");
         details.append("Tick-Datei: ").append(tickFilePath).append("\n");
         
@@ -807,6 +853,7 @@ public class TickChartWindow {
                     details.append("\n=== CHART STATUS ===\n");
                     details.append("Drawdown-Chart: ").append(imageRenderer != null && imageRenderer.hasValidDrawdownImage() ? "OK" : "FEHLER").append("\n");
                     details.append("Profit-Chart: ").append(imageRenderer != null && imageRenderer.hasValidProfitImage() ? "OK" : "FEHLER").append("\n");
+                    details.append("Tickdaten-Button: ").append(tickDataButton != null && !tickDataButton.isDisposed() ? "OK" : "FEHLER").append("\n");
                 }
             } else {
                 details.append("PROBLEM: filteredTicks ist NULL!\n");
@@ -819,11 +866,12 @@ public class TickChartWindow {
         details.append("Chart-Dimensionen: ").append(chartWidth).append("x").append(drawdownChartHeight).append(" + ").append(chartWidth).append("x").append(profitChartHeight).append("\n");
         details.append("Refresh Counter: ").append(refreshCounter).append("\n");
         details.append("\nKlicken Sie auf 'Diagnostik' für vollständigen Bericht.\n");
+        details.append("Klicken Sie auf 'Tickdaten' für scrollbare Rohdaten-Anzeige.\n");
         
         detailsText.setText(details.toString());
         
         if (shell != null && !shell.isDisposed()) {
-            shell.setText("Charts - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [DUAL #" + refreshCounter + "]");
+            shell.setText("Charts - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [DUAL+TICKDATEN #" + refreshCounter + "]");
         }
     }
     
@@ -831,14 +879,15 @@ public class TickChartWindow {
      * Zeigt "Keine Daten"-Nachricht
      */
     private void showNoDataMessage() {
-        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten verfügbar [DUAL-CHART-MODUS]");
+        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten verfügbar [DUAL-CHART-MODUS + TICKDATEN]");
         detailsText.setText("=== KEINE TICK-DATEN GEFUNDEN ===\n" +
                            "Datei: " + tickFilePath + "\n" +
                            "Mögliche Ursachen:\n" +
                            "- Datei ist leer\n" +
                            "- Datei hat ungültiges Format\n" +
                            "- Noch keine Daten für dieses Signal gesammelt\n\n" +
-                           "Prüfen Sie die Datei manuell oder warten Sie auf neue Daten.");
+                           "Prüfen Sie die Datei manuell oder warten Sie auf neue Daten.\n" +
+                           "Der Tickdaten-Button zeigt den Dateiinhalt auch bei leeren Charts an.");
         drawdownCanvas.redraw();
         profitCanvas.redraw();
     }
@@ -847,18 +896,19 @@ public class TickChartWindow {
      * Zeigt Fehlermeldung
      */
     private void showErrorMessage(String message) {
-        infoLabel.setText("Signal ID: " + signalId + " - Fehler beim Laden [DUAL-CHART-MODUS]");
+        infoLabel.setText("Signal ID: " + signalId + " - Fehler beim Laden [DUAL-CHART-MODUS + TICKDATEN]");
         detailsText.setText("=== FEHLER BEIM LADEN DER TICK-DATEN ===\n" +
                            "FEHLER: " + message + "\n\n" +
                            "Tick-Datei: " + tickFilePath + "\n\n" +
                            "Prüfen Sie:\n" +
                            "- Existiert die Datei?\n" +
                            "- Sind die Berechtigungen korrekt?\n" +
-                           "- Ist die Datei nicht beschädigt?");
+                           "- Ist die Datei nicht beschädigt?\n\n" +
+                           "Der Tickdaten-Button kann trotzdem versuchen, die Datei zu lesen.");
         
         MessageBox errorBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
         errorBox.setText("Fehler beim Laden der Tick-Daten");
-        errorBox.setMessage("DUAL-CHART-MODUS:\n\n" + message + "\n\nSiehe Details-Panel für weitere Informationen.");
+        errorBox.setMessage("DUAL-CHART-MODUS + TICKDATEN:\n\n" + message + "\n\nSiehe Details-Panel für weitere Informationen.\n\nDer Tickdaten-Button ist weiterhin verfügbar.");
         errorBox.open();
     }
     
@@ -892,7 +942,7 @@ public class TickChartWindow {
     private void closeWindow() {
         isWindowClosed = true;
         
-        LOGGER.info("=== SCHLIESSE DUAL CHART WINDOW für Signal: " + signalId + " ===");
+        LOGGER.info("=== SCHLIESSE DUAL CHART WINDOW + TICKDATEN für Signal: " + signalId + " ===");
         LOGGER.info("Refresh Counter final: " + refreshCounter);
         
         // Ressourcen freigeben
@@ -910,7 +960,7 @@ public class TickChartWindow {
      */
     public void open() {
         shell.open();
-        LOGGER.info("DualChartWindow (DRAWDOWN + PROFIT) geöffnet für Signal: " + signalId);
+        LOGGER.info("DualChartWindow (DRAWDOWN + PROFIT + TICKDATEN) geöffnet für Signal: " + signalId);
     }
     
     /**
