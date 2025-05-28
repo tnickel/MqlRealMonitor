@@ -1,5 +1,7 @@
 package com.mql.realmonitor.gui;
 
+import java.awt.Desktop;
+import java.net.URI;
 import java.util.Map;
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -11,14 +13,15 @@ import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.swt.widgets.MessageBox;
 import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.TableItem;
 
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * Verwaltet das Kontextmenü für die SignalProviderTable
- * Enthält alle Menü-Aktionen und Event-Handler
+ * ERWEITERT: Verwaltet das Kontextmenü für die SignalProviderTable
+ * NEU: MQL5 Website-Link zum direkten Öffnen der Signalprovider-Seite
  */
 public class SignalProviderContextMenu {
     
@@ -41,10 +44,6 @@ public class SignalProviderContextMenu {
     
     /**
      * Setzt die Callback-Funktionen für Tabellen-Operationen
-     * 
-     * @param updateProviderStatus Callback für Status-Updates
-     * @param getLastSignalData Callback für SignalData-Zugriff
-     * @param removeFromMapping Callback für das Entfernen aus der Mapping
      */
     public void setCallbacks(java.util.function.Consumer<String> updateProviderStatus,
                            java.util.function.Supplier<Map<String, SignalData>> getLastSignalData,
@@ -56,8 +55,6 @@ public class SignalProviderContextMenu {
     
     /**
      * Konfiguriert das Tabellenverhalten mit Kontextmenü und Doppelklick
-     * 
-     * @param table Die Tabelle
      */
     public void setupTableBehavior(Table table) {
         // Doppelklick für Tick-Chart
@@ -77,15 +74,17 @@ public class SignalProviderContextMenu {
     }
     
     /**
-     * Erstellt das Kontextmenü für die Tabelle
-     * 
-     * @param table Die Tabelle
-     * @return Das erstellte Kontextmenü
+     * ERWEITERT: Erstellt das Kontextmenü mit MQL5 Website-Link
      */
     private Menu createContextMenu(Table table) {
         Menu contextMenu = new Menu(table);
         
-        // Menü-Items erstellen
+        // NEU: MQL5 Website öffnen - GANZ OBEN für bessere Sichtbarkeit
+        createMql5WebsiteMenuItem(contextMenu, table);
+        
+        new MenuItem(contextMenu, SWT.SEPARATOR);
+        
+        // Bestehende Menü-Items
         createRefreshMenuItem(contextMenu, table);
         createDetailsMenuItem(contextMenu, table);
         
@@ -99,6 +98,139 @@ public class SignalProviderContextMenu {
         createRemoveMenuItem(contextMenu, table);
         
         return contextMenu;
+    }
+    
+    /**
+     * NEU: Erstellt das "MQL5 Website öffnen" Menü-Item
+     */
+    private void createMql5WebsiteMenuItem(Menu contextMenu, Table table) {
+        MenuItem websiteItem = new MenuItem(contextMenu, SWT.PUSH);
+        websiteItem.setText("🌐 MQL5 Website öffnen");
+        websiteItem.setToolTipText("Öffnet die MQL5-Seite des Signalproviders im Browser");
+        
+        websiteItem.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                openMql5Website(table);
+            }
+        });
+        
+        LOGGER.info("MQL5 Website-Menüeintrag erstellt");
+    }
+    
+    /**
+     * NEU: Öffnet die MQL5-Website für den ausgewählten Signalprovider
+     */
+    private void openMql5Website(Table table) {
+        TableItem[] selectedItems = table.getSelection();
+        
+        if (selectedItems.length == 0) {
+            showInfoMessage("Keine Auswahl", "Bitte wählen Sie einen Signalprovider aus.");
+            return;
+        }
+        
+        if (selectedItems.length > 1) {
+            showInfoMessage("Mehrfachauswahl", 
+                          "Bitte wählen Sie nur einen Signalprovider aus, um dessen MQL5-Seite zu öffnen.");
+            return;
+        }
+        
+        TableItem selectedItem = selectedItems[0];
+        String signalId = selectedItem.getText(ProviderTableHelper.COL_SIGNAL_ID);
+        String providerName = selectedItem.getText(ProviderTableHelper.COL_PROVIDER_NAME);
+        
+        try {
+            LOGGER.info("=== ÖFFNE MQL5 WEBSITE für Signal: " + signalId + " ===");
+            
+            // URL aus der Konfiguration erstellen
+            String websiteUrl = parentGui.getMonitor().getConfig().buildSignalUrl(signalId);
+            LOGGER.info("Generierte URL: " + websiteUrl);
+            
+            // Bestätigungsdialog anzeigen
+            if (showWebsiteConfirmationDialog(signalId, providerName, websiteUrl)) {
+                openUrlInBrowser(websiteUrl);
+                LOGGER.info("MQL5 Website erfolgreich geöffnet für Signal: " + signalId);
+            } else {
+                LOGGER.info("Benutzer hat das Öffnen der Website abgebrochen");
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen der MQL5-Website für Signal: " + signalId, e);
+            showErrorMessage("Fehler beim Öffnen der Website", 
+                           "Konnte MQL5-Website für Signal " + signalId + " nicht öffnen:\n\n" + 
+                           e.getMessage() + "\n\nBitte kopieren Sie die URL manuell:\n" + 
+                           parentGui.getMonitor().getConfig().buildSignalUrl(signalId));
+        }
+    }
+    
+    /**
+     * NEU: Zeigt Bestätigungsdialog vor dem Öffnen der Website
+     */
+    private boolean showWebsiteConfirmationDialog(String signalId, String providerName, String url) {
+        MessageBox confirmBox = new MessageBox(parentGui.getShell(), SWT.ICON_QUESTION | SWT.YES | SWT.NO);
+        confirmBox.setText("MQL5 Website öffnen");
+        
+        StringBuilder message = new StringBuilder();
+        message.append("MQL5-Seite des Signalproviders im Browser öffnen?\n\n");
+        message.append("Signal ID: ").append(signalId).append("\n");
+        message.append("Provider: ").append(providerName).append("\n\n");
+        message.append("URL: ").append(url).append("\n\n");
+        message.append("Diese Aktion öffnet Ihren Standard-Webbrowser.");
+        
+        confirmBox.setMessage(message.toString());
+        
+        return confirmBox.open() == SWT.YES;
+    }
+    
+    /**
+     * NEU: Öffnet eine URL im Standard-Browser
+     */
+    private void openUrlInBrowser(String url) throws Exception {
+        LOGGER.info("Versuche URL im Browser zu öffnen: " + url);
+        
+        // Versuche Desktop.browse() - Moderner Ansatz
+        if (Desktop.isDesktopSupported()) {
+            Desktop desktop = Desktop.getDesktop();
+            
+            if (desktop.isSupported(Desktop.Action.BROWSE)) {
+                URI uri = new URI(url);
+                desktop.browse(uri);
+                LOGGER.info("URL erfolgreich mit Desktop.browse() geöffnet");
+                return;
+            }
+        }
+        
+        // Fallback: System-spezifische Kommandos
+        String os = System.getProperty("os.name").toLowerCase();
+        LOGGER.info("Desktop.browse() nicht verfügbar, verwende OS-spezifischen Ansatz: " + os);
+        
+        ProcessBuilder processBuilder;
+        
+        if (os.contains("win")) {
+            // Windows
+            processBuilder = new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url);
+        } else if (os.contains("mac")) {
+            // macOS
+            processBuilder = new ProcessBuilder("open", url);
+        } else {
+            // Linux/Unix
+            processBuilder = new ProcessBuilder("xdg-open", url);
+        }
+        
+        Process process = processBuilder.start();
+        
+        // Warte kurz und prüfe Exit-Code
+        boolean finished = process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+        if (finished) {
+            int exitCode = process.exitValue();
+            if (exitCode == 0) {
+                LOGGER.info("URL erfolgreich mit OS-Kommando geöffnet (Exit-Code: " + exitCode + ")");
+            } else {
+                LOGGER.warning("OS-Kommando beendet mit Exit-Code: " + exitCode);
+            }
+        } else {
+            LOGGER.info("OS-Kommando läuft noch (normal für Browser-Start)");
+        }
     }
     
     /**
@@ -172,18 +304,18 @@ public class SignalProviderContextMenu {
     }
     
     /**
-     * Zeigt Tickdaten für ausgewählte Provider in einem separaten Textfenster an
+     * Zeigt Tickdaten für ausgewählte Provider
      */
     private void showTickDataForSelected(Table table) {
         TableItem[] selectedItems = table.getSelection();
         
         if (selectedItems.length == 0) {
-            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen Provider aus.");
+            showInfoMessage("Keine Auswahl", "Bitte wählen Sie einen Provider aus.");
             return;
         }
         
         if (selectedItems.length > 1) {
-            parentGui.showInfo("Mehrfachauswahl", "Bitte wählen Sie nur einen Provider für die Tickdaten-Anzeige aus.");
+            showInfoMessage("Mehrfachauswahl", "Bitte wählen Sie nur einen Provider für die Tickdaten-Anzeige aus.");
             return;
         }
         
@@ -196,8 +328,6 @@ public class SignalProviderContextMenu {
     
     /**
      * Öffnet das Tick-Chart für eine Tabellenzeile
-     * 
-     * @param item Das Tabellen-Item
      */
     private void openTickChart(TableItem item) {
         String signalId = item.getText(ProviderTableHelper.COL_SIGNAL_ID);
@@ -207,15 +337,13 @@ public class SignalProviderContextMenu {
         SignalData signalData = lastSignalData.get(signalId);
         
         if (signalData == null) {
-            parentGui.showError("Fehler", "Keine Signaldaten für " + signalId + " verfügbar.");
+            showErrorMessage("Fehler", "Keine Signaldaten für " + signalId + " verfügbar.");
             return;
         }
         
-        // Tick-Datei-Pfad erstellen
         String tickFilePath = parentGui.getMonitor().getConfig().getTickFilePath(signalId);
         
         try {
-            // Tick-Chart-Fenster öffnen
             TickChartWindow chartWindow = new TickChartWindow(
                 parentGui.getShell(), 
                 parentGui, 
@@ -230,8 +358,8 @@ public class SignalProviderContextMenu {
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler beim Öffnen des Tick-Charts: " + e.getMessage(), e);
-            parentGui.showError("Fehler beim Öffnen des Tick-Charts", 
-                               "Konnte Tick-Chart für " + signalId + " nicht öffnen:\n" + e.getMessage());
+            showErrorMessage("Fehler beim Öffnen des Tick-Charts", 
+                           "Konnte Tick-Chart für " + signalId + " nicht öffnen:\n" + e.getMessage());
         }
     }
     
@@ -242,12 +370,12 @@ public class SignalProviderContextMenu {
         TableItem[] selectedItems = table.getSelection();
         
         if (selectedItems.length == 0) {
-            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen Provider aus.");
+            showInfoMessage("Keine Auswahl", "Bitte wählen Sie einen Provider aus.");
             return;
         }
         
         if (selectedItems.length > 1) {
-            parentGui.showInfo("Mehrfachauswahl", "Bitte wählen Sie nur einen Provider für das Tick-Chart aus.");
+            showInfoMessage("Mehrfachauswahl", "Bitte wählen Sie nur einen Provider für das Tick-Chart aus.");
             return;
         }
         
@@ -261,7 +389,7 @@ public class SignalProviderContextMenu {
         TableItem[] selectedItems = table.getSelection();
         
         if (selectedItems.length == 0) {
-            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen oder mehrere Provider aus.");
+            showInfoMessage("Keine Auswahl", "Bitte wählen Sie einen oder mehrere Provider aus.");
             return;
         }
         
@@ -270,7 +398,6 @@ public class SignalProviderContextMenu {
             updateProviderStatus.accept(signalId + ":Aktualisiere...");
         }
         
-        // Manuellen Refresh triggern
         parentGui.getMonitor().manualRefresh();
     }
     
@@ -281,7 +408,7 @@ public class SignalProviderContextMenu {
         TableItem[] selectedItems = table.getSelection();
         
         if (selectedItems.length == 0) {
-            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen Provider aus.");
+            showInfoMessage("Keine Auswahl", "Bitte wählen Sie einen Provider aus.");
             return;
         }
         
@@ -309,7 +436,7 @@ public class SignalProviderContextMenu {
                    .append("\n");
         }
         
-        parentGui.showInfo("Ausgewählte Provider", summary.toString());
+        showInfoMessage("Ausgewählte Provider", summary.toString());
     }
     
     /**
@@ -319,7 +446,7 @@ public class SignalProviderContextMenu {
         TableItem[] selectedItems = table.getSelection();
         
         if (selectedItems.length == 0) {
-            parentGui.showInfo("Keine Auswahl", "Bitte wählen Sie einen oder mehrere Provider aus.");
+            showInfoMessage("Keine Auswahl", "Bitte wählen Sie einen oder mehrere Provider aus.");
             return;
         }
         
@@ -335,9 +462,21 @@ public class SignalProviderContextMenu {
     }
     
     /**
+     * NEU: Hilfsmethode für Info-Nachrichten
+     */
+    private void showInfoMessage(String title, String message) {
+        parentGui.showInfo(title, message);
+    }
+    
+    /**
+     * NEU: Hilfsmethode für Fehler-Nachrichten
+     */
+    private void showErrorMessage(String title, String message) {
+        parentGui.showError(title, message);
+    }
+    
+    /**
      * Gibt den ProviderTableHelper zurück
-     * 
-     * @return Der ProviderTableHelper
      */
     public ProviderTableHelper getTableHelper() {
         return tableHelper;

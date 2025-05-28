@@ -1,5 +1,7 @@
 package com.mql.realmonitor.gui;
 
+import java.awt.Desktop;
+import java.net.URI;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -20,8 +22,8 @@ import com.mql.realmonitor.data.TickDataLoader;
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * ERWEITERT: Tick Chart Window mit BEIDEN Charts (Drawdown + Profit), Scrolling und TICKDATEN-BUTTON
- * NEUE FEATURES: Scrollbares Layout, Profit-Chart, verbesserte Diagnostik, Tickdaten-Anzeige
+ * ERWEITERT: Tick Chart Window mit BEIDEN Charts (Drawdown + Profit), Scrolling, TICKDATEN-BUTTON + MQL5 Website Link
+ * NEUE FEATURES: Scrollbares Layout, Profit-Chart, verbesserte Diagnostik, Tickdaten-Anzeige, MQL5 Website Button
  */
 public class TickChartWindow {
     
@@ -42,6 +44,7 @@ public class TickChartWindow {
     private Button resetZoomButton;
     private Button diagnosticButton;
     private Button tickDataButton;              // NEU: Tickdaten-Button
+    private Button mql5WebsiteButton;           // NEU: MQL5 Website Button
     
     // Zeitintervall-Buttons
     private Button[] timeScaleButtons;
@@ -93,7 +96,7 @@ public class TickChartWindow {
         this.chartManager = new TickChartManager(signalId, providerName);
         this.imageRenderer = new ChartImageRenderer(display);
         
-        LOGGER.info("=== ERWEITERTE CHART WINDOW ERSTELLT (DRAWDOWN + PROFIT + TICKDATEN) ===");
+        LOGGER.info("=== ERWEITERTE CHART WINDOW ERSTELLT (DRAWDOWN + PROFIT + TICKDATEN + MQL5 LINK) ===");
         LOGGER.info("Signal: " + signalId + " (" + providerName + ")");
         LOGGER.info("Tick-Datei: " + tickFilePath);
         LOGGER.info("Chart-Dimensionen: " + chartWidth + "x" + drawdownChartHeight + " + " + chartWidth + "x" + profitChartHeight);
@@ -107,7 +110,7 @@ public class TickChartWindow {
      */
     private void createWindow(Shell parent) {
         shell = new Shell(parent, SWT.SHELL_TRIM | SWT.MODELESS);
-        shell.setText("Charts - " + signalId + " (" + providerName + ") [DRAWDOWN + PROFIT + TICKDATEN]");
+        shell.setText("Charts - " + signalId + " (" + providerName + ") [DRAWDOWN + PROFIT + TICKDATEN + MQL5]");
         shell.setSize(1000, 900); // GEÄNDERT: Größer für beide Charts
         shell.setLayout(new GridLayout(1, false));
         
@@ -116,7 +119,7 @@ public class TickChartWindow {
         createInfoPanel();
         createTimeScalePanel();
         createScrollableChartsArea();  // NEU: Scrollbereich
-        createButtonPanel();
+        createButtonPanel();  // ERWEITERT: Mit MQL5 Website Button
         setupEventHandlers();
         
         LOGGER.info("Erweiterte ChartWindow UI erstellt für Signal: " + signalId);
@@ -141,7 +144,7 @@ public class TickChartWindow {
      */
     private void createInfoPanel() {
         Group infoGroup = new Group(shell, SWT.NONE);
-        infoGroup.setText("Signal Information (DRAWDOWN + PROFIT CHARTS + TICKDATEN)");
+        infoGroup.setText("Signal Information (DRAWDOWN + PROFIT CHARTS + TICKDATEN + MQL5 LINK)");
         infoGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         infoGroup.setLayout(new GridLayout(2, false));
         
@@ -292,12 +295,12 @@ public class TickChartWindow {
     }
     
     /**
-     * ERWEITERT: Erstellt das Button-Panel mit Tickdaten-Button
+     * ERWEITERT: Erstellt das Button-Panel mit Tickdaten-Button + MQL5 Website Button
      */
     private void createButtonPanel() {
         Composite buttonComposite = new Composite(shell, SWT.NONE);
         buttonComposite.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
-        buttonComposite.setLayout(new GridLayout(8, false)); // GEÄNDERT: von 7 auf 8 für neuen Button
+        buttonComposite.setLayout(new GridLayout(9, false)); // GEÄNDERT: von 8 auf 9 für MQL5 Button
         
         refreshButton = new Button(buttonComposite, SWT.PUSH);
         refreshButton.setText("Aktualisieren");
@@ -313,6 +316,12 @@ public class TickChartWindow {
         tickDataButton.setText("Tickdaten");
         tickDataButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
         tickDataButton.setToolTipText("Zeigt die rohen Tickdaten aus der Datei");
+        
+        // NEU: MQL5 Website Button
+        mql5WebsiteButton = new Button(buttonComposite, SWT.PUSH);
+        mql5WebsiteButton.setText("🌐 MQL5 Website");
+        mql5WebsiteButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        mql5WebsiteButton.setToolTipText("Öffnet die MQL5-Seite dieses Signalproviders im Browser");
         
         zoomInButton = new Button(buttonComposite, SWT.PUSH);
         zoomInButton.setText("Zoom +");
@@ -332,10 +341,12 @@ public class TickChartWindow {
         closeButton = new Button(buttonComposite, SWT.PUSH);
         closeButton.setText("Schließen");
         closeButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        
+        LOGGER.info("Button-Panel erstellt mit MQL5 Website Button");
     }
     
     /**
-     * ERWEITERT: Setup Event Handler für beide Charts + Tickdaten-Button
+     * ERWEITERT: Setup Event Handler für beide Charts + Tickdaten-Button + MQL5 Website Button
      */
     private void setupEventHandlers() {
         refreshButton.addSelectionListener(new SelectionAdapter() {
@@ -357,6 +368,14 @@ public class TickChartWindow {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 showTickDataWindow();
+            }
+        });
+        
+        // NEU: Event Handler für MQL5 Website Button
+        mql5WebsiteButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                openMql5Website();
             }
         });
         
@@ -428,6 +447,120 @@ public class TickChartWindow {
     }
     
     /**
+     * NEU: Öffnet die MQL5-Website für diesen Signalprovider
+     */
+    private void openMql5Website() {
+        try {
+            LOGGER.info("=== ÖFFNE MQL5 WEBSITE für Signal: " + signalId + " ===");
+            
+            // URL aus der Konfiguration erstellen
+            String websiteUrl = parentGui.getMonitor().getConfig().buildSignalUrl(signalId);
+            LOGGER.info("Generierte URL: " + websiteUrl);
+            
+            // Bestätigungsdialog anzeigen
+            if (showWebsiteConfirmationDialog(websiteUrl)) {
+                openUrlInBrowser(websiteUrl);
+                LOGGER.info("MQL5 Website erfolgreich geöffnet für Signal: " + signalId);
+            } else {
+                LOGGER.info("Benutzer hat das Öffnen der Website abgebrochen");
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen der MQL5-Website für Signal: " + signalId, e);
+            showWebsiteErrorDialog(e);
+        }
+    }
+    
+    /**
+     * NEU: Zeigt Bestätigungsdialog vor dem Öffnen der Website
+     */
+    private boolean showWebsiteConfirmationDialog(String url) {
+        MessageBox confirmBox = new MessageBox(shell, SWT.ICON_QUESTION | SWT.YES | SWT.NO);
+        confirmBox.setText("MQL5 Website öffnen");
+        
+        StringBuilder message = new StringBuilder();
+        message.append("MQL5-Seite des Signalproviders im Browser öffnen?\n\n");
+        message.append("Signal ID: ").append(signalId).append("\n");
+        message.append("Provider: ").append(providerName).append("\n\n");
+        message.append("URL: ").append(url).append("\n\n");
+        message.append("Diese Aktion öffnet Ihren Standard-Webbrowser.");
+        
+        confirmBox.setMessage(message.toString());
+        
+        return confirmBox.open() == SWT.YES;
+    }
+    
+    /**
+     * NEU: Zeigt Fehlerdialog für Website-Öffnung
+     */
+    private void showWebsiteErrorDialog(Exception e) {
+        MessageBox errorBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
+        errorBox.setText("Fehler beim Öffnen der Website");
+        
+        String url = parentGui.getMonitor().getConfig().buildSignalUrl(signalId);
+        
+        StringBuilder message = new StringBuilder();
+        message.append("Konnte MQL5-Website nicht öffnen:\n\n");
+        message.append("Fehler: ").append(e.getMessage()).append("\n\n");
+        message.append("Sie können die URL manuell kopieren und im Browser öffnen:\n\n");
+        message.append(url);
+        
+        errorBox.setMessage(message.toString());
+        errorBox.open();
+    }
+    
+    /**
+     * NEU: Öffnet eine URL im Standard-Browser
+     */
+    private void openUrlInBrowser(String url) throws Exception {
+        LOGGER.info("Versuche URL im Browser zu öffnen: " + url);
+        
+        // Versuche Desktop.browse() - Moderner Ansatz
+        if (Desktop.isDesktopSupported()) {
+            Desktop desktop = Desktop.getDesktop();
+            
+            if (desktop.isSupported(Desktop.Action.BROWSE)) {
+                URI uri = new URI(url);
+                desktop.browse(uri);
+                LOGGER.info("URL erfolgreich mit Desktop.browse() geöffnet");
+                return;
+            }
+        }
+        
+        // Fallback: System-spezifische Kommandos
+        String os = System.getProperty("os.name").toLowerCase();
+        LOGGER.info("Desktop.browse() nicht verfügbar, verwende OS-spezifischen Ansatz: " + os);
+        
+        ProcessBuilder processBuilder;
+        
+        if (os.contains("win")) {
+            // Windows
+            processBuilder = new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url);
+        } else if (os.contains("mac")) {
+            // macOS
+            processBuilder = new ProcessBuilder("open", url);
+        } else {
+            // Linux/Unix
+            processBuilder = new ProcessBuilder("xdg-open", url);
+        }
+        
+        Process process = processBuilder.start();
+        
+        // Warte kurz und prüfe Exit-Code
+        boolean finished = process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+        if (finished) {
+            int exitCode = process.exitValue();
+            if (exitCode == 0) {
+                LOGGER.info("URL erfolgreich mit OS-Kommando geöffnet (Exit-Code: " + exitCode + ")");
+            } else {
+                LOGGER.warning("OS-Kommando beendet mit Exit-Code: " + exitCode);
+            }
+        } else {
+            LOGGER.info("OS-Kommando läuft noch (normal für Browser-Start)");
+        }
+    }
+    
+    /**
      * ERWEITERT: Zeigt einen detaillierten Diagnostik-Bericht für beide Charts
      */
     private void showDiagnosticReport() {
@@ -445,13 +578,14 @@ public class TickChartWindow {
         report.append("Refresh Counter: ").append(refreshCounter).append("\n");
         report.append("Data Loaded: ").append(isDataLoaded).append("\n");
         report.append("Zoom Factor: ").append(zoomFactor).append("\n");
-        report.append("Chart Typ: DRAWDOWN + PROFIT (DUAL-CHART) + TICKDATEN\n\n");
+        report.append("Chart Typ: DRAWDOWN + PROFIT (DUAL-CHART) + TICKDATEN + MQL5 LINK\n\n");
         
         // SignalData Info
         report.append("SIGNALDATA:\n");
         if (signalData != null) {
             report.append("Verfügbar: Ja\n");
             report.append("Details: ").append(signalData.getSummary()).append("\n");
+            report.append("MQL5 URL: ").append(parentGui.getMonitor().getConfig().buildSignalUrl(signalId)).append("\n");
         } else {
             report.append("Verfügbar: Nein\n");
         }
@@ -488,7 +622,7 @@ public class TickChartWindow {
         }
         report.append("\n");
         
-        // ERWEITERT: Chart Status für beide Charts + Tickdaten
+        // ERWEITERT: Chart Status für beide Charts + Tickdaten + MQL5 Link
         report.append("CHARTS STATUS:\n");
         report.append("ChartManager: ").append(chartManager != null ? "OK" : "NULL").append("\n");
         report.append("ImageRenderer: ").append(imageRenderer != null ? "OK" : "NULL").append("\n");
@@ -497,6 +631,7 @@ public class TickChartWindow {
         report.append("Canvas Größen: ").append(chartWidth).append("x").append(drawdownChartHeight).append(" + ").append(chartWidth).append("x").append(profitChartHeight).append("\n");
         report.append("Scroll-Container: ").append(scrolledComposite != null && !scrolledComposite.isDisposed() ? "OK" : "FEHLER").append("\n");
         report.append("Tickdaten-Button: ").append(tickDataButton != null && !tickDataButton.isDisposed() ? "OK" : "FEHLER").append("\n");
+        report.append("MQL5 Website-Button: ").append(mql5WebsiteButton != null && !mql5WebsiteButton.isDisposed() ? "OK" : "FEHLER").append("\n");
         
         // Zeige Bericht in einem neuen Dialog
         Shell diagnosticShell = new Shell(shell, SWT.DIALOG_TRIM | SWT.MODELESS | SWT.RESIZE);
@@ -715,7 +850,7 @@ public class TickChartWindow {
                     }
                 });
             }
-        }, "TickDataLoader-DualChart-Tickdaten-" + signalId).start();
+        }, "TickDataLoader-DualChart-Tickdaten-MQL5Link-" + signalId).start();
     }
     
     /**
@@ -778,20 +913,21 @@ public class TickChartWindow {
      * Zeigt initialen Info-Text
      */
     private void updateInfoPanelInitial() {
-        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt... [DUAL-CHART-MODUS + TICKDATEN]";
+        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt... [DUAL-CHART-MODUS + TICKDATEN + MQL5]";
         infoLabel.setText(info);
-        detailsText.setText("=== DUAL-CHART-MODUS + TICKDATEN AKTIV ===\n" +
+        detailsText.setText("=== DUAL-CHART-MODUS + TICKDATEN + MQL5 LINK AKTIV ===\n" +
                            "Tick-Daten werden geladen...\n" +
                            "Tick-Datei: " + tickFilePath + "\n" +
                            "CHART 1: Drawdown-Chart (Magenta)\n" +
                            "CHART 2: Profit-Chart (Grün: Kontostand, Gelb: Gesamtwert)\n" +
                            "TICKDATEN: Button für rohe Datenansicht verfügbar\n" +
+                           "MQL5 LINK: Button öffnet Signalprovider-Seite im Browser\n" +
                            "Fenster ist scrollbar für beide Charts.\n" +
                            "Bitte warten Sie einen Moment.");
     }
     
     /**
-     * ERWEITERT: Aktualisiert das Info-Panel für beide Charts + Tickdaten
+     * ERWEITERT: Aktualisiert das Info-Panel für beide Charts + Tickdaten + MQL5 Link
      */
     private void updateInfoPanel() {
         StringBuilder info = new StringBuilder();
@@ -811,14 +947,16 @@ public class TickChartWindow {
         
         StringBuilder details = new StringBuilder();
         
-        details.append("=== DUAL-CHART-MODUS + TICKDATEN - DETAILLIERTE INFORMATIONEN ===\n");
+        details.append("=== DUAL-CHART-MODUS + TICKDATEN + MQL5 LINK - DETAILLIERTE INFORMATIONEN ===\n");
         details.append("Zeitintervall: ").append(currentTimeScale.getLabel())
                .append(" (letzte ").append(currentTimeScale.getDisplayMinutes()).append(" Minuten)\n");
         details.append("Chart 1: Drawdown-Chart (robuste Auto-Skalierung)\n");
         details.append("Chart 2: Profit-Chart (Grün: Kontostand, Gelb: Gesamtwert)\n");
         details.append("Tickdaten: Button für scrollbare Rohdaten-Anzeige\n");
+        details.append("MQL5 Link: Button öffnet Signalprovider-Seite im Browser\n");
         details.append("Layout: Scrollbar für beide Charts vertikal\n");
         details.append("Tick-Datei: ").append(tickFilePath).append("\n");
+        details.append("MQL5 URL: ").append(parentGui.getMonitor().getConfig().buildSignalUrl(signalId)).append("\n");
         
         if (tickDataSet != null && tickDataSet.getTickCount() > 0) {
             details.append("Gesamt Ticks in Datei: ").append(tickDataSet.getTickCount()).append("\n");
@@ -854,6 +992,7 @@ public class TickChartWindow {
                     details.append("Drawdown-Chart: ").append(imageRenderer != null && imageRenderer.hasValidDrawdownImage() ? "OK" : "FEHLER").append("\n");
                     details.append("Profit-Chart: ").append(imageRenderer != null && imageRenderer.hasValidProfitImage() ? "OK" : "FEHLER").append("\n");
                     details.append("Tickdaten-Button: ").append(tickDataButton != null && !tickDataButton.isDisposed() ? "OK" : "FEHLER").append("\n");
+                    details.append("MQL5 Website-Button: ").append(mql5WebsiteButton != null && !mql5WebsiteButton.isDisposed() ? "OK" : "FEHLER").append("\n");
                 }
             } else {
                 details.append("PROBLEM: filteredTicks ist NULL!\n");
@@ -867,11 +1006,12 @@ public class TickChartWindow {
         details.append("Refresh Counter: ").append(refreshCounter).append("\n");
         details.append("\nKlicken Sie auf 'Diagnostik' für vollständigen Bericht.\n");
         details.append("Klicken Sie auf 'Tickdaten' für scrollbare Rohdaten-Anzeige.\n");
+        details.append("Klicken Sie auf '🌐 MQL5 Website' um die Signalprovider-Seite zu öffnen.\n");
         
         detailsText.setText(details.toString());
         
         if (shell != null && !shell.isDisposed()) {
-            shell.setText("Charts - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [DUAL+TICKDATEN #" + refreshCounter + "]");
+            shell.setText("Charts - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [DUAL+TICKDATEN+MQL5 #" + refreshCounter + "]");
         }
     }
     
@@ -879,7 +1019,7 @@ public class TickChartWindow {
      * Zeigt "Keine Daten"-Nachricht
      */
     private void showNoDataMessage() {
-        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten verfügbar [DUAL-CHART-MODUS + TICKDATEN]");
+        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten verfügbar [DUAL-CHART-MODUS + TICKDATEN + MQL5]");
         detailsText.setText("=== KEINE TICK-DATEN GEFUNDEN ===\n" +
                            "Datei: " + tickFilePath + "\n" +
                            "Mögliche Ursachen:\n" +
@@ -887,7 +1027,9 @@ public class TickChartWindow {
                            "- Datei hat ungültiges Format\n" +
                            "- Noch keine Daten für dieses Signal gesammelt\n\n" +
                            "Prüfen Sie die Datei manuell oder warten Sie auf neue Daten.\n" +
-                           "Der Tickdaten-Button zeigt den Dateiinhalt auch bei leeren Charts an.");
+                           "Der Tickdaten-Button zeigt den Dateiinhalt auch bei leeren Charts an.\n" +
+                           "Der MQL5 Website-Button funktioniert weiterhin und öffnet:\n" + 
+                           parentGui.getMonitor().getConfig().buildSignalUrl(signalId));
         drawdownCanvas.redraw();
         profitCanvas.redraw();
     }
@@ -896,7 +1038,7 @@ public class TickChartWindow {
      * Zeigt Fehlermeldung
      */
     private void showErrorMessage(String message) {
-        infoLabel.setText("Signal ID: " + signalId + " - Fehler beim Laden [DUAL-CHART-MODUS + TICKDATEN]");
+        infoLabel.setText("Signal ID: " + signalId + " - Fehler beim Laden [DUAL-CHART-MODUS + TICKDATEN + MQL5]");
         detailsText.setText("=== FEHLER BEIM LADEN DER TICK-DATEN ===\n" +
                            "FEHLER: " + message + "\n\n" +
                            "Tick-Datei: " + tickFilePath + "\n\n" +
@@ -904,11 +1046,13 @@ public class TickChartWindow {
                            "- Existiert die Datei?\n" +
                            "- Sind die Berechtigungen korrekt?\n" +
                            "- Ist die Datei nicht beschädigt?\n\n" +
-                           "Der Tickdaten-Button kann trotzdem versuchen, die Datei zu lesen.");
+                           "Der Tickdaten-Button kann trotzdem versuchen, die Datei zu lesen.\n" +
+                           "Der MQL5 Website-Button funktioniert weiterhin und öffnet:\n" + 
+                           parentGui.getMonitor().getConfig().buildSignalUrl(signalId));
         
         MessageBox errorBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
         errorBox.setText("Fehler beim Laden der Tick-Daten");
-        errorBox.setMessage("DUAL-CHART-MODUS + TICKDATEN:\n\n" + message + "\n\nSiehe Details-Panel für weitere Informationen.\n\nDer Tickdaten-Button ist weiterhin verfügbar.");
+        errorBox.setMessage("DUAL-CHART-MODUS + TICKDATEN + MQL5 LINK:\n\n" + message + "\n\nSiehe Details-Panel für weitere Informationen.\n\nDer Tickdaten-Button und MQL5 Website-Button sind weiterhin verfügbar.");
         errorBox.open();
     }
     
@@ -942,7 +1086,7 @@ public class TickChartWindow {
     private void closeWindow() {
         isWindowClosed = true;
         
-        LOGGER.info("=== SCHLIESSE DUAL CHART WINDOW + TICKDATEN für Signal: " + signalId + " ===");
+        LOGGER.info("=== SCHLIESSE DUAL CHART WINDOW + TICKDATEN + MQL5 LINK für Signal: " + signalId + " ===");
         LOGGER.info("Refresh Counter final: " + refreshCounter);
         
         // Ressourcen freigeben
@@ -960,7 +1104,7 @@ public class TickChartWindow {
      */
     public void open() {
         shell.open();
-        LOGGER.info("DualChartWindow (DRAWDOWN + PROFIT + TICKDATEN) geöffnet für Signal: " + signalId);
+        LOGGER.info("DualChartWindow (DRAWDOWN + PROFIT + TICKDATEN + MQL5 LINK) geöffnet für Signal: " + signalId);
     }
     
     /**
