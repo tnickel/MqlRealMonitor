@@ -1,0 +1,115 @@
+# MqlRealMonitor - Klassenübersicht
+# Generated: 2025-05-30
+# Version: 1.0.0
+#
+# PROJECT DESCRIPTION:
+# MqlRealMonitor ist eine Java-Desktop-Anwendung für das Monitoring von MQL5 Signal-Providern.
+# Die Anwendung lädt automatisch Signalprovider-Daten von der MQL5-Website herunter, parst
+# Kontostand und Floating Profit, und speichert diese als Tick-Daten für Chart-Analyse.
+#
+# HAUPTFUNKTIONEN:
+# - Automatisches Monitoring mehrerer MQL5-Signalprovider (konfigurierbare Intervalle)
+# - HTML-Parsing von MQL5-Signalprovider-Seiten (Kontostand, Floating Profit, Drawdown)
+# - Tick-Daten-Speicherung in CSV-Format für historische Analyse
+# - Dual-Chart-System: Equity Drawdown Chart (%) + Profit Development Chart
+# - Provider-Tabelle mit Live-Updates und Chart-Übersicht für alle Provider
+# - Direkter Browser-Link zu MQL5-Signalprovider-Seiten
+# - Wiederverwendbare Chart-Komponenten und modulare GUI-Architektur
+#
+# TECHNOLOGY STACK:
+# - Java 11+ mit SWT (Standard Widget Toolkit) für GUI
+# - JFreeChart für Chart-Generierung und -Rendering
+# - Regex-basiertes HTML-Parsing für MQL5-Website-Daten
+# - CSV-basierte Tick-Daten-Persistierung
+# - Multi-threaded Design für UI-Responsiveness
+#
+# ARCHITECTURE HIGHLIGHTS:
+# - Modular aufgebaut mit klarer Package-Struktur
+# - Refactored GUI: TickChartWindow von >1000 auf <100 Zeilen reduziert
+# - Wiederverwendbare Chart-Panels für verschiedene Fenster
+# - Robuste Fehlerbehandlung und umfassende Diagnostik
+# - Thread-sichere GUI-Updates und automatische Refresh-Zyklen
+# 
+# Format: <Package>.<Class> | <Description>
+# ========================================================================
+
+## Main Package
+com.mql.realmonitor.MqlRealMonitor | Hauptklasse für MQL5 Signal-Monitoring. Orchestriert Download, Parsing und GUI-Updates für alle Signalprovider.
+
+## Configuration
+com.mql.realmonitor.config.MqlRealMonitorConfig | Konfigurationsverwaltung für alle konfigurierbaren Parameter, Pfade und Einstellungen. Verwaltet Intervalle in Minuten.
+
+## Data Layer
+com.mql.realmonitor.data.TickDataLoader | Lädt und parst Tick-Daten aus CSV-Dateien. Bietet TickData und TickDataSet Klassen für Datencontainer.
+
+## Download Layer
+com.mql.realmonitor.downloader.FavoritesReader | Liest und verwaltet die favorites.txt Datei mit Signal-IDs. Unterstützt Caching und Validierung.
+com.mql.realmonitor.downloader.WebDownloader | HTTP-Downloader für MQL5 Signalprovider-Seiten. Verwaltet Downloads und lokale HTML-Datei-Speicherung.
+
+## Exception Handling
+com.mql.realmonitor.exception.MqlMonitorException | Spezifische Exception-Klasse für alle MQL-Fehler. Bietet kategorisierte Fehlertypen und benutzerfreundliche Nachrichten.
+
+## GUI Layer - Core
+com.mql.realmonitor.gui.MqlRealMonitorGUI | Haupt-GUI-Klasse mit Provider-Tabelle und Toolbar. Erweitert um Chart-Übersicht Button für Signalprovider-Overview.
+com.mql.realmonitor.gui.SignalProviderTable | Refactored Provider-Tabelle mit modularer Architektur. Kernfunktionen mit ausgelagerten Hilfsklassen.
+com.mql.realmonitor.gui.ProviderTableHelper | Hilfsfunktionen für SignalProviderTable. Sortierung, Formatierung und erweiterte Chart-Übersicht-Funktionen.
+com.mql.realmonitor.gui.SignalProviderContextMenu | Kontextmenü für Provider-Tabelle. Erweitert um MQL5-Website-Link zum direkten Öffnen der Signalprovider-Seite.
+com.mql.realmonitor.gui.StatusUpdater | Verwaltet periodische Status-Updates und Thread-sichere GUI-Aktualisierungen. Memory-Monitoring und Laufzeit-Informationen.
+
+## GUI Layer - Chart System
+com.mql.realmonitor.gui.ChartImageRenderer | Rendert JFreeCharts zu SWT-Images für beide Charts (Drawdown + Profit). Verwaltet Chart-zu-Image Konvertierung.
+com.mql.realmonitor.gui.TickChartManager | Verwaltet beide Charts (Drawdown + Profit) kombiniert. Korrigierte X-Achsen-Probleme und Domain-Achsen-Kalibrierung.
+com.mql.realmonitor.gui.ProfitChartManager | Verwaltet Profit-Chart mit Kontostand (grün) und Gesamtwert (gelb). Korrigierte X-Achsen-Kalibrierung.
+
+## GUI Layer - Chart Panels (Reusable Components)
+com.mql.realmonitor.gui.EquityDrawdownChartPanel | Wiederverwendbare SWT-Komponente für Drawdown-Chart-Anzeige. Kapselt Canvas, Painting und Event-Handling.
+com.mql.realmonitor.gui.ProfitDevelopmentChartPanel | Wiederverwendbare SWT-Komponente für Profit-Chart-Anzeige. Kapselt komplette Profit-Chart-Funktionalität.
+com.mql.realmonitor.gui.SignalOverviewPanel | Panel für einzelnen Signalprovider in der Übersicht. Zeigt Provider-Info, Drawdown- und Profit-Chart in 3 Spalten.
+
+## GUI Layer - Windows (Refactored)
+com.mql.realmonitor.gui.TickChartWindow | Stark vereinfachte Facade-Klasse (von >1000 auf <100 Zeilen). Delegiert alle Funktionalität an TickChartWindowManager.
+com.mql.realmonitor.gui.TickChartWindowManager | Hauptmanager für TickChartWindow. Koordiniert Chart-Panels, Toolbar, Layout und Daten-Loading nach Refactoring.
+com.mql.realmonitor.gui.TickChartWindowToolbar | Separate Toolbar-Klasse mit allen Buttons. Diagnostik, Tickdaten, MQL5-Website, Zoom-Funktionen und Event-Handler.
+com.mql.realmonitor.gui.SignalProviderOverviewWindow | Chart-Übersichtsfenster für alle Signalprovider. Scrollbare Tabelle mit Charts für jeden Provider (M15, 50% Größe).
+com.mql.realmonitor.gui.TickDataDisplayWindow | Separates scrollbares Fenster für rohe Tickdaten-Anzeige. Zeigt CSV-formatierte Tick-Historie in Textfeld.
+
+## GUI Layer - Utilities
+com.mql.realmonitor.gui.TickDataFilter | Filtert Tick-Daten nach Zeitintervallen. Verbesserte robuste Filterung mit umfassender Diagnostik für alle Signalprovider.
+com.mql.realmonitor.gui.TimeScale | Enum für Zeitintervalle (M1, M5, M15, H1, H4, D1). Definiert Intervall- und Anzeige-Minuten für Chart-Skalierung.
+
+## Parser Layer
+com.mql.realmonitor.parser.HTMLParser | HTML-Parser für MQL5-Seiten. Extrahiert Kontostand, Floating Profit und Provider-Name mit flexiblem Pattern-Matching.
+com.mql.realmonitor.parser.SignalData | Model-Klasse für Signalprovider-Daten. Verbesserte Equity Drawdown Berechnung mit robuster Diagnostik und Validierung.
+
+## Tick Data Layer
+com.mql.realmonitor.tickdata.TickDataWriter | Writer für Tick-Daten mit robustem Lesen. Verwaltet CSV-Datei-Schreibung und bietet umfassende Lese-Diagnostik für Charts.
+
+## Utilities
+com.mql.realmonitor.utils.MqlUtils | Utility-Klasse mit allgemeinen Hilfsfunktionen. Logging-Setup, Validierung, Formatierung und File-Handling-Utilities.
+
+# ========================================================================
+# ARCHITECTURE SUMMARY
+# ========================================================================
+
+## Key Architectural Improvements:
+- Refactored TickChartWindow: Split into 4 modular classes (Window, Manager, Toolbar, Panels)
+- Reusable Chart Panels: EquityDrawdownChartPanel and ProfitDevelopmentChartPanel can be used in multiple windows
+- Dual Chart System: Both Drawdown and Profit charts managed by unified TickChartManager
+- Chart Overview: New SignalProviderOverviewWindow for viewing all providers at once
+- MQL5 Website Integration: Direct browser links to signal provider pages
+- Robust Data Handling: Improved error handling and diagnostics throughout
+
+## Package Structure:
+- Main: Core application entry point
+- Config: Configuration management
+- Data: Tick data loading and processing
+- Downloader: Web downloading and favorites management
+- Exception: Centralized error handling
+- GUI: User interface (core, charts, windows, utilities)
+- Parser: HTML parsing and data models
+- TickData: CSV file writing and reading
+- Utils: General utility functions
+
+## Total Classes: 25
+## LOC Reduction: TickChartWindow reduced from >1000 to <100 lines through refactoring
+## Reusability: Chart panels can now be reused across different windows
