@@ -20,27 +20,31 @@ import com.mql.realmonitor.parser.SignalData;
  * Refactored: Tabelle für die Anzeige der Signalprovider-Daten
  * Kern-Tabellenfunktionen - Kontextmenü und Hilfsfunktionen ausgelagert
  * MODULAR: Verwendet separate Klassen für erweiterte Funktionalität
+ * ERWEITERT: Neue Spalte für Favoritenklasse hinzugefügt mit Zeilen-Hintergrundfarben
+ * SORTIERUNG: Automatische Sortierung nach Favoritenklasse beim Start
  */
 public class SignalProviderTable {
     
     private static final Logger LOGGER = Logger.getLogger(SignalProviderTable.class.getName());
     
-    // Spalten-Definitionen
+    // Spalten-Definitionen (ERWEITERT: Neue Spalte "Favoritenklasse")
     private static final String[] COLUMN_TEXTS = {
         "Signal ID", 
-        "Provider Name",
-        "Status", 
-        "Kontostand", 
-        "Floating Profit", 
-        "Equity Drawdown",
-        "Gesamtwert", 
-        "Währung", 
-        "Letzte Aktualisierung", 
-        "Änderung"
+        "Favoritenklasse",     // NEU: Spalte 1
+        "Provider Name",       // war "Provider Name" 
+        "Status",              // war "Status"
+        "Kontostand",          // war "Kontostand"
+        "Floating Profit",     // war "Floating Profit"
+        "Equity Drawdown",     // war "Equity Drawdown"
+        "Gesamtwert",          // war "Gesamtwert"
+        "Währung",             // war "Währung"
+        "Letzte Aktualisierung", // war "Letzte Aktualisierung"
+        "Änderung"             // war "Änderung"
     };
     
     private static final int[] COLUMN_WIDTHS = {
         80,   // Signal ID
+        120,  // Favoritenklasse (NEU)
         150,  // Provider Name
         100,  // Status
         120,  // Kontostand
@@ -65,6 +69,9 @@ public class SignalProviderTable {
     private Map<String, TableItem> signalIdToItem;
     private Map<String, SignalData> lastSignalData;
     
+    // KORRIGIERT: FavoritesReader als Instanzvariable
+    private com.mql.realmonitor.downloader.FavoritesReader favoritesReader;
+    
     public SignalProviderTable(Composite parent, MqlRealMonitorGUI parentGui) {
         this.parentGui = parentGui;
         this.signalIdToItem = new HashMap<>();
@@ -84,7 +91,7 @@ public class SignalProviderTable {
         // Tabellenverhalten mit Kontextmenü konfigurieren
         contextMenu.setupTableBehavior(table);
         
-        LOGGER.info("SignalProviderTable (Refactored) initialisiert mit " + COLUMN_TEXTS.length + " Spalten - Modular aufgeteilt");
+        LOGGER.info("SignalProviderTable (Refactored+Extended) initialisiert mit " + COLUMN_TEXTS.length + " Spalten - Modular aufgeteilt mit Favoritenklasse");
     }
     
     /**
@@ -145,7 +152,29 @@ public class SignalProviderTable {
     }
     
     /**
+     * NEU: Holt die Favoritenklasse für eine Signal-ID
+     * 
+     * @param signalId Die Signal-ID
+     * @return Die Favoritenklasse oder "-" wenn nicht vorhanden
+     */
+    private String getFavoriteClassForSignal(String signalId) {
+        try {
+            // Lazy Initialization des FavoritesReader
+            if (favoritesReader == null) {
+                favoritesReader = new com.mql.realmonitor.downloader.FavoritesReader(parentGui.getMonitor().getConfig());
+            }
+            
+            String favoriteClass = favoritesReader.getFavoriteClass(signalId);
+            return (favoriteClass != null && !favoriteClass.trim().isEmpty()) ? favoriteClass : "-";
+        } catch (Exception e) {
+            LOGGER.fine("Konnte Favoritenklasse für Signal " + signalId + " nicht ermitteln: " + e.getMessage());
+            return "-";
+        }
+    }
+    
+    /**
      * Aktualisiert die Daten eines Providers (Thread-sicher)
+     * ERWEITERT: Setzt auch die Favoritenklasse und Zeilen-Hintergrundfarbe
      * 
      * @param signalData Die aktualisierten Signaldaten
      */
@@ -168,8 +197,12 @@ public class SignalProviderTable {
         String changeText = tableHelper.calculateChangeText(signalData, lastData);
         Color changeColor = tableHelper.getChangeColor(signalData, lastData);
         
-        // Tabellendaten setzen
+        // NEU: Favoritenklasse ermitteln
+        String favoriteClass = getFavoriteClassForSignal(signalId);
+        
+        // Tabellendaten setzen (ANGEPASST: Neue Spalten-Indizes)
         item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
+        item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);                     // NEU
         item.setText(ProviderTableHelper.COL_PROVIDER_NAME, signalData.getProviderName());
         item.setText(ProviderTableHelper.COL_STATUS, "OK");
         item.setText(ProviderTableHelper.COL_EQUITY, signalData.getFormattedEquity());
@@ -180,7 +213,8 @@ public class SignalProviderTable {
         item.setText(ProviderTableHelper.COL_LAST_UPDATE, signalData.getFormattedTimestamp());
         item.setText(ProviderTableHelper.COL_CHANGE, changeText);
         
-        // Farben setzen über Helper
+        // Farben setzen über Helper (ANGEPASST: Neue Spalten-Indizes, keine spezielle Farbkodierung für Favoritenklasse)
+        // item.setForeground(ProviderTableHelper.COL_FAVORITE_CLASS, tableHelper.getFavoriteClassColor(favoriteClass));  // Entfernt: Keine Farbkodierung
         item.setForeground(ProviderTableHelper.COL_FLOATING, tableHelper.getFloatingProfitColor(signalData.getFloatingProfit()));
         item.setForeground(ProviderTableHelper.COL_EQUITY_DRAWDOWN, tableHelper.getEquityDrawdownColor(signalData.getEquityDrawdownPercent()));
         item.setForeground(ProviderTableHelper.COL_CHANGE, changeColor);
@@ -188,10 +222,19 @@ public class SignalProviderTable {
         // Status-Farbe
         item.setForeground(ProviderTableHelper.COL_STATUS, parentGui.getGreenColor());
         
+        // NEU: Zeilen-Hintergrundfarbe basierend auf Favoritenklasse setzen
+        // 1=hellgrün, 2=hellgelb, 3=hellorange, 4-10=hellrot
+        Color backgroundColor = tableHelper.getFavoriteClassBackgroundColor(favoriteClass);
+        if (backgroundColor != null) {
+            item.setBackground(backgroundColor); // Setzt Hintergrundfarbe für die ganze Zeile
+            LOGGER.fine("Hintergrundfarbe gesetzt für Signal " + signalId + " (Klasse " + favoriteClass + ")");
+        }
+        
         // Daten im Cache speichern
         lastSignalData.put(signalId, signalData);
         
-        LOGGER.fine("Provider-Daten aktualisiert (Modular): " + signalData.getSummary());
+        LOGGER.fine("Provider-Daten aktualisiert (Modular+Extended): " + signalData.getSummary() + 
+                   " (Klasse: " + favoriteClass + ")");
     }
     
     /**
@@ -222,6 +265,7 @@ public class SignalProviderTable {
     /**
      * Fügt einen leeren Provider-Eintrag hinzu (nur mit Signal-ID)
      * Wird beim Vorladen der Favoriten verwendet
+     * ERWEITERT: Setzt auch die Favoritenklasse und Zeilen-Hintergrundfarbe
      * 
      * @param signalId Die Signal-ID
      * @param initialStatus Der initiale Status
@@ -237,11 +281,15 @@ public class SignalProviderTable {
             return;
         }
         
+        // NEU: Favoritenklasse ermitteln
+        String favoriteClass = getFavoriteClassForSignal(signalId);
+        
         // Neuen leeren Eintrag erstellen
         TableItem item = new TableItem(table, SWT.NONE);
         
-        // Nur Signal-ID und Status setzen, Rest bleibt leer
+        // Nur Signal-ID, Favoritenklasse und Status setzen, Rest bleibt leer (ANGEPASST: Neue Spalten-Indizes)
         item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
+        item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);                          // NEU
         item.setText(ProviderTableHelper.COL_PROVIDER_NAME, "Lädt...");  
         item.setText(ProviderTableHelper.COL_STATUS, initialStatus != null ? initialStatus : "Nicht geladen");
         item.setText(ProviderTableHelper.COL_EQUITY, "");
@@ -252,16 +300,104 @@ public class SignalProviderTable {
         item.setText(ProviderTableHelper.COL_LAST_UPDATE, "");
         item.setText(ProviderTableHelper.COL_CHANGE, "");
         
-        // Status-Farbe über Helper setzen
+        // Farben über Helper setzen (Keine spezielle Farbkodierung für Favoritenklasse)
+        // Color favoriteClassColor = tableHelper.getFavoriteClassColor(favoriteClass);  // Entfernt: Keine Farbkodierung
+        // if (favoriteClassColor != null) {
+        //     item.setForeground(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClassColor);
+        // }
+        
         Color statusColor = tableHelper.getStatusColor(initialStatus);
         if (statusColor != null) {
             item.setForeground(ProviderTableHelper.COL_STATUS, statusColor);
         }
         
+        // NEU: Zeilen-Hintergrundfarbe basierend auf Favoritenklasse setzen
+        // 1=hellgrün, 2=hellgelb, 3=hellorange, 4-10=hellrot
+        Color backgroundColor = tableHelper.getFavoriteClassBackgroundColor(favoriteClass);
+        if (backgroundColor != null) {
+            item.setBackground(backgroundColor); // Setzt Hintergrundfarbe für die ganze Zeile
+            LOGGER.fine("Hintergrundfarbe gesetzt für leeren Eintrag " + signalId + " (Klasse " + favoriteClass + ")");
+        }
+        
         // In Map eintragen
         signalIdToItem.put(signalId, item);
         
-        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (Modular): " + signalId);
+        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (Modular+Extended): " + signalId + 
+                   " (Klasse: " + favoriteClass + ")");
+    }
+    
+    /**
+     * NEU: Sortiert die Tabelle nach Favoritenklasse (1-10, dann ohne Klasse)
+     */
+    public void sortByFavoriteClass() {
+        if (table.getItemCount() <= 1) {
+            return; // Nichts zu sortieren
+        }
+        
+        LOGGER.info("Sortiere Tabelle nach Favoritenklasse...");
+        
+        // Sortierung nach Favoritenklasse-Spalte auslösen
+        tableHelper.sortTable(table, columns, ProviderTableHelper.COL_FAVORITE_CLASS, signalIdToItem::put);
+        
+        // Sortrichtung auf aufsteigend setzen (1, 2, 3, ..., dann "-")
+        table.setSortDirection(SWT.UP);
+        table.setSortColumn(columns[ProviderTableHelper.COL_FAVORITE_CLASS]);
+        
+        LOGGER.info("Tabelle nach Favoritenklasse sortiert");
+    }
+    
+    /**
+     * NEU: Führt die initiale Sortierung nach Favoritenklasse durch
+     * Sollte aufgerufen werden, nachdem alle Provider-Daten geladen wurden
+     */
+    public void performInitialSort() {
+        // Kurze Verzögerung um sicherzustellen, dass alle Daten geladen sind
+        parentGui.getDisplay().timerExec(1000, () -> {
+            if (!table.isDisposed() && table.getItemCount() > 1) {
+                LOGGER.info("Führe initiale Sortierung nach Favoritenklasse durch...");
+                sortByFavoriteClass();
+            }
+        });
+    }
+    
+    /**
+     * NEU: Aktualisiert die Favoritenklassen aller Provider
+     * Nützlich wenn die favorites.txt geändert wurde
+     * ERWEITERT: Führt nach dem Update automatisch eine Sortierung durch
+     */
+    public void refreshFavoriteClasses() {
+        LOGGER.info("Aktualisiere Favoritenklassen für alle Provider...");
+        
+        // Cache des FavoritesReader leeren
+        if (favoritesReader != null) {
+            favoritesReader.refreshCache();
+        }
+        
+        for (Map.Entry<String, TableItem> entry : signalIdToItem.entrySet()) {
+            String signalId = entry.getKey();
+            TableItem item = entry.getValue();
+            
+            if (item != null && !item.isDisposed()) {
+                String favoriteClass = getFavoriteClassForSignal(signalId);
+                item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);
+                
+                // Keine spezielle Farbkodierung
+                // Color favoriteClassColor = tableHelper.getFavoriteClassColor(favoriteClass);
+                // item.setForeground(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClassColor);
+                
+                // NEU: Zeilen-Hintergrundfarbe basierend auf Favoritenklasse aktualisieren
+                // 1=hellgrün, 2=hellgelb, 3=hellorange, 4-10=hellrot
+                Color backgroundColor = tableHelper.getFavoriteClassBackgroundColor(favoriteClass);
+                item.setBackground(backgroundColor); // null entfernt die Hintergrundfarbe
+                
+                LOGGER.fine("Favoritenklasse aktualisiert für " + signalId + ": " + favoriteClass);
+            }
+        }
+        
+        // NEU: Nach dem Refresh automatisch nach Favoritenklasse sortieren
+        sortByFavoriteClass();
+        
+        LOGGER.info("Favoritenklassen-Aktualisierung abgeschlossen");
     }
     
     /**
@@ -281,7 +417,12 @@ public class SignalProviderTable {
         signalIdToItem.clear();
         lastSignalData.clear();
         
-        LOGGER.info("Alle Provider aus Tabelle entfernt (Modular)");
+        // FavoritesReader Cache leeren
+        if (favoritesReader != null) {
+            favoritesReader.refreshCache();
+        }
+        
+        LOGGER.info("Alle Provider aus Tabelle entfernt (Modular+Extended)");
     }
     
     /**

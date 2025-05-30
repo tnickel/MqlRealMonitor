@@ -20,24 +20,25 @@ import com.mql.realmonitor.parser.SignalData;
 
 /**
  * Hilfsfunktionen für die SignalProviderTable
- * ERWEITERT: Zusätzliche Funktionen für Chart-Übersicht
+ * ERWEITERT: Zusätzliche Funktionen für Chart-Übersicht und Favoritenklasse-Spalte
  * Enthält Berechnungen, Sortierung und Formatierung
  */
 public class ProviderTableHelper {
     
     private static final Logger LOGGER = Logger.getLogger(ProviderTableHelper.class.getName());
     
-    // Spalten-Indizes
+    // Spalten-Indizes (ANGEPASST: Neue Spalte "Favoritenklasse" als Spalte 1)
     public static final int COL_SIGNAL_ID = 0;
-    public static final int COL_PROVIDER_NAME = 1;
-    public static final int COL_STATUS = 2;
-    public static final int COL_EQUITY = 3;
-    public static final int COL_FLOATING = 4;
-    public static final int COL_EQUITY_DRAWDOWN = 5;
-    public static final int COL_TOTAL = 6;
-    public static final int COL_CURRENCY = 7;
-    public static final int COL_LAST_UPDATE = 8;
-    public static final int COL_CHANGE = 9;
+    public static final int COL_FAVORITE_CLASS = 1;        // NEU: Favoritenklasse
+    public static final int COL_PROVIDER_NAME = 2;        // war 1
+    public static final int COL_STATUS = 3;               // war 2
+    public static final int COL_EQUITY = 4;               // war 3
+    public static final int COL_FLOATING = 5;             // war 4
+    public static final int COL_EQUITY_DRAWDOWN = 6;      // war 5
+    public static final int COL_TOTAL = 7;                // war 6
+    public static final int COL_CURRENCY = 8;             // war 7
+    public static final int COL_LAST_UPDATE = 9;          // war 8
+    public static final int COL_CHANGE = 10;              // war 9
     
     private final MqlRealMonitorGUI parentGui;
     
@@ -137,6 +138,56 @@ public class ProviderTableHelper {
     }
     
     /**
+     * NEU: Bestimmt die Hintergrundfarbe für eine Favoritenklasse
+     * 1=grün, 2=gelb, 3=orange, 4-10=rot (helle Farben für bessere Lesbarkeit)
+     * 
+     * @param favoriteClass Die Favoritenklasse (1-10)
+     * @return Die Hintergrundfarbe oder null für keine spezielle Farbe
+     */
+    public Color getFavoriteClassBackgroundColor(String favoriteClass) {
+        if (favoriteClass == null || favoriteClass.trim().isEmpty() || favoriteClass.equals("-")) {
+            return null; // Keine spezielle Hintergrundfarbe für Einträge ohne Klasse
+        }
+        
+        try {
+            int classNumber = Integer.parseInt(favoriteClass.trim());
+            
+            switch (classNumber) {
+                case 1:
+                    return parentGui.getFavoriteClass1Color();         // Hellgrün
+                case 2:
+                    return parentGui.getFavoriteClass2Color();         // Hellgelb
+                case 3:
+                    return parentGui.getFavoriteClass3Color();         // Hellorange
+                case 4:
+                case 5:
+                case 6:
+                case 7:
+                case 8:
+                case 9:
+                case 10:
+                    return parentGui.getFavoriteClass4To10Color();     // Hellrot (für 4-10)
+                default:
+                    return null; // Ungültige Klasse - keine Farbe
+            }
+            
+        } catch (NumberFormatException e) {
+            return null; // Ungültige Favoritenklasse - keine Farbe
+        }
+    }
+    
+    /**
+     * NEU: Bestimmt die Farbe für die Favoritenklasse (Standard-Farbe, keine spezielle Kodierung)
+     * 
+     * @param favoriteClass Die Favoritenklasse
+     * @return Die Standard-Farbe (null für normale Textfarbe)
+     */
+    public Color getFavoriteClassColor(String favoriteClass) {
+        // Keine spezielle Farbkodierung - verwende Standard-Textfarbe
+        return null;
+    }
+    
+    /**
      * Bestimmt die Farbe für den Status
      * 
      * @param status Der Status-Text
@@ -196,7 +247,7 @@ public class ProviderTableHelper {
     
     /**
      * Vergleicht zwei Tabellen-Texte für Sortierung
-     * ERWEITERT: Bessere Datum/Zeit-Vergleiche für Chart-Übersicht
+     * ERWEITERT: Bessere Datum/Zeit-Vergleiche für Chart-Übersicht und Favoritenklasse
      * 
      * @param text1 Erster Text
      * @param text2 Zweiter Text
@@ -217,7 +268,27 @@ public class ProviderTableHelper {
             }
         }
         
-        // NEU: Spezielle Behandlung für Datum/Zeit (für Chart-Übersicht relevant)
+        // NEU: Spezielle Behandlung für Favoritenklasse (numerische Sortierung 1-10, leere Werte am Ende)
+        if (columnIndex == COL_FAVORITE_CLASS) {
+            boolean text1Empty = (text1 == null || text1.trim().isEmpty() || text1.equals("-"));
+            boolean text2Empty = (text2 == null || text2.trim().isEmpty() || text2.equals("-"));
+            
+            if (text1Empty && text2Empty) return 0;
+            if (text1Empty) return 1;  // Leere Werte nach hinten
+            if (text2Empty) return -1;
+            
+            try {
+                // Versuche numerische Sortierung für Klassen 1-10
+                int num1 = Integer.parseInt(text1.trim());
+                int num2 = Integer.parseInt(text2.trim());
+                return Integer.compare(num1, num2);
+            } catch (NumberFormatException e) {
+                // Fallback zu String-Vergleich
+                return text1.compareToIgnoreCase(text2);
+            }
+        }
+        
+        // Spezielle Behandlung für Datum/Zeit (für Chart-Übersicht relevant)
         if (columnIndex == COL_LAST_UPDATE) {
             try {
                 DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss");
@@ -262,6 +333,7 @@ public class ProviderTableHelper {
     
     /**
      * Baut die Tabelle mit sortierten Items neu auf
+     * KORRIGIERT: Berechnet Hintergrundfarben neu statt sie nur zu speichern
      * 
      * @param table Die Tabelle
      * @param columns Die Tabellenspalten
@@ -270,7 +342,7 @@ public class ProviderTableHelper {
      */
     private void rebuildTableWithSortedItems(Table table, TableColumn[] columns, TableItem[] sortedItems,
                                            java.util.function.BiConsumer<String, TableItem> signalIdToItemCallback) {
-        // Speichere Daten
+        // Speichere Daten inklusive Favoritenklassen für Neuberechnung der Farben
         String[][] itemData = new String[sortedItems.length][];
         Color[][] itemColors = new Color[sortedItems.length][];
         
@@ -292,10 +364,18 @@ public class ProviderTableHelper {
             TableItem newItem = new TableItem(table, SWT.NONE);
             newItem.setText(itemData[i]);
             
+            // Vordergrundfarben wiederherstellen
             for (int j = 0; j < itemColors[i].length; j++) {
                 if (itemColors[i][j] != null) {
                     newItem.setForeground(j, itemColors[i][j]);
                 }
+            }
+            
+            // KORRIGIERT: Hintergrundfarbe neu berechnen basierend auf Favoritenklasse
+            String favoriteClass = itemData[i][COL_FAVORITE_CLASS];
+            Color backgroundColor = getFavoriteClassBackgroundColor(favoriteClass);
+            if (backgroundColor != null) {
+                newItem.setBackground(backgroundColor);
             }
             
             // Update Mapping über Callback
@@ -312,12 +392,14 @@ public class ProviderTableHelper {
      */
     public void showSignalDetails(TableItem item, java.util.Map<String, SignalData> lastSignalData) {
         String signalId = item.getText(COL_SIGNAL_ID);
+        String favoriteClass = item.getText(COL_FAVORITE_CLASS);
         String providerName = item.getText(COL_PROVIDER_NAME);
         SignalData signalData = lastSignalData.get(signalId);
         
         StringBuilder details = new StringBuilder();
         details.append("=== SIGNAL PROVIDER DETAILS ===\n\n");
         details.append("Signal ID: ").append(signalId).append("\n");
+        details.append("Favoritenklasse: ").append(favoriteClass != null && !favoriteClass.trim().isEmpty() && !favoriteClass.equals("-") ? favoriteClass : "Keine Klasse").append("\n");
         details.append("Provider Name: ").append(providerName).append("\n");
         details.append("Status: ").append(item.getText(COL_STATUS)).append("\n");
         details.append("Kontostand: ").append(item.getText(COL_EQUITY)).append("\n");
@@ -418,6 +500,7 @@ public class ProviderTableHelper {
         for (TableItem item : items) {
             try {
                 String signalId = item.getText(COL_SIGNAL_ID);
+                String favoriteClass = item.getText(COL_FAVORITE_CLASS);
                 String providerName = item.getText(COL_PROVIDER_NAME);
                 String status = item.getText(COL_STATUS);
                 
@@ -426,10 +509,11 @@ public class ProviderTableHelper {
                     providerName != null && !providerName.trim().isEmpty() &&
                     !"Lädt...".equals(providerName)) {
                     
-                    ProviderInfo info = new ProviderInfo(signalId, providerName, status);
+                    ProviderInfo info = new ProviderInfo(signalId, providerName, status, favoriteClass);
                     providerInfos.add(info);
                     
-                    LOGGER.fine("Provider-Info extrahiert: " + signalId + " (" + providerName + ")");
+                    LOGGER.fine("Provider-Info extrahiert: " + signalId + " (" + providerName + 
+                               ", Klasse: " + (favoriteClass != null && !favoriteClass.trim().isEmpty() && !favoriteClass.equals("-") ? favoriteClass : "Keine") + ")");
                 }
                 
             } catch (Exception e) {
@@ -442,23 +526,26 @@ public class ProviderTableHelper {
     }
     
     /**
-     * NEU: Einfache Datenklasse für Provider-Informationen
+     * NEU: Erweiterte Datenklasse für Provider-Informationen (mit Favoritenklasse)
      * (Für Chart-Übersicht zum Transport der Provider-Daten)
      */
     public static class ProviderInfo {
         public final String signalId;
         public final String providerName;
         public final String status;
+        public final String favoriteClass;  // NEU
         
-        public ProviderInfo(String signalId, String providerName, String status) {
+        public ProviderInfo(String signalId, String providerName, String status, String favoriteClass) {
             this.signalId = signalId;
             this.providerName = providerName;
             this.status = status;
+            this.favoriteClass = favoriteClass;
         }
         
         @Override
         public String toString() {
-            return "ProviderInfo{signalId='" + signalId + "', providerName='" + providerName + "', status='" + status + "'}";
+            return "ProviderInfo{signalId='" + signalId + "', providerName='" + providerName + 
+                   "', status='" + status + "', favoriteClass='" + favoriteClass + "'}";
         }
     }
 }

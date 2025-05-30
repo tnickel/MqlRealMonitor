@@ -21,6 +21,7 @@ import java.util.logging.Level;
 /**
  * Haupt-GUI für MqlRealMonitor
  * ERWEITERT: Neuer "Chart-Übersicht" Button für Signalprovider-Overview
+ * ERWEITERT: Favoritenklasse-Farben für Zeilen-Hintergrund
  */
 public class MqlRealMonitorGUI {
     
@@ -51,6 +52,12 @@ public class MqlRealMonitorGUI {
     private Font boldFont;
     private Font statusFont;
     
+    // NEU: Favoritenklasse-Farben (Helle Hintergrundfarben für bessere Lesbarkeit)
+    private Color favoriteClass1Color;  // Grün
+    private Color favoriteClass2Color;  // Gelb
+    private Color favoriteClass3Color;  // Orange
+    private Color favoriteClass4To10Color; // Rot (für 4-10)
+    
     public MqlRealMonitorGUI(MqlRealMonitor monitor) {
         this.monitor = monitor;
         this.display = Display.getDefault();
@@ -73,6 +80,12 @@ public class MqlRealMonitorGUI {
         greenColor = new Color(display, 0, 128, 0);
         redColor = new Color(display, 200, 0, 0);
         grayColor = new Color(display, 128, 128, 128);
+        
+        // NEU: Favoritenklasse-Hintergrundfarben (hell und gut lesbar)
+        favoriteClass1Color = new Color(display, 200, 255, 200);    // 1 = Hellgrün (sehr hell)
+        favoriteClass2Color = new Color(display, 255, 255, 200);    // 2 = Hellgelb 
+        favoriteClass3Color = new Color(display, 255, 220, 180);    // 3 = Hellorange
+        favoriteClass4To10Color = new Color(display, 255, 200, 200); // 4-10 = Hellrot
     }
     
     /**
@@ -571,6 +584,11 @@ public class MqlRealMonitorGUI {
             // Status in GUI setzen
             display.asyncExec(() -> {
                 updateStatus(resultMessage);
+                
+                // NEU: Initiale Sortierung nach Favoritenklasse durchführen
+                if (providerTable != null) {
+                    providerTable.performInitialSort();
+                }
             });
             
         } catch (Exception e) {
@@ -702,6 +720,12 @@ public class MqlRealMonitorGUI {
         if (boldFont != null && !boldFont.isDisposed()) boldFont.dispose();
         if (statusFont != null && !statusFont.isDisposed()) statusFont.dispose();
         
+        // NEU: Favoritenklasse-Farben freigeben
+        if (favoriteClass1Color != null && !favoriteClass1Color.isDisposed()) favoriteClass1Color.dispose();
+        if (favoriteClass2Color != null && !favoriteClass2Color.isDisposed()) favoriteClass2Color.dispose();
+        if (favoriteClass3Color != null && !favoriteClass3Color.isDisposed()) favoriteClass3Color.dispose();
+        if (favoriteClass4To10Color != null && !favoriteClass4To10Color.isDisposed()) favoriteClass4To10Color.dispose();
+        
         if (!display.isDisposed()) {
             display.dispose();
         }
@@ -744,5 +768,35 @@ public class MqlRealMonitorGUI {
      */
     public SignalProviderTable getProviderTable() {
         return providerTable;
+    }
+    
+    // NEU: Getter für Favoritenklasse-Farben (vereinfacht)
+    
+    /**
+     * NEU: Gibt die Hintergrundfarbe für Favoritenklasse 1 zurück (Hellgrün)
+     */
+    public Color getFavoriteClass1Color() {
+        return favoriteClass1Color;
+    }
+    
+    /**
+     * NEU: Gibt die Hintergrundfarbe für Favoritenklasse 2 zurück (Hellgelb)
+     */
+    public Color getFavoriteClass2Color() {
+        return favoriteClass2Color;
+    }
+    
+    /**
+     * NEU: Gibt die Hintergrundfarbe für Favoritenklasse 3 zurück (Hellorange)
+     */
+    public Color getFavoriteClass3Color() {
+        return favoriteClass3Color;
+    }
+    
+    /**
+     * NEU: Gibt die Hintergrundfarbe für Favoritenklassen 4-10 zurück (Hellrot)
+     */
+    public Color getFavoriteClass4To10Color() {
+        return favoriteClass4To10Color;
     }
 }

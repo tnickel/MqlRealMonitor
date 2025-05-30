@@ -14,6 +14,7 @@ import java.util.logging.Level;
 /**
  * Reader für die Favoriten-Datei
  * Verwaltet das Lesen und Parsen der favorites.txt Datei
+ * ERWEITERT: Unterstützt Favoritenklassen (ID:Klasse Format mit Zahlen 1-10)
  */
 public class FavoritesReader {
     
@@ -23,11 +24,13 @@ public class FavoritesReader {
     
     // Cache für Favoriten
     private List<String> cachedFavorites;
+    private Map<String, String> cachedFavoriteClasses; // Signal-ID -> Favoritenklasse (1-10)
     private long lastModified = 0;
     
     public FavoritesReader(MqlRealMonitorConfig config) {
         this.config = config;
         this.cachedFavorites = new ArrayList<>();
+        this.cachedFavoriteClasses = new HashMap<>();
     }
     
     /**
@@ -57,6 +60,7 @@ public class FavoritesReader {
             LOGGER.info("Lade Favoriten aus: " + favoritesFile);
             
             List<String> favorites = new ArrayList<>();
+            Map<String, String> favoriteClasses = new HashMap<>();
             
             try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
                 String line;
@@ -64,20 +68,25 @@ public class FavoritesReader {
                 
                 while ((line = reader.readLine()) != null) {
                     lineNumber++;
-                    String processedLine = processLine(line, lineNumber);
+                    FavoriteEntry entry = processLineWithClass(line, lineNumber);
                     
-                    if (processedLine != null && !processedLine.isEmpty()) {
-                        favorites.add(processedLine);
+                    if (entry != null && entry.signalId != null && !entry.signalId.isEmpty()) {
+                        favorites.add(entry.signalId);
+                        if (entry.favoriteClass != null && !entry.favoriteClass.isEmpty()) {
+                            favoriteClasses.put(entry.signalId, entry.favoriteClass);
+                        }
                     }
                 }
             }
             
             // Cache aktualisieren
             cachedFavorites = new ArrayList<>(favorites);
+            cachedFavoriteClasses = new HashMap<>(favoriteClasses);
             lastModified = currentModified;
             
-            LOGGER.info("Favoriten erfolgreich geladen: " + favorites.size() + " Einträge");
-            logFavoritesSummary(favorites);
+            LOGGER.info("Favoriten erfolgreich geladen: " + favorites.size() + " Einträge, " + 
+                       favoriteClasses.size() + " mit Klassen");
+            logFavoritesSummary(favorites, favoriteClasses);
             
             return favorites;
             
@@ -88,13 +97,57 @@ public class FavoritesReader {
     }
     
     /**
-     * Verarbeitet eine Zeile aus der Favoriten-Datei
+     * NEU: Liest alle Favoriten mit ihren Klassen
+     * 
+     * @return Map mit Signal-ID -> Favoritenklasse
+     */
+    public Map<String, String> readFavoritesWithClasses() {
+        // Erst die normalen Favoriten laden (um Cache zu aktualisieren)
+        readFavorites();
+        
+        // Dann die gecachten Klassen zurückgeben
+        return new HashMap<>(cachedFavoriteClasses);
+    }
+    
+    /**
+     * NEU: Gibt die Favoritenklasse für eine Signal-ID zurück
+     * 
+     * @param signalId Die Signal-ID
+     * @return Die Favoritenklasse (1-10) oder null wenn nicht vorhanden
+     */
+    public String getFavoriteClass(String signalId) {
+        if (signalId == null || signalId.trim().isEmpty()) {
+            return null;
+        }
+        
+        // Sicherstellen dass Favoriten geladen sind
+        if (cachedFavoriteClasses.isEmpty() && isFavoritesFileAvailable()) {
+            readFavorites();
+        }
+        
+        return cachedFavoriteClasses.get(signalId.trim());
+    }
+    
+    /**
+     * Verarbeitet eine Zeile aus der Favoriten-Datei (Legacy-Methode)
      * 
      * @param line Die Zeile aus der Datei
      * @param lineNumber Die Zeilennummer für Logging
      * @return Die extrahierte Signal-ID oder null bei Fehlern
      */
     private String processLine(String line, int lineNumber) {
+        FavoriteEntry entry = processLineWithClass(line, lineNumber);
+        return entry != null ? entry.signalId : null;
+    }
+    
+    /**
+     * NEU: Verarbeitet eine Zeile und extrahiert sowohl Signal-ID als auch Favoritenklasse
+     * 
+     * @param line Die Zeile aus der Datei
+     * @param lineNumber Die Zeilennummer für Logging
+     * @return FavoriteEntry mit Signal-ID und Klasse oder null bei Fehlern
+     */
+    private FavoriteEntry processLineWithClass(String line, int lineNumber) {
         if (line == null) {
             return null;
         }
@@ -108,20 +161,31 @@ public class FavoritesReader {
         }
         
         try {
-            // Format: ID:Kategorie oder nur ID
             String signalId;
+            String favoriteClass = null;
             
+            // Format: ID:Klasse (1-10) oder nur ID
             if (line.contains(":")) {
                 String[] parts = line.split(":", 2);
                 signalId = parts[0].trim();
+                if (parts.length > 1 && !parts[1].trim().isEmpty()) {
+                    String classCandidate = parts[1].trim();
+                    // Validiere dass Klasse eine Nummer zwischen 1-10 ist
+                    if (isValidFavoriteClass(classCandidate)) {
+                        favoriteClass = classCandidate;
+                    } else {
+                        LOGGER.warning("Ungültige Favoritenklasse in Zeile " + lineNumber + ": " + classCandidate + " (muss 1-10 sein)");
+                    }
+                }
             } else {
                 signalId = line;
             }
             
             // Signal-ID validieren
             if (isValidSignalId(signalId)) {
-                LOGGER.fine("Gefundene Signal-ID in Zeile " + lineNumber + ": " + signalId);
-                return signalId;
+                LOGGER.fine("Gefundene Signal-ID in Zeile " + lineNumber + ": " + signalId + 
+                           (favoriteClass != null ? " (Klasse: " + favoriteClass + ")" : ""));
+                return new FavoriteEntry(signalId, favoriteClass);
             } else {
                 LOGGER.warning("Ungültige Signal-ID in Zeile " + lineNumber + ": " + signalId);
                 return null;
@@ -130,6 +194,25 @@ public class FavoritesReader {
         } catch (Exception e) {
             LOGGER.warning("Fehler beim Parsen von Zeile " + lineNumber + ": " + line + " - " + e.getMessage());
             return null;
+        }
+    }
+    
+    /**
+     * NEU: Validiert eine Favoritenklasse (muss 1-10 sein)
+     * 
+     * @param favoriteClass Die zu validierende Favoritenklasse
+     * @return true wenn gültig (1-10), false sonst
+     */
+    private boolean isValidFavoriteClass(String favoriteClass) {
+        if (favoriteClass == null || favoriteClass.trim().isEmpty()) {
+            return false;
+        }
+        
+        try {
+            int classNumber = Integer.parseInt(favoriteClass.trim());
+            return classNumber >= 1 && classNumber <= 10;
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
     
@@ -190,12 +273,23 @@ public class FavoritesReader {
     private String createSampleFavoritesContent() {
         StringBuilder content = new StringBuilder();
         content.append("# MQL5 Signalprovider Favoriten\n");
-        content.append("# Format: SignalID:Kategorie oder nur SignalID\n");
+        content.append("# Format: SignalID:Favoritenklasse oder nur SignalID\n");
+        content.append("# Favoritenklasse muss eine Nummer zwischen 1-10 sein\n");
         content.append("# Zeilen die mit # oder // beginnen werden ignoriert\n");
         content.append("#\n");
-        content.append("# Beispiele:\n");
-        content.append("# 123456:Trading Robot\n");
-        content.append("# 789012:Manual Trading\n");
+        content.append("# Beispiele mit Favoritenklassen (1-10):\n");
+        content.append("# 123456:1\n");
+        content.append("# 789012:2\n");
+        content.append("# 345678:3\n");
+        content.append("# 111222:4\n");
+        content.append("# 333444:5\n");
+        content.append("# 555666:6\n");
+        content.append("# 777888:7\n");
+        content.append("# 999000:8\n");
+        content.append("# 111333:9\n");
+        content.append("# 444666:10\n");
+        content.append("#\n");
+        content.append("# Beispiele ohne Klasse:\n");
         content.append("# 345678\n");
         content.append("#\n");
         content.append("# Fügen Sie hier Ihre Signal-IDs hinzu:\n");
@@ -208,8 +302,9 @@ public class FavoritesReader {
      * Loggt eine Zusammenfassung der geladenen Favoriten
      * 
      * @param favorites Die Liste der Favoriten
+     * @param favoriteClasses Map der Favoritenklassen
      */
-    private void logFavoritesSummary(List<String> favorites) {
+    private void logFavoritesSummary(List<String> favorites, Map<String, String> favoriteClasses) {
         if (favorites.isEmpty()) {
             LOGGER.info("Keine Favoriten gefunden");
             return;
@@ -217,7 +312,13 @@ public class FavoritesReader {
         
         LOGGER.info("Favoriten-Übersicht:");
         for (int i = 0; i < Math.min(favorites.size(), 10); i++) {
-            LOGGER.info("  " + (i + 1) + ". " + favorites.get(i));
+            String signalId = favorites.get(i);
+            String favoriteClass = favoriteClasses.get(signalId);
+            String displayText = signalId;
+            if (favoriteClass != null) {
+                displayText += " (Klasse " + favoriteClass + ")";
+            }
+            LOGGER.info("  " + (i + 1) + ". " + displayText);
         }
         
         if (favorites.size() > 10) {
@@ -266,6 +367,7 @@ public class FavoritesReader {
      */
     public void refreshCache() {
         cachedFavorites.clear();
+        cachedFavoriteClasses.clear();
         lastModified = 0;
         LOGGER.info("Favoriten-Cache geleert - Datei wird beim nächsten Zugriff neu geladen");
     }
@@ -296,8 +398,22 @@ public class FavoritesReader {
         
         List<String> favorites = readFavorites();
         stats.put("favorites_count", favorites.size());
+        stats.put("favorites_with_classes_count", cachedFavoriteClasses.size());
         stats.put("cache_active", !cachedFavorites.isEmpty());
         
         return stats;
+    }
+    
+    /**
+     * NEU: Datenklasse für Favoriten-Einträge
+     */
+    private static class FavoriteEntry {
+        public final String signalId;
+        public final String favoriteClass;
+        
+        public FavoriteEntry(String signalId, String favoriteClass) {
+            this.signalId = signalId;
+            this.favoriteClass = favoriteClass;
+        }
     }
 }
