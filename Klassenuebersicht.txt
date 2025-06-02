@@ -1,6 +1,6 @@
 # MqlRealMonitor - Klassenübersicht
-# Generated: 2025-05-30
-# Version: 1.0.0
+# Generated: 2025-06-02
+# Version: 1.1.0
 #
 # PROJECT DESCRIPTION:
 # MqlRealMonitor ist eine Java-Desktop-Anwendung für das Monitoring von MQL5 Signal-Providern.
@@ -13,6 +13,7 @@
 # - Tick-Daten-Speicherung in CSV-Format für historische Analyse
 # - Dual-Chart-System: Equity Drawdown Chart (%) + Profit Development Chart
 # - Provider-Tabelle mit Live-Updates und Chart-Übersicht für alle Provider
+# - NEU: Wochen- und Monatsgewinn-Berechnung basierend auf historischen Tick-Daten
 # - Direkter Browser-Link zu MQL5-Signalprovider-Seiten
 # - Wiederverwendbare Chart-Komponenten und modulare GUI-Architektur
 #
@@ -27,6 +28,7 @@
 # - Modular aufgebaut mit klarer Package-Struktur
 # - Refactored GUI: TickChartWindow von >1000 auf <100 Zeilen reduziert
 # - Wiederverwendbare Chart-Panels für verschiedene Fenster
+# - NEU: Automatische Profit-Berechnungen für Wochen- und Monatsgewinne
 # - Robuste Fehlerbehandlung und umfassende Diagnostik
 # - Thread-sichere GUI-Updates und automatische Refresh-Zyklen
 # 
@@ -51,8 +53,8 @@ com.mql.realmonitor.exception.MqlMonitorException | Spezifische Exception-Klasse
 
 ## GUI Layer - Core
 com.mql.realmonitor.gui.MqlRealMonitorGUI | Haupt-GUI-Klasse mit Provider-Tabelle und Toolbar. Erweitert um Chart-Übersicht Button für Signalprovider-Overview.
-com.mql.realmonitor.gui.SignalProviderTable | Refactored Provider-Tabelle mit modularer Architektur. Kernfunktionen mit ausgelagerten Hilfsklassen.
-com.mql.realmonitor.gui.ProviderTableHelper | Hilfsfunktionen für SignalProviderTable. Sortierung, Formatierung und erweiterte Chart-Übersicht-Funktionen.
+com.mql.realmonitor.gui.SignalProviderTable | Refactored Provider-Tabelle mit modularer Architektur. ERWEITERT: WeeklyProfit und MonthlyProfit Spalten für Gewinn-Berechnungen.
+com.mql.realmonitor.gui.ProviderTableHelper | Hilfsfunktionen für SignalProviderTable. ERWEITERT: Support für Profit-Spalten mit Farbkodierung und numerischer Sortierung.
 com.mql.realmonitor.gui.SignalProviderContextMenu | Kontextmenü für Provider-Tabelle. Erweitert um MQL5-Website-Link zum direkten Öffnen der Signalprovider-Seite.
 com.mql.realmonitor.gui.StatusUpdater | Verwaltet periodische Status-Updates und Thread-sichere GUI-Aktualisierungen. Memory-Monitoring und Laufzeit-Informationen.
 
@@ -86,6 +88,7 @@ com.mql.realmonitor.tickdata.TickDataWriter | Writer für Tick-Daten mit robuste
 
 ## Utilities
 com.mql.realmonitor.utils.MqlUtils | Utility-Klasse mit allgemeinen Hilfsfunktionen. Logging-Setup, Validierung, Formatierung und File-Handling-Utilities.
+com.mql.realmonitor.utils.PeriodProfitCalculator | NEU: Berechnet Wochen- und Monatsgewinne basierend auf Tick-Daten. Analysiert Equity-Veränderungen seit Wochenstart/Monatsstart.
 
 # ========================================================================
 # ARCHITECTURE SUMMARY
@@ -97,6 +100,7 @@ com.mql.realmonitor.utils.MqlUtils | Utility-Klasse mit allgemeinen Hilfsfunktio
 - Dual Chart System: Both Drawdown and Profit charts managed by unified TickChartManager
 - Chart Overview: New SignalProviderOverviewWindow for viewing all providers at once
 - MQL5 Website Integration: Direct browser links to signal provider pages
+- NEU: Profit Analysis: Automatic calculation of weekly and monthly profit percentages
 - Robust Data Handling: Improved error handling and diagnostics throughout
 
 ## Package Structure:
@@ -108,8 +112,32 @@ com.mql.realmonitor.utils.MqlUtils | Utility-Klasse mit allgemeinen Hilfsfunktio
 - GUI: User interface (core, charts, windows, utilities)
 - Parser: HTML parsing and data models
 - TickData: CSV file writing and reading
-- Utils: General utility functions
+- Utils: General utility functions (including new profit calculations)
 
-## Total Classes: 25
+## Recent Enhancements (Version 1.1.0):
+- NEU: WeeklyProfit and MonthlyProfit columns in provider table
+- NEU: PeriodProfitCalculator for historical profit analysis
+- ERWEITERT: Provider table now shows 13 columns (was 11)
+- ERWEITERT: Color-coded profit values (green=positive, red=negative)
+- ERWEITERT: Sortable profit columns with N/A handling
+- ERWEITERT: Comprehensive debug logging for profit calculations
+
+## Column Structure (Provider Table):
+0. Signal ID
+1. Favoritenklasse  
+2. Provider Name
+3. Status
+4. Kontostand
+5. Floating Profit
+6. Equity Drawdown
+7. Gesamtwert
+8. WeeklyProfit (NEU)
+9. MonthlyProfit (NEU)
+10. Währung
+11. Letzte Aktualisierung
+12. Änderung
+
+## Total Classes: 26 (was 25)
 ## LOC Reduction: TickChartWindow reduced from >1000 to <100 lines through refactoring
 ## Reusability: Chart panels can now be reused across different windows
+## NEW: Automated profit calculations for performance tracking
