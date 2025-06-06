@@ -339,36 +339,50 @@ public class SignalProviderTable {
         // NEU: Favoritenklasse ermitteln
         String favoriteClass = getFavoriteClassForSignal(signalId);
         
-        // NEU: Provider-Namen in ID-Translation speichern falls verfügbar
-        String providerName = signalData.getProviderName();
-        saveProviderNameToTranslation(signalId, providerName);
+        // *** KORRIGIERT: Provider-Name aus ID-Translation bevorzugen ***
+        String providerName;
+        
+        // Erst versuchen aus ID-Translation zu holen
+        String nameFromTranslation = getProviderNameForSignal(signalId);
+        if (nameFromTranslation != null && !nameFromTranslation.equals("Unbekannt") && !nameFromTranslation.trim().isEmpty()) {
+            // ID-Translation hat einen gültigen Namen - verwende diesen
+            providerName = nameFromTranslation;
+            LOGGER.info("Verwende Provider-Name aus ID-Translation für " + signalId + ": " + providerName);
+        } else {
+            // Fallback: Verwende Namen aus SignalData (HTML-Parsing)
+            providerName = signalData.getProviderName();
+            LOGGER.info("Verwende Provider-Name aus SignalData für " + signalId + ": " + providerName + " (ID-Translation nicht verfügbar)");
+            
+            // Namen in ID-Translation speichern für nächstes Mal
+            saveProviderNameToTranslation(signalId, providerName);
+        }
         
         // NEU: Profit-Werte berechnen
         PeriodProfitCalculator.ProfitResult profitResult = calculateProfitsForSignal(signalId);
         
-        // Tabellendaten setzen (ERWEITERT: Neue Profit-Spalte hinzugefügt)
+        // Tabellendaten setzen - KORRIGIERT: Verwende bevorzugten Provider-Namen
         item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
         item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);                     
-        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);
+        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);  // ← KORRIGIERT: Bevorzugte Namen
         item.setText(ProviderTableHelper.COL_STATUS, "OK");
         item.setText(ProviderTableHelper.COL_EQUITY, signalData.getFormattedEquity());
-        item.setText(ProviderTableHelper.COL_PROFIT, signalData.getFormattedProfit());           // NEU: Profit-Spalte
+        item.setText(ProviderTableHelper.COL_PROFIT, signalData.getFormattedProfit());
         item.setText(ProviderTableHelper.COL_FLOATING, signalData.getFormattedFloatingProfit());
         item.setText(ProviderTableHelper.COL_EQUITY_DRAWDOWN, signalData.getFormattedEquityDrawdown());
         item.setText(ProviderTableHelper.COL_TOTAL, signalData.getFormattedTotalValue());
-        item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT, profitResult.getFormattedWeeklyProfit());   // NEU
-        item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT, profitResult.getFormattedMonthlyProfit()); // NEU
+        item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT, profitResult.getFormattedWeeklyProfit());
+        item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT, profitResult.getFormattedMonthlyProfit());
         item.setText(ProviderTableHelper.COL_CURRENCY, signalData.getCurrency());
         item.setText(ProviderTableHelper.COL_LAST_UPDATE, signalData.getFormattedTimestamp());
         item.setText(ProviderTableHelper.COL_CHANGE, changeText);
         
-        // Farben setzen über Helper (ERWEITERT: Neue Profit-Spalten-Farben)
-        item.setForeground(ProviderTableHelper.COL_PROFIT, tableHelper.getProfitColor(signalData.getProfit()));   // NEU: Profit-Spalten-Farbe
+        // Farben setzen über Helper
+        item.setForeground(ProviderTableHelper.COL_PROFIT, tableHelper.getProfitColor(signalData.getProfit()));
         item.setForeground(ProviderTableHelper.COL_FLOATING, tableHelper.getFloatingProfitColor(signalData.getFloatingProfit()));
         item.setForeground(ProviderTableHelper.COL_EQUITY_DRAWDOWN, tableHelper.getEquityDrawdownColor(signalData.getEquityDrawdownPercent()));
         item.setForeground(ProviderTableHelper.COL_CHANGE, changeColor);
         
-        // NEU: Farben für Profit-Spalten setzen
+        // Farben für Profit-Spalten setzen
         if (profitResult.hasWeeklyData()) {
             item.setForeground(ProviderTableHelper.COL_WEEKLY_PROFIT, 
                               tableHelper.getProfitColor(profitResult.getWeeklyProfitPercent()));
@@ -381,19 +395,18 @@ public class SignalProviderTable {
         // Status-Farbe
         item.setForeground(ProviderTableHelper.COL_STATUS, parentGui.getGreenColor());
         
-        // NEU: Zeilen-Hintergrundfarbe basierend auf Favoritenklasse setzen
-        // 1=hellgrün, 2=hellgelb, 3=hellorange, 4-10=hellrot
+        // Zeilen-Hintergrundfarbe basierend auf Favoritenklasse setzen
         Color backgroundColor = tableHelper.getFavoriteClassBackgroundColor(favoriteClass);
         if (backgroundColor != null) {
-            item.setBackground(backgroundColor); // Setzt Hintergrundfarbe für die ganze Zeile
+            item.setBackground(backgroundColor);
             LOGGER.fine("Hintergrundfarbe gesetzt für Signal " + signalId + " (Klasse " + favoriteClass + ")");
         }
         
         // Daten im Cache speichern
         lastSignalData.put(signalId, signalData);
         
-        LOGGER.fine("Provider-Daten aktualisiert (Modular+Extended+ProfitColumn+IdTranslation): " + signalData.getSummary() + 
-                   " (Klasse: " + favoriteClass + ", Profit: " + signalData.getFormattedProfit() + 
+        LOGGER.fine("Provider-Daten aktualisiert (KORRIGIERT - ID-Translation bevorzugt): " + signalData.getSummary() + 
+                   " (Klasse: " + favoriteClass + ", Name: " + providerName + 
                    ", WeeklyProfit: " + profitResult.getFormattedWeeklyProfit() + 
                    ", MonthlyProfit: " + profitResult.getFormattedMonthlyProfit() + ")");
     }
