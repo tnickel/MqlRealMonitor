@@ -14,8 +14,9 @@ import com.mql.realmonitor.data.TickDataLoader.TickDataSet;
 /**
  * Berechnet Wochen- und Monatsgewinne basierend auf Tick-Daten
  * 
- * WeeklyProfit: Berechnet vom letzten Sonntag bis jetzt
- * MonthlyProfit: Berechnet vom 1. des aktuellen Monats bis jetzt
+ * GEÄNDERT: Verwendet jetzt Profit-Werte statt Equity-Werte für die Berechnung
+ * WeeklyProfit: Berechnet vom letzten Sonntag bis jetzt (basierend auf Profit)
+ * MonthlyProfit: Berechnet vom 1. des aktuellen Monats bis jetzt (basierend auf Profit)
  */
 public class PeriodProfitCalculator {
     
@@ -77,6 +78,7 @@ public class PeriodProfitCalculator {
     
     /**
      * Berechnet Wochen- und Monatsgewinne für einen Signal-Provider
+     * GEÄNDERT: Verwendet jetzt Profit-Werte statt Equity-Werte
      * 
      * @param tickFilePath Pfad zur Tick-Datei
      * @param signalId Die Signal-ID
@@ -88,7 +90,7 @@ public class PeriodProfitCalculator {
             return new ProfitResult(0.0, 0.0, false, false, "Ungültige Parameter");
         }
         
-        LOGGER.info("PROFIT DEBUG: Berechne Profits für Signal " + signalId + " - Tick-Datei: " + tickFilePath);
+        LOGGER.info("PROFIT DEBUG: Berechne Profits für Signal " + signalId + " - Tick-Datei: " + tickFilePath + " (PROFIT-BASIERT)");
         
         // Tick-Daten laden
         TickDataSet dataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
@@ -98,7 +100,7 @@ public class PeriodProfitCalculator {
         }
         
         List<TickData> ticks = dataSet.getTicks();
-        LOGGER.info("PROFIT DEBUG: " + ticks.size() + " Ticks geladen für Signal " + signalId);
+        LOGGER.info("PROFIT DEBUG: " + ticks.size() + " Ticks geladen für Signal " + signalId + " (PROFIT-BASIERT)");
         
         // Mindestens 2 Ticks erforderlich für sinnvolle Profit-Berechnung
         if (ticks.size() < 2) {
@@ -106,8 +108,8 @@ public class PeriodProfitCalculator {
             return new ProfitResult(0.0, 0.0, false, false, "Nicht genügend Daten für Profit-Berechnung");
         }
         
-        // Aktuelle Equity (letzter Tick)
-        double currentEquity = dataSet.getLatestTick().getEquity();
+        // GEÄNDERT: Aktueller Profit (letzter Tick) statt Equity
+        double currentProfit = dataSet.getLatestTick().getProfit();
         LocalDateTime now = LocalDateTime.now();
         
         // Referenzzeitpunkte ermitteln
@@ -116,79 +118,102 @@ public class PeriodProfitCalculator {
         
         LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Aktuell: " + now + 
                    ", Wochenstart: " + weekStart + ", Monatsstart: " + monthStart + 
-                   ", Aktuelle Equity: " + currentEquity);
+                   ", Aktueller Profit: " + currentProfit + " (PROFIT-BASIERT)");
         
         // Zeige erste und letzte Ticks für Debugging
         TickData firstTick = ticks.get(0);
         TickData lastTick = ticks.get(ticks.size() - 1);
         LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Erster Tick: " + firstTick.getTimestamp() + 
-                   " (Equity: " + firstTick.getEquity() + "), Letzter Tick: " + lastTick.getTimestamp() + 
-                   " (Equity: " + lastTick.getEquity() + ")");
+                   " (Profit: " + firstTick.getProfit() + "), Letzter Tick: " + lastTick.getTimestamp() + 
+                   " (Profit: " + lastTick.getProfit() + ") [PROFIT-BASIERT]");
         
-        // VERBESSERTE EQUITY-SUCHE: Verwende intelligente Fallback-Strategien
-        EquitySearchResult weekEquityResult = findBestEquityForReference(ticks, weekStart, "Wochenstart", signalId);
-        EquitySearchResult monthEquityResult = findBestEquityForReference(ticks, monthStart, "Monatsstart", signalId);
+        // GEÄNDERT: VERBESSERTE PROFIT-SUCHE: Verwendet intelligente Fallback-Strategien
+        ProfitSearchResult weekProfitResult = findBestProfitForReference(ticks, weekStart, "Wochenstart", signalId);
+        ProfitSearchResult monthProfitResult = findBestProfitForReference(ticks, monthStart, "Monatsstart", signalId);
         
         // Profit-Berechnungen
-        boolean hasWeeklyData = weekEquityResult.hasValidData();
-        boolean hasMonthlyData = monthEquityResult.hasValidData();
+        boolean hasWeeklyData = weekProfitResult.hasValidData();
+        boolean hasMonthlyData = monthProfitResult.hasValidData();
         
         double weeklyProfit = 0.0;
         double monthlyProfit = 0.0;
         
         if (hasWeeklyData) {
-            double weekStartEquity = weekEquityResult.getEquity();
-            weeklyProfit = ((currentEquity - weekStartEquity) / weekStartEquity) * 100.0;
-            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Wochenprofit berechnet: (" + currentEquity + " - " + 
-                       weekStartEquity + ") / " + weekStartEquity + " * 100 = " + String.format("%.4f%%", weeklyProfit));
+            double weekStartProfit = weekProfitResult.getProfit();
+            // GEÄNDERT: Profit-Differenz in Prozent der Basis berechnen
+            weeklyProfit = calculateProfitChange(currentProfit, weekStartProfit);
+            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Wochenprofit berechnet: (" + currentProfit + " - " + 
+                       weekStartProfit + ") / |" + weekStartProfit + "| * 100 = " + String.format("%.4f%%", weeklyProfit) + " [PROFIT-BASIERT]");
         } else {
-            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine gültigen Wochendaten verfügbar");
+            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine gültigen Wochendaten verfügbar (PROFIT-BASIERT)");
         }
         
         if (hasMonthlyData) {
-            double monthStartEquity = monthEquityResult.getEquity();
-            monthlyProfit = ((currentEquity - monthStartEquity) / monthStartEquity) * 100.0;
-            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Monatsprofit berechnet: (" + currentEquity + " - " + 
-                       monthStartEquity + ") / " + monthStartEquity + " * 100 = " + String.format("%.4f%%", monthlyProfit));
+            double monthStartProfit = monthProfitResult.getProfit();
+            // GEÄNDERT: Profit-Differenz in Prozent der Basis berechnen
+            monthlyProfit = calculateProfitChange(currentProfit, monthStartProfit);
+            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Monatsprofit berechnet: (" + currentProfit + " - " + 
+                       monthStartProfit + ") / |" + monthStartProfit + "| * 100 = " + String.format("%.4f%%", monthlyProfit) + " [PROFIT-BASIERT]");
         } else {
-            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine gültigen Monatsdaten verfügbar");
+            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine gültigen Monatsdaten verfügbar (PROFIT-BASIERT)");
         }
         
         // Diagnostik-Informationen
         StringBuilder diagnostic = new StringBuilder();
         diagnostic.append("Signal: ").append(signalId).append(", ");
-        diagnostic.append("Current Equity: ").append(String.format("%.2f", currentEquity)).append(", ");
-        diagnostic.append("Week: ").append(weekEquityResult.getDiagnosticInfo()).append(", ");
-        diagnostic.append("Month: ").append(monthEquityResult.getDiagnosticInfo());
+        diagnostic.append("Current Profit: ").append(String.format("%.2f", currentProfit)).append(", ");
+        diagnostic.append("Week: ").append(weekProfitResult.getDiagnosticInfo()).append(", ");
+        diagnostic.append("Month: ").append(monthProfitResult.getDiagnosticInfo()).append(" [PROFIT-BASIERT]");
         
         LOGGER.info("PROFIT DEBUG: Ergebnis für " + signalId + ": WeeklyProfit=" + String.format("%.4f%%", weeklyProfit) + 
-                   ", MonthlyProfit=" + String.format("%.4f%%", monthlyProfit));
+                   ", MonthlyProfit=" + String.format("%.4f%%", monthlyProfit) + " [PROFIT-BASIERT]");
         
         return new ProfitResult(weeklyProfit, monthlyProfit, hasWeeklyData, hasMonthlyData, diagnostic.toString());
     }
     
     /**
-     * Hilfsobjekt für Equity-Suchergebnisse
+     * NEUE METHODE: Berechnet die prozentuale Änderung zwischen zwei Profit-Werten
+     * Spezielle Behandlung für positive/negative Profit-Werte
+     * 
+     * @param currentProfit Aktueller Profit-Wert
+     * @param referenceProfit Referenz-Profit-Wert
+     * @return Prozentuale Änderung
      */
-    private static class EquitySearchResult {
-        private final Double equity;
+    private static double calculateProfitChange(double currentProfit, double referenceProfit) {
+        // Absolute Differenz
+        double difference = currentProfit - referenceProfit;
+        
+        // Wenn Referenz-Profit 0 ist, geben wir die absolute Differenz als Prozent zurück
+        if (Math.abs(referenceProfit) < 0.01) {
+            return difference * 100.0; // Interpretiere als direkte Prozentpunkte
+        }
+        
+        // Normale prozentuale Berechnung basierend auf Absolutwert der Referenz
+        return (difference / Math.abs(referenceProfit)) * 100.0;
+    }
+    
+    /**
+     * GEÄNDERT: Hilfsobjekt für Profit-Suchergebnisse (statt Equity)
+     */
+    private static class ProfitSearchResult {
+        private final Double profit;
         private final LocalDateTime timestamp;
         private final String strategy;
         private final boolean hasData;
         
-        public EquitySearchResult(Double equity, LocalDateTime timestamp, String strategy) {
-            this.equity = equity;
+        public ProfitSearchResult(Double profit, LocalDateTime timestamp, String strategy) {
+            this.profit = profit;
             this.timestamp = timestamp;
             this.strategy = strategy;
-            this.hasData = (equity != null && equity > 0);
+            this.hasData = (profit != null);
         }
         
-        public static EquitySearchResult noData(String reason) {
-            return new EquitySearchResult(null, null, reason);
+        public static ProfitSearchResult noData(String reason) {
+            return new ProfitSearchResult(null, null, reason);
         }
         
         public boolean hasValidData() { return hasData; }
-        public double getEquity() { return equity != null ? equity : 0.0; }
+        public double getProfit() { return profit != null ? profit : 0.0; }
         public LocalDateTime getTimestamp() { return timestamp; }
         
         public String getDiagnosticInfo() {
@@ -196,13 +221,13 @@ public class PeriodProfitCalculator {
                 return strategy + " (keine Daten)";
             }
             return String.format("%s=%.2f am %s (%s)", 
-                               strategy.split(" ")[0], equity, 
+                               strategy.split(" ")[0], profit, 
                                timestamp != null ? timestamp.toLocalDate() : "unknown", strategy);
         }
     }
     
     /**
-     * VERBESSERTE METHODE: Findet die beste verfügbare Equity für einen Referenzzeitpunkt
+     * GEÄNDERT: VERBESSERTE METHODE: Findet den besten verfügbaren Profit für einen Referenzzeitpunkt
      * 
      * Strategie:
      * 1. Suche exakt am Referenzzeitpunkt
@@ -210,30 +235,30 @@ public class PeriodProfitCalculator {
      * 3. FALLBACK: Suche den letzten verfügbaren Tick VOR dem Referenzzeitpunkt
      * 4. Als letzte Option: Verwende ersten Tick (nur wenn alle anderen fehlschlagen)
      */
-    private static EquitySearchResult findBestEquityForReference(List<TickData> ticks, LocalDateTime referenceTime, String purpose, String signalId) {
+    private static ProfitSearchResult findBestProfitForReference(List<TickData> ticks, LocalDateTime referenceTime, String purpose, String signalId) {
         if (ticks == null || ticks.isEmpty()) {
-            LOGGER.warning("EQUITY DEBUG: Keine Ticks verfügbar für " + purpose + " von Signal " + signalId);
-            return EquitySearchResult.noData("keine Ticks");
+            LOGGER.warning("PROFIT DEBUG: Keine Ticks verfügbar für " + purpose + " von Signal " + signalId + " [PROFIT-BASIERT]");
+            return ProfitSearchResult.noData("keine Ticks");
         }
         
-        LOGGER.info("EQUITY DEBUG: Suche " + purpose + " für " + referenceTime + " in " + ticks.size() + " Ticks (Signal " + signalId + ")");
+        LOGGER.info("PROFIT DEBUG: Suche " + purpose + " für " + referenceTime + " in " + ticks.size() + " Ticks (Signal " + signalId + ") [PROFIT-BASIERT]");
         
         LocalDateTime firstTickTime = ticks.get(0).getTimestamp();
         LocalDateTime lastTickTime = ticks.get(ticks.size() - 1).getTimestamp();
-        LOGGER.info("EQUITY DEBUG: Verfügbarer Zeitraum: " + firstTickTime + " bis " + lastTickTime);
+        LOGGER.info("PROFIT DEBUG: Verfügbarer Zeitraum: " + firstTickTime + " bis " + lastTickTime + " [PROFIT-BASIERT]");
         
         // Strategie 1: Suche Tick am oder nach dem Referenzzeitpunkt (bevorzugt)
         for (TickData tick : ticks) {
             if (!tick.getTimestamp().isBefore(referenceTime)) {
-                LOGGER.info("EQUITY DEBUG: " + purpose + " - Strategie 1 (ab Referenzzeit): " + tick.getEquity() + 
-                           " am " + tick.getTimestamp() + " (Signal " + signalId + ")");
-                return new EquitySearchResult(tick.getEquity(), tick.getTimestamp(), 
+                LOGGER.info("PROFIT DEBUG: " + purpose + " - Strategie 1 (ab Referenzzeit): " + tick.getProfit() + 
+                           " am " + tick.getTimestamp() + " (Signal " + signalId + ") [PROFIT-BASIERT]");
+                return new ProfitSearchResult(tick.getProfit(), tick.getTimestamp(), 
                                             "Strategie 1 (ab " + referenceTime.toLocalDate() + ")");
             }
         }
         
         // Strategie 2: FALLBACK - Suche letzten verfügbaren Tick VOR dem Referenzzeitpunkt
-        LOGGER.info("EQUITY DEBUG: " + purpose + " - Kein Tick ab " + referenceTime + " gefunden, suche letzten Tick davor (Signal " + signalId + ")");
+        LOGGER.info("PROFIT DEBUG: " + purpose + " - Kein Tick ab " + referenceTime + " gefunden, suche letzten Tick davor (Signal " + signalId + ") [PROFIT-BASIERT]");
         
         TickData lastTickBefore = null;
         for (TickData tick : ticks) {
@@ -245,18 +270,18 @@ public class PeriodProfitCalculator {
         }
         
         if (lastTickBefore != null) {
-            LOGGER.info("EQUITY DEBUG: " + purpose + " - Strategie 2 (letzter vor Referenzzeit): " + lastTickBefore.getEquity() + 
-                       " am " + lastTickBefore.getTimestamp() + " (Signal " + signalId + ")");
-            return new EquitySearchResult(lastTickBefore.getEquity(), lastTickBefore.getTimestamp(), 
+            LOGGER.info("PROFIT DEBUG: " + purpose + " - Strategie 2 (letzter vor Referenzzeit): " + lastTickBefore.getProfit() + 
+                       " am " + lastTickBefore.getTimestamp() + " (Signal " + signalId + ") [PROFIT-BASIERT]");
+            return new ProfitSearchResult(lastTickBefore.getProfit(), lastTickBefore.getTimestamp(), 
                                         "Strategie 2 (letzter vor " + referenceTime.toLocalDate() + ")");
         }
         
         // Strategie 3: Als absolute letzte Option - verwende ersten verfügbaren Tick
         // (nur wenn alle Ticks nach dem Referenzzeitpunkt liegen)
-        LOGGER.warning("EQUITY DEBUG: " + purpose + " - Alle Ticks liegen nach " + referenceTime + 
-                      ", verwende ersten verfügbaren als Notlösung (Signal " + signalId + ")");
+        LOGGER.warning("PROFIT DEBUG: " + purpose + " - Alle Ticks liegen nach " + referenceTime + 
+                      ", verwende ersten verfügbaren als Notlösung (Signal " + signalId + ") [PROFIT-BASIERT]");
         TickData firstTick = ticks.get(0);
-        return new EquitySearchResult(firstTick.getEquity(), firstTick.getTimestamp(), 
+        return new ProfitSearchResult(firstTick.getProfit(), firstTick.getTimestamp(), 
                                     "Strategie 3 (Notlösung - erster Tick)");
     }
     
@@ -301,12 +326,12 @@ public class PeriodProfitCalculator {
     }
     
     /**
-     * VERALTETE METHODE - wird durch findBestEquityForReference ersetzt
+     * VERALTETE METHODE - wird durch findBestProfitForReference ersetzt
      * Wird für Kompatibilität beibehalten, aber nicht mehr verwendet
      */
     @Deprecated
     private static Double findEquityAtOrAfter(List<TickData> ticks, LocalDateTime targetTime) {
-        return findBestEquityForReference(ticks, targetTime, "Legacy", "unknown").getEquity();
+        return findBestProfitForReference(ticks, targetTime, "Legacy", "unknown").getProfit();
     }
     
     /**
@@ -325,6 +350,7 @@ public class PeriodProfitCalculator {
     
     /**
      * Erstellt eine detaillierte Diagnose für Debugging
+     * GEÄNDERT: Jetzt mit Profit-Werten statt Equity-Werten
      * 
      * @param tickFilePath Pfad zur Tick-Datei
      * @param signalId Die Signal-ID
@@ -332,7 +358,7 @@ public class PeriodProfitCalculator {
      */
     public static String createDetailedDiagnostic(String tickFilePath, String signalId) {
         StringBuilder diag = new StringBuilder();
-        diag.append("=== PERIOD PROFIT DIAGNOSTIC ===\n");
+        diag.append("=== PERIOD PROFIT DIAGNOSTIC (PROFIT-BASIERT) ===\n");
         diag.append("Signal ID: ").append(signalId).append("\n");
         diag.append("Tick File: ").append(tickFilePath).append("\n");
         
@@ -347,7 +373,7 @@ public class PeriodProfitCalculator {
             if (dataSet.getTickCount() > 0) {
                 diag.append("First Tick: ").append(dataSet.getFirstTick().getTimestamp()).append("\n");
                 diag.append("Last Tick: ").append(dataSet.getLatestTick().getTimestamp()).append("\n");
-                diag.append("Current Equity: ").append(dataSet.getLatestTick().getEquity()).append("\n");
+                diag.append("Current Profit: ").append(dataSet.getLatestTick().getProfit()).append(" [PROFIT-BASIERT]\n");
             }
         } else {
             diag.append("No tick data available\n");
