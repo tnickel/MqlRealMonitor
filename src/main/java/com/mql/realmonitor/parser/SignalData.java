@@ -7,9 +7,9 @@ import java.util.Objects;
 import java.util.logging.Logger;
 
 /**
- * VERBESSERT: Model-Klasse für Signalprovider-Daten
+ * ERWEITERT: Model-Klasse für Signalprovider-Daten mit Profit
  * Repräsentiert die extrahierten Daten eines MQL5-Signalproviders
- * ALLE PROBLEME BEHOBEN: Robuste Equity Drawdown Berechnung mit Diagnostik
+ * NEU: Profit-Feld für Gesamtgewinn des Signals
  */
 public class SignalData {
     
@@ -26,25 +26,28 @@ public class SignalData {
     private final String providerName;
     private final double equity;
     private final double floatingProfit;
+    private final double profit; // NEU: Gesamtprofit des Signals
     private final String currency;
     private final LocalDateTime timestamp;
     
     /**
-     * Konstruktor für SignalData
+     * Konstruktor für SignalData mit Profit
      * 
      * @param signalId Die eindeutige Signal-ID
      * @param providerName Der Name des Signal-Providers
      * @param equity Der aktuelle Kontostand
      * @param floatingProfit Der aktuelle Floating Profit
+     * @param profit Der Gesamtprofit des Signals
      * @param currency Die Währung (z.B. USD, EUR)
      * @param timestamp Der Zeitstempel der Datenerhebung
      */
     public SignalData(String signalId, String providerName, double equity, double floatingProfit, 
-                     String currency, LocalDateTime timestamp) {
+                     double profit, String currency, LocalDateTime timestamp) {
         this.signalId = signalId;
         this.providerName = providerName != null ? providerName : "Unbekannt";
         this.equity = equity;
         this.floatingProfit = floatingProfit;
+        this.profit = profit;
         this.currency = currency;
         this.timestamp = timestamp;
         
@@ -54,8 +57,17 @@ public class SignalData {
             LOGGER.fine("SignalData erstellt: Signal=" + signalId + 
                        ", Equity=" + equity + 
                        ", Floating=" + floatingProfit + 
+                       ", Profit=" + profit +
                        ", Berechnet Drawdown=" + String.format("%.6f%%", calculatedDrawdown));
         }
+    }
+    
+    /**
+     * Konstruktor für Rückwärtskompatibilität (ohne Profit)
+     */
+    public SignalData(String signalId, String providerName, double equity, double floatingProfit, 
+                     String currency, LocalDateTime timestamp) {
+        this(signalId, providerName, equity, floatingProfit, 0.0, currency, timestamp);
     }
     
     /**
@@ -63,7 +75,7 @@ public class SignalData {
      */
     public SignalData(String signalId, double equity, double floatingProfit, 
                      String currency, LocalDateTime timestamp) {
-        this(signalId, null, equity, floatingProfit, currency, timestamp);
+        this(signalId, null, equity, floatingProfit, 0.0, currency, timestamp);
     }
     
     /**
@@ -74,6 +86,7 @@ public class SignalData {
         this.providerName = other.providerName;
         this.equity = other.equity;
         this.floatingProfit = other.floatingProfit;
+        this.profit = other.profit;
         this.currency = other.currency;
         this.timestamp = newTimestamp;
     }
@@ -94,6 +107,10 @@ public class SignalData {
     
     public double getFloatingProfit() {
         return floatingProfit;
+    }
+    
+    public double getProfit() { // NEU
+        return profit;
     }
     
     public String getCurrency() {
@@ -188,6 +205,16 @@ public class SignalData {
     }
     
     /**
+     * NEU: Formatiert den Profit für Anzeige
+     * 
+     * @return Formatierter Profit mit Währung und Vorzeichen
+     */
+    public String getFormattedProfit() {
+        String sign = profit >= 0 ? "+" : "";
+        return String.format("%s%.2f %s", sign, profit, currency);
+    }
+    
+    /**
      * VERBESSERT: Formatiert den Equity Drawdown für Anzeige mit verbesserter Präzision
      * 
      * @return Formatierter Equity Drawdown mit Prozentzeichen und Vorzeichen
@@ -226,18 +253,18 @@ public class SignalData {
     
     /**
      * Erstellt einen String für die Tick-Datei
-     * Format: Datum,Uhrzeit,Equity,FloatingProfit
+     * Format: Equity,FloatingProfit,Profit
      * 
      * @return CSV-formatierte Zeile für Tick-Datei
      */
     public String toTickFileEntry() {
         // Verwende Locale.US um sicherzustellen, dass Punkt als Dezimaltrennzeichen verwendet wird
-        return String.format(Locale.US, "%.2f,%.2f", equity, floatingProfit);
+        return String.format(Locale.US, "%.2f,%.2f,%.2f", equity, floatingProfit, profit);
     }
     
     /**
      * Erstellt einen vollständigen String für die Tick-Datei
-     * Format: DD.MM.YYYY,HH:MM:SS,Equity,FloatingProfit
+     * Format: DD.MM.YYYY,HH:MM:SS,Equity,FloatingProfit,Profit
      * 
      * @return Vollständige CSV-Zeile für Tick-Datei
      */
@@ -259,6 +286,7 @@ public class SignalData {
                                  currency.length() == 3 && // Standard 3-Buchstaben Währungscode
                                  !Double.isNaN(equity) && !Double.isInfinite(equity) &&
                                  !Double.isNaN(floatingProfit) && !Double.isInfinite(floatingProfit) &&
+                                 !Double.isNaN(profit) && !Double.isInfinite(profit) &&
                                  timestamp != null;
         
         if (!basicValidation) {
@@ -284,7 +312,7 @@ public class SignalData {
      * Prüft ob sich die Werte seit dem letzten Datensatz geändert haben
      * 
      * @param other Das andere SignalData-Objekt zum Vergleich
-     * @return true wenn sich Equity oder Floating Profit geändert haben
+     * @return true wenn sich Equity, Floating Profit oder Profit geändert haben
      */
     public boolean hasValuesChanged(SignalData other) {
         if (other == null) {
@@ -293,14 +321,16 @@ public class SignalData {
         
         boolean equityChanged = Double.compare(this.equity, other.equity) != 0;
         boolean floatingChanged = Double.compare(this.floatingProfit, other.floatingProfit) != 0;
+        boolean profitChanged = Double.compare(this.profit, other.profit) != 0;
         
-        if (equityChanged || floatingChanged) {
+        if (equityChanged || floatingChanged || profitChanged) {
             LOGGER.fine("Werte geändert für Signal " + signalId + 
                        ": Equity " + other.equity + " -> " + this.equity + 
-                       ", Floating " + other.floatingProfit + " -> " + this.floatingProfit);
+                       ", Floating " + other.floatingProfit + " -> " + this.floatingProfit +
+                       ", Profit " + other.profit + " -> " + this.profit);
         }
         
-        return equityChanged || floatingChanged;
+        return equityChanged || floatingChanged || profitChanged;
     }
     
     /**
@@ -321,6 +351,16 @@ public class SignalData {
      */
     public double getFloatingProfitChange(SignalData other) {
         return other != null ? this.floatingProfit - other.floatingProfit : 0.0;
+    }
+    
+    /**
+     * NEU: Berechnet die Änderung des Profits im Vergleich zu anderen Daten
+     * 
+     * @param other Das andere SignalData-Objekt
+     * @return Die Änderung des Profits
+     */
+    public double getProfitChange(SignalData other) {
+        return other != null ? this.profit - other.profit : 0.0;
     }
     
     /**
@@ -346,16 +386,17 @@ public class SignalData {
     }
     
     /**
-     * VERBESSERT: Gibt eine zusammenfassende Beschreibung der Signaldaten zurück (mit Drawdown)
+     * VERBESSERT: Gibt eine zusammenfassende Beschreibung der Signaldaten zurück (mit Profit)
      * 
      * @return Textuelle Beschreibung
      */
     public String getSummary() {
-        return String.format("Signal %s (%s): %s (Floating: %s, Drawdown: %s) - %s", 
+        return String.format("Signal %s (%s): %s (Floating: %s, Profit: %s, Drawdown: %s) - %s", 
                            signalId, 
                            providerName,
                            getFormattedEquity(), 
                            getFormattedFloatingProfit(),
+                           getFormattedProfit(),
                            getFormattedEquityDrawdown(),
                            getFormattedTimestamp());
     }
@@ -372,6 +413,7 @@ public class SignalData {
         diag.append("Provider: ").append(providerName).append("\n");
         diag.append("Equity: ").append(equity).append(" (valid: ").append(!Double.isNaN(equity) && !Double.isInfinite(equity)).append(")\n");
         diag.append("Floating Profit: ").append(floatingProfit).append(" (valid: ").append(!Double.isNaN(floatingProfit) && !Double.isInfinite(floatingProfit)).append(")\n");
+        diag.append("Profit: ").append(profit).append(" (valid: ").append(!Double.isNaN(profit) && !Double.isInfinite(profit)).append(")\n");
         diag.append("Currency: ").append(currency).append(" (valid: ").append(currency != null && currency.length() == 3).append(")\n");
         diag.append("Timestamp: ").append(timestamp).append("\n");
         
@@ -387,8 +429,8 @@ public class SignalData {
     
     @Override
     public String toString() {
-        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, drawdown=%.6f%%, currency='%s', time='%s'}", 
-                           signalId, providerName, equity, floatingProfit, getEquityDrawdownPercent(), currency, getFormattedTimestamp());
+        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, profit=%.2f, drawdown=%.6f%%, currency='%s', time='%s'}", 
+                           signalId, providerName, equity, floatingProfit, profit, getEquityDrawdownPercent(), currency, getFormattedTimestamp());
     }
     
     @Override
@@ -399,6 +441,7 @@ public class SignalData {
         SignalData that = (SignalData) obj;
         return Double.compare(that.equity, equity) == 0 &&
                Double.compare(that.floatingProfit, floatingProfit) == 0 &&
+               Double.compare(that.profit, profit) == 0 &&
                Objects.equals(signalId, that.signalId) &&
                Objects.equals(providerName, that.providerName) &&
                Objects.equals(currency, that.currency) &&
@@ -407,12 +450,12 @@ public class SignalData {
     
     @Override
     public int hashCode() {
-        return Objects.hash(signalId, providerName, equity, floatingProfit, currency, timestamp);
+        return Objects.hash(signalId, providerName, equity, floatingProfit, profit, currency, timestamp);
     }
     
     /**
      * Erstellt SignalData aus einer Tick-Datei-Zeile
-     * Format: DD.MM.YYYY,HH:MM:SS,Equity,FloatingProfit
+     * Format: DD.MM.YYYY,HH:MM:SS,Equity,FloatingProfit[,Profit]
      * 
      * @param signalId Die Signal-ID
      * @param tickLine Die Zeile aus der Tick-Datei
@@ -441,7 +484,13 @@ public class SignalData {
             double equity = Double.parseDouble(parts[2].trim());
             double floatingProfit = Double.parseDouble(parts[3].trim());
             
-            SignalData result = new SignalData(signalId, equity, floatingProfit, defaultCurrency, timestamp);
+            // Profit parsen (falls vorhanden)
+            double profit = 0.0;
+            if (parts.length >= 5) {
+                profit = Double.parseDouble(parts[4].trim());
+            }
+            
+            SignalData result = new SignalData(signalId, null, equity, floatingProfit, profit, defaultCurrency, timestamp);
             
             LOGGER.fine("SignalData erfolgreich aus Tick-Zeile erstellt: " + result.getSummary());
             

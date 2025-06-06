@@ -9,7 +9,7 @@ import java.util.logging.Level;
 
 /**
  * Lädt und parst Tick-Daten aus den CSV-Dateien
- * Format: Datum,Uhrzeit,Equity,FloatingProfit
+ * ERWEITERT: Format: Datum,Uhrzeit,Equity,FloatingProfit[,Profit]
  */
 public class TickDataLoader {
     
@@ -21,30 +21,38 @@ public class TickDataLoader {
     private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss");
     
     /**
-     * Datenklasse für einen einzelnen Tick
+     * ERWEITERT: Datenklasse für einen einzelnen Tick mit Profit
      */
     public static class TickData {
         private final LocalDateTime timestamp;
         private final double equity;
         private final double floatingProfit;
+        private final double profit; // NEU
         private final double totalValue;
         
-        public TickData(LocalDateTime timestamp, double equity, double floatingProfit) {
+        public TickData(LocalDateTime timestamp, double equity, double floatingProfit, double profit) {
             this.timestamp = timestamp;
             this.equity = equity;
             this.floatingProfit = floatingProfit;
+            this.profit = profit;
             this.totalValue = equity + floatingProfit;
+        }
+        
+        // Konstruktor für Abwärtskompatibilität (ohne Profit)
+        public TickData(LocalDateTime timestamp, double equity, double floatingProfit) {
+            this(timestamp, equity, floatingProfit, 0.0);
         }
         
         public LocalDateTime getTimestamp() { return timestamp; }
         public double getEquity() { return equity; }
         public double getFloatingProfit() { return floatingProfit; }
+        public double getProfit() { return profit; } // NEU
         public double getTotalValue() { return totalValue; }
         
         @Override
         public String toString() {
-            return String.format("TickData{%s, Equity=%.2f, Floating=%.2f, Total=%.2f}", 
-                               timestamp, equity, floatingProfit, totalValue);
+            return String.format("TickData{%s, Equity=%.2f, Floating=%.2f, Profit=%.2f, Total=%.2f}", 
+                               timestamp, equity, floatingProfit, profit, totalValue);
         }
     }
     
@@ -96,6 +104,15 @@ public class TickDataLoader {
         
         public double getMinFloatingProfit() {
             return ticks.stream().mapToDouble(TickData::getFloatingProfit).min().orElse(0.0);
+        }
+        
+        // NEU: Profit Min/Max Methoden
+        public double getMaxProfit() {
+            return ticks.stream().mapToDouble(TickData::getProfit).max().orElse(0.0);
+        }
+        
+        public double getMinProfit() {
+            return ticks.stream().mapToDouble(TickData::getProfit).min().orElse(0.0);
         }
         
         public double getMaxTotalValue() {
@@ -213,8 +230,8 @@ public class TickDataLoader {
     }
     
     /**
-     * Parst eine einzelne Tick-Zeile
-     * Format: 24.05.2025,15:13:36,2000.00,-479.54
+     * ERWEITERT: Parst eine einzelne Tick-Zeile mit Profit-Unterstützung
+     * Format: 24.05.2025,15:13:36,2000.00,-479.54[,179.29]
      * Oder fehlerhaftes Format: 24.05.2025,15:13:36,53745,30,0,00 (6 Teile)
      * 
      * @param line Die zu parsende Zeile
@@ -227,7 +244,7 @@ public class TickDataLoader {
             
             // Flexibles Parsing für verschiedene Formate
             if (parts.length == 4) {
-                // Normales Format: Datum,Zeit,Equity,FloatingProfit
+                // Altes Format ohne Profit: Datum,Zeit,Equity,FloatingProfit
                 String dateStr = parts[0].trim();
                 String timeStr = parts[1].trim();
                 LocalDateTime timestamp = LocalDateTime.parse(dateStr + " " + timeStr, DATETIME_FORMATTER);
@@ -236,7 +253,20 @@ public class TickDataLoader {
                 double equity = parseNumber(parts[2].trim());
                 double floatingProfit = parseNumber(parts[3].trim());
                 
-                return new TickData(timestamp, equity, floatingProfit);
+                return new TickData(timestamp, equity, floatingProfit, 0.0); // Profit = 0.0
+                
+            } else if (parts.length == 5) {
+                // NEUES Format mit Profit: Datum,Zeit,Equity,FloatingProfit,Profit
+                String dateStr = parts[0].trim();
+                String timeStr = parts[1].trim();
+                LocalDateTime timestamp = LocalDateTime.parse(dateStr + " " + timeStr, DATETIME_FORMATTER);
+                
+                // Equity, Floating Profit und Profit parsen
+                double equity = parseNumber(parts[2].trim());
+                double floatingProfit = parseNumber(parts[3].trim());
+                double profit = parseNumber(parts[4].trim());
+                
+                return new TickData(timestamp, equity, floatingProfit, profit);
                 
             } else if (parts.length == 6) {
                 // Fehlerhaftes Format mit Tausendertrennzeichen: 
@@ -256,11 +286,42 @@ public class TickDataLoader {
                 LOGGER.fine("Konvertiere fehlerhaftes Format in Zeile " + lineNumber + 
                            ": Equity=" + equity + ", Floating=" + floatingProfit);
                 
-                return new TickData(timestamp, equity, floatingProfit);
+                return new TickData(timestamp, equity, floatingProfit, 0.0); // Profit = 0.0
+                
+            } else if (parts.length >= 7) {
+                // NEUES fehlerhaftes Format mit Profit und Tausendertrennzeichen:
+                // 24.05.2025,15:22:13,53745,30,0,00,179,29
+                String dateStr = parts[0].trim();
+                String timeStr = parts[1].trim();
+                LocalDateTime timestamp = LocalDateTime.parse(dateStr + " " + timeStr, DATETIME_FORMATTER);
+                
+                // Equity zusammensetzen (parts[2] + "." + parts[3])
+                String equityStr = parts[2].trim() + "." + parts[3].trim();
+                double equity = parseNumber(equityStr);
+                
+                // Floating Profit zusammensetzen (parts[4] + "." + parts[5])
+                String floatingStr = parts[4].trim() + "." + parts[5].trim();
+                double floatingProfit = parseNumber(floatingStr);
+                
+                // Profit parsen
+                double profit = 0.0;
+                if (parts.length == 7) {
+                    // Profit ist eine ganze Zahl
+                    profit = parseNumber(parts[6].trim());
+                } else if (parts.length >= 8) {
+                    // Profit ist aufgeteilt (parts[6] + "." + parts[7])
+                    String profitStr = parts[6].trim() + "." + parts[7].trim();
+                    profit = parseNumber(profitStr);
+                }
+                
+                LOGGER.fine("Konvertiere fehlerhaftes erweitertes Format in Zeile " + lineNumber + 
+                           ": Equity=" + equity + ", Floating=" + floatingProfit + ", Profit=" + profit);
+                
+                return new TickData(timestamp, equity, floatingProfit, profit);
                 
             } else {
                 LOGGER.warning("Ungültiges Tick-Format in Zeile " + lineNumber + 
-                              ": " + line + " (erwartet 4 oder 6 Teile, gefunden: " + parts.length + ")");
+                              ": " + line + " (erwartet 4, 5, 6 oder 7+ Teile, gefunden: " + parts.length + ")");
                 return null;
             }
             
@@ -350,7 +411,7 @@ public class TickDataLoader {
     }
     
     /**
-     * Erstellt eine Zusammenfassung der Tick-Daten
+     * ERWEITERT: Erstellt eine Zusammenfassung der Tick-Daten mit Profit
      * 
      * @param dataSet Das TickDataSet
      * @return Zusammenfassung als String
@@ -374,6 +435,15 @@ public class TickDataLoader {
                          dataSet.getMinEquity(), dataSet.getMaxEquity())).append("\n");
             summary.append("Floating Profit: ").append(String.format("%.2f - %.2f", 
                          dataSet.getMinFloatingProfit(), dataSet.getMaxFloatingProfit())).append("\n");
+            
+            // NEU: Profit-Zusammenfassung
+            double minProfit = dataSet.getMinProfit();
+            double maxProfit = dataSet.getMaxProfit();
+            if (minProfit != 0.0 || maxProfit != 0.0) {
+                summary.append("Profit: ").append(String.format("%.2f - %.2f", 
+                             minProfit, maxProfit)).append("\n");
+            }
+            
             summary.append("Gesamtwert: ").append(String.format("%.2f - %.2f", 
                          dataSet.getMinTotalValue(), dataSet.getMaxTotalValue())).append("\n");
         }

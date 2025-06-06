@@ -9,7 +9,7 @@ import java.util.logging.Level;
 
 /**
  * HTML-Parser für MQL5 Signalprovider-Seiten
- * Extrahiert Kontostand, Floating Profit und Provider-Name mit flexiblem Pattern-Matching
+ * ERWEITERT: Extrahiert Kontostand, Floating Profit, Provider-Name und Profit
  */
 public class HTMLParser {
     
@@ -21,6 +21,11 @@ public class HTMLParser {
     
     private static final String FLOATING_PROFIT_PATTERN = 
         "Floating\\s*Profit:\\s*([-]?[\\d,\\s]+\\.?\\d*)\\s*([A-Z]{3})";
+    
+    // NEU: Pattern für Profit-Extraktion
+    private static final String PROFIT_PATTERN = 
+        "<div\\s+class=[\"']s-list-info__label[\"']>\\s*Profit:\\s*</div>\\s*" +
+        "<div\\s+class=[\"']s-list-info__value[\"']>\\s*([-]?[\\d,\\s]+\\.?\\d*)\\s*([A-Z]{3})\\s*</div>";
     
     // NEU: Pattern für Provider-Name
     private static final String PROVIDER_NAME_PATTERN = 
@@ -47,6 +52,14 @@ public class HTMLParser {
         "Profit[^:]*:\\s*([-]?[\\d,\\s]+\\.?\\d*)\\s*([A-Z]{3})"
     };
     
+    // NEU: Alternative Pattern für Profit
+    private static final String[] ALTERNATIVE_PROFIT_PATTERNS = {
+        "Profit:\\s*([-]?[\\d,\\s]+\\.?\\d*)\\s*([A-Z]{3})",
+        "'Profit:\\s*([-]?[\\d,\\s]+\\.?\\d*)\\s*([A-Z]{3})'",
+        "Total\\s*Profit:\\s*([-]?[\\d,\\s]+\\.?\\d*)\\s*([A-Z]{3})",
+        "Gewinn:\\s*([-]?[\\d,\\s]+\\.?\\d*)\\s*([A-Z]{3})"
+    };
+    
     // NEU: Alternative Pattern für Provider-Name
     private static final String[] ALTERNATIVE_PROVIDER_NAME_PATTERNS = {
         "<h1[^>]*class=[\"'][^\"']*title[^\"']*[\"'][^>]*>([^<]+)</h1>",
@@ -59,16 +72,19 @@ public class HTMLParser {
     // Compiled Patterns für bessere Performance
     private final Pattern kontostandardPattern;
     private final Pattern floatingProfitPattern;
+    private final Pattern profitPattern;  // NEU
     private final Pattern providerNamePattern;  // NEU
     private final Pattern descriptionArrayPattern;
     private final Pattern[] alternativeKontostandPatterns;
     private final Pattern[] alternativeFloatingPatterns;
+    private final Pattern[] alternativeProfitPatterns;  // NEU
     private final Pattern[] alternativeProviderNamePatterns;  // NEU
     
     public HTMLParser() {
         // Hauptpattern kompilieren
         kontostandardPattern = Pattern.compile(KONTOSTAND_PATTERN, Pattern.CASE_INSENSITIVE);
         floatingProfitPattern = Pattern.compile(FLOATING_PROFIT_PATTERN, Pattern.CASE_INSENSITIVE);
+        profitPattern = Pattern.compile(PROFIT_PATTERN, Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
         providerNamePattern = Pattern.compile(PROVIDER_NAME_PATTERN, Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
         descriptionArrayPattern = Pattern.compile(DESCRIPTION_ARRAY_PATTERN, Pattern.CASE_INSENSITIVE);
         
@@ -85,6 +101,13 @@ public class HTMLParser {
                 ALTERNATIVE_FLOATING_PATTERNS[i], Pattern.CASE_INSENSITIVE);
         }
         
+        // NEU: Alternative Profit Pattern kompilieren
+        alternativeProfitPatterns = new Pattern[ALTERNATIVE_PROFIT_PATTERNS.length];
+        for (int i = 0; i < ALTERNATIVE_PROFIT_PATTERNS.length; i++) {
+            alternativeProfitPatterns[i] = Pattern.compile(
+                ALTERNATIVE_PROFIT_PATTERNS[i], Pattern.CASE_INSENSITIVE);
+        }
+        
         // NEU: Alternative Provider-Name Pattern kompilieren
         alternativeProviderNamePatterns = new Pattern[ALTERNATIVE_PROVIDER_NAME_PATTERNS.length];
         for (int i = 0; i < ALTERNATIVE_PROVIDER_NAME_PATTERNS.length; i++) {
@@ -94,7 +117,7 @@ public class HTMLParser {
     }
     
     /**
-     * Parst HTML-Inhalt und extrahiert Signaldaten
+     * ERWEITERT: Parst HTML-Inhalt und extrahiert Signaldaten inkl. Profit
      * 
      * @param htmlContent Der HTML-Inhalt der Seite
      * @param signalId Die Signal-ID für Logging
@@ -198,8 +221,61 @@ public class HTMLParser {
     }
     
     /**
-     * Parst das JavaScript description Array Format
+     * NEU: Extrahiert den Profit aus dem HTML
+     * 
+     * @param htmlContent Der HTML-Inhalt
+     * @param expectedCurrency Die erwartete Währung
+     * @return Der Profit-Wert oder 0.0 falls nicht gefunden
+     */
+    private double extractProfit(String htmlContent, String expectedCurrency) {
+        try {
+            // Hauptpattern versuchen
+            Matcher matcher = profitPattern.matcher(htmlContent);
+            if (matcher.find()) {
+                String valueStr = matcher.group(1).trim();
+                String currency = matcher.group(2).trim();
+                
+                if (!currency.equals(expectedCurrency)) {
+                    LOGGER.warning("Profit Währung mismatch: erwartet " + expectedCurrency + 
+                                 ", gefunden " + currency);
+                }
+                
+                double value = parseNumericValue(valueStr);
+                LOGGER.info("Profit gefunden (Hauptpattern): " + value + " " + currency);
+                return value;
+            }
+            
+            // Alternative Pattern versuchen
+            for (int i = 0; i < alternativeProfitPatterns.length; i++) {
+                matcher = alternativeProfitPatterns[i].matcher(htmlContent);
+                if (matcher.find()) {
+                    String valueStr = matcher.group(1).trim();
+                    String currency = matcher.group(2).trim();
+                    
+                    if (!currency.equals(expectedCurrency)) {
+                        LOGGER.warning("Profit Währung mismatch (Alt-Pattern " + i + "): erwartet " + 
+                                     expectedCurrency + ", gefunden " + currency);
+                    }
+                    
+                    double value = parseNumericValue(valueStr);
+                    LOGGER.info("Profit gefunden (Alt-Pattern " + i + "): " + value + " " + currency);
+                    return value;
+                }
+            }
+            
+            LOGGER.warning("Profit nicht gefunden im HTML, verwende 0.0");
+            return 0.0;
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Extrahieren des Profits", e);
+            return 0.0;
+        }
+    }
+    
+    /**
+     * ERWEITERT: Parst das JavaScript description Array Format mit Profit
      * Format: description:['Kontostand: 53 745.30 HKD','Floating Profit: 0.00 HKD']
+     * Profit wird separat aus dem HTML extrahiert
      */
     private SignalData parseDescriptionArray(String htmlContent, String signalId, String providerName) {
         Matcher matcher = descriptionArrayPattern.matcher(htmlContent);
@@ -230,11 +306,15 @@ public class HTMLParser {
                 return null;
             }
             
+            // NEU: Profit aus dem HTML extrahieren (nicht aus description Array)
+            double profit = extractProfit(htmlContent, equityPair.currency);
+            
             SignalData result = new SignalData(
                 signalId,
-                providerName,  // NEU: Provider-Name hinzufügen
+                providerName,
                 equityPair.value,
                 floatingPair.value,
+                profit,  // NEU: Profit hinzugefügt
                 equityPair.currency,
                 LocalDateTime.now()
             );
@@ -248,7 +328,7 @@ public class HTMLParser {
     }
     
     /**
-     * Parst traditionelles HTML-Format
+     * ERWEITERT: Parst traditionelles HTML-Format mit Profit
      */
     private SignalData parseTraditionalFormat(String htmlContent, String signalId, String providerName) {
         LOGGER.info("Verwende traditionelles Pattern-Matching für Signal: " + signalId);
@@ -273,11 +353,15 @@ public class HTMLParser {
             return null;
         }
         
+        // NEU: Profit extrahieren
+        double profit = extractProfit(htmlContent, equityPair.currency);
+        
         SignalData result = new SignalData(
             signalId,
-            providerName,  // NEU: Provider-Name hinzufügen
+            providerName,
             equityPair.value,
             floatingPair.value,
+            profit,  // NEU: Profit hinzugefügt
             equityPair.currency,
             LocalDateTime.now()
         );
@@ -396,6 +480,22 @@ public class HTMLParser {
         } catch (NumberFormatException e) {
             LOGGER.warning("Fehler beim Parsen des Wertes: " + valueStr + " -> " + e.getMessage());
             return null;
+        }
+    }
+    
+    /**
+     * Hilfsmethode zum Parsen numerischer Werte
+     */
+    private double parseNumericValue(String valueStr) {
+        // Entferne alle Leerzeichen und ersetze Komma durch Punkt
+        valueStr = valueStr.replaceAll("\\s", "")
+                          .replace(",", ".");
+        
+        try {
+            return Double.parseDouble(valueStr);
+        } catch (NumberFormatException e) {
+            LOGGER.warning("Fehler beim Parsen des Wertes: " + valueStr);
+            return 0.0;
         }
     }
     
