@@ -14,6 +14,7 @@ import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.TableColumn;
 import org.eclipse.swt.widgets.TableItem;
 
+import com.mql.realmonitor.config.IdTranslationManager;
 import com.mql.realmonitor.parser.SignalData;
 import com.mql.realmonitor.utils.PeriodProfitCalculator;
 
@@ -25,6 +26,7 @@ import com.mql.realmonitor.utils.PeriodProfitCalculator;
  * SORTIERUNG: Automatische Sortierung nach Favoritenklasse beim Start
  * NEU: Profit-Spalte zwischen Kontostand und Floating Profit hinzugefügt
  * NEU: WeeklyProfit und MonthlyProfit Spalten hinzugefügt
+ * NEU: IdTranslationManager für Provider-Namen beim Start und bei Fehlern
  */
 public class SignalProviderTable {
     
@@ -81,7 +83,11 @@ public class SignalProviderTable {
     // KORRIGIERT: FavoritesReader als Instanzvariable
     private com.mql.realmonitor.downloader.FavoritesReader favoritesReader;
     
+    // NEU: IdTranslationManager für Provider-Namen
+    private IdTranslationManager idTranslationManager;
+    
     public SignalProviderTable(Composite parent, MqlRealMonitorGUI parentGui) {
+        LOGGER.info("=== NEUE SIGNALPROVIDER TABLE MIT ID-TRANSLATION WIRD GELADEN ===");
         this.parentGui = parentGui;
         this.signalIdToItem = new HashMap<>();
         this.lastSignalData = new HashMap<>();
@@ -89,6 +95,21 @@ public class SignalProviderTable {
         // Helfer-Klassen initialisieren
         this.tableHelper = new ProviderTableHelper(parentGui);
         this.contextMenu = new SignalProviderContextMenu(parentGui);
+        
+        // NEU: IdTranslationManager initialisieren
+        try {
+            LOGGER.info("=== VERSUCHE ID-TRANSLATION-MANAGER ZU INITIALISIEREN ===");
+            this.idTranslationManager = new IdTranslationManager(parentGui.getMonitor().getConfig());
+            LOGGER.info("=== ID-TRANSLATION-MANAGER ERFOLGREICH INITIALISIERT ===");
+            
+            // DEBUG: Test der ID-Translation beim Start
+            testIdTranslation();
+        } catch (Exception e) {
+            LOGGER.severe("=== FEHLER BEIM INITIALISIEREN DES ID-TRANSLATION-MANAGERS ===");
+            LOGGER.severe("Fehler: " + e.getMessage());
+            e.printStackTrace();
+            this.idTranslationManager = null; // Fallback: kein IdTranslationManager
+        }
         
         // Callbacks für das Kontextmenü setzen
         setupContextMenuCallbacks();
@@ -100,7 +121,39 @@ public class SignalProviderTable {
         // Tabellenverhalten mit Kontextmenü konfigurieren
         contextMenu.setupTableBehavior(table);
         
-        LOGGER.info("SignalProviderTable (Refactored+Extended+ProfitColumn) initialisiert mit " + COLUMN_TEXTS.length + " Spalten - Modular aufgeteilt mit Favoritenklasse, Profit-Spalte und Profit-Berechnungen");
+        LOGGER.info("SignalProviderTable (Refactored+Extended+ProfitColumn+IdTranslation) initialisiert mit " + COLUMN_TEXTS.length + " Spalten - Modular aufgeteilt mit Favoritenklasse, Profit-Spalte, Profit-Berechnungen und ID-Translation für Provider-Namen");
+    }
+    
+    /**
+     * DEBUG: Testet die ID-Translation beim Start
+     */
+    private void testIdTranslation() {
+        try {
+            LOGGER.info("=== ID-TRANSLATION DEBUG TEST ===");
+            
+            if (idTranslationManager == null) {
+                LOGGER.severe("IdTranslationManager ist null - Test wird übersprungen!");
+                return;
+            }
+            
+            LOGGER.info("Translation-Datei-Pfad: " + idTranslationManager.getTranslationFilePath());
+            LOGGER.info("Anzahl geladener Zuordnungen: " + idTranslationManager.getMappingCount());
+            
+            // Teste einige bekannte Signal-IDs aus der idtranslation.txt
+            String[] testIds = {"1887334", "2285398", "2296908", "2294111"};
+            
+            for (String testId : testIds) {
+                String name = idTranslationManager.getProviderName(testId);
+                LOGGER.info("Test Signal-ID " + testId + " -> " + name);
+            }
+            
+            // Zeige Diagnose-Info
+            LOGGER.info("Diagnose-Info:\n" + idTranslationManager.getDiagnosticInfo());
+            
+        } catch (Exception e) {
+            LOGGER.severe("Fehler beim Testen der ID-Translation: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
     
     /**
@@ -182,6 +235,59 @@ public class SignalProviderTable {
     }
     
     /**
+     * NEU: Holt den Provider-Namen für eine Signal-ID aus der ID-Translation
+     * 
+     * @param signalId Die Signal-ID
+     * @return Der Provider-Name oder "Unbekannt" wenn nicht vorhanden
+     */
+    private String getProviderNameForSignal(String signalId) {
+        try {
+            LOGGER.info("DEBUG: Suche Provider-Name für Signal-ID: " + signalId);
+            
+            // Fallback wenn IdTranslationManager nicht verfügbar
+            if (idTranslationManager == null) {
+                LOGGER.warning("DEBUG: IdTranslationManager ist null - verwende Fallback");
+                return "Unbekannt";
+            }
+            
+            String providerName = idTranslationManager.getProviderName(signalId);
+            LOGGER.info("DEBUG: Provider-Name für Signal " + signalId + " aus ID-Translation: '" + providerName + "'");
+            return providerName;
+        } catch (Exception e) {
+            LOGGER.severe("Fehler beim Abrufen des Provider-Namens für Signal " + signalId + " aus ID-Translation: " + e.getMessage());
+            e.printStackTrace();
+            return "Unbekannt";
+        }
+    }
+    
+    /**
+     * NEU: Speichert oder aktualisiert einen Provider-Namen in der ID-Translation
+     * 
+     * @param signalId Die Signal-ID
+     * @param providerName Der Provider-Name
+     */
+    private void saveProviderNameToTranslation(String signalId, String providerName) {
+        try {
+            // Nur gültige Provider-Namen speichern (nicht "Lädt...", "Unbekannt", etc.)
+            if (providerName != null && !providerName.trim().isEmpty() && 
+                !providerName.equals("Lädt...") && !providerName.equals("Unbekannt") &&
+                !providerName.equals("Keine Daten") && !providerName.equals("Fehler")) {
+                
+                boolean isNew = idTranslationManager.addOrUpdateMapping(signalId, providerName);
+                if (isNew) {
+                    LOGGER.info("Neuer Provider-Name in ID-Translation gespeichert: " + signalId + " -> " + providerName);
+                } else {
+                    LOGGER.fine("Provider-Name in ID-Translation aktualisiert: " + signalId + " -> " + providerName);
+                }
+            } else {
+                LOGGER.fine("Provider-Name nicht für ID-Translation geeignet: " + signalId + " -> " + providerName);
+            }
+        } catch (Exception e) {
+            LOGGER.warning("Fehler beim Speichern des Provider-Namens in ID-Translation: " + signalId + " -> " + providerName + " - " + e.getMessage());
+        }
+    }
+    
+    /**
      * NEU: Berechnet WeeklyProfit und MonthlyProfit für eine Signal-ID
      * 
      * @param signalId Die Signal-ID
@@ -207,6 +313,7 @@ public class SignalProviderTable {
     /**
      * Aktualisiert die Daten eines Providers (Thread-sicher)
      * ERWEITERT: Setzt auch die Favoritenklasse, Zeilen-Hintergrundfarbe, neue Profit-Spalte und berechnet Profit-Werte
+     * NEU: Speichert neue Provider-Namen in der ID-Translation
      * 
      * @param signalData Die aktualisierten Signaldaten
      */
@@ -232,13 +339,17 @@ public class SignalProviderTable {
         // NEU: Favoritenklasse ermitteln
         String favoriteClass = getFavoriteClassForSignal(signalId);
         
+        // NEU: Provider-Namen in ID-Translation speichern falls verfügbar
+        String providerName = signalData.getProviderName();
+        saveProviderNameToTranslation(signalId, providerName);
+        
         // NEU: Profit-Werte berechnen
         PeriodProfitCalculator.ProfitResult profitResult = calculateProfitsForSignal(signalId);
         
         // Tabellendaten setzen (ERWEITERT: Neue Profit-Spalte hinzugefügt)
         item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
         item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);                     
-        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, signalData.getProviderName());
+        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);
         item.setText(ProviderTableHelper.COL_STATUS, "OK");
         item.setText(ProviderTableHelper.COL_EQUITY, signalData.getFormattedEquity());
         item.setText(ProviderTableHelper.COL_PROFIT, signalData.getFormattedProfit());           // NEU: Profit-Spalte
@@ -281,7 +392,7 @@ public class SignalProviderTable {
         // Daten im Cache speichern
         lastSignalData.put(signalId, signalData);
         
-        LOGGER.fine("Provider-Daten aktualisiert (Modular+Extended+ProfitColumn): " + signalData.getSummary() + 
+        LOGGER.fine("Provider-Daten aktualisiert (Modular+Extended+ProfitColumn+IdTranslation): " + signalData.getSummary() + 
                    " (Klasse: " + favoriteClass + ", Profit: " + signalData.getFormattedProfit() + 
                    ", WeeklyProfit: " + profitResult.getFormattedWeeklyProfit() + 
                    ", MonthlyProfit: " + profitResult.getFormattedMonthlyProfit() + ")");
@@ -289,6 +400,7 @@ public class SignalProviderTable {
     
     /**
      * Aktualisiert den Status eines Providers
+     * NEU: Verwendet Provider-Namen aus ID-Translation auch bei Fehlern
      * 
      * @param signalId Die Signal-ID
      * @param status Der neue Status
@@ -305,6 +417,15 @@ public class SignalProviderTable {
         // Bestehenden Status aktualisieren
         item.setText(ProviderTableHelper.COL_STATUS, status);
         
+        // NEU: Bei Fehlerstatus Provider-Namen aus ID-Translation aktualisieren falls verfügbar
+        if (status != null && (status.toLowerCase().contains("fehler") || status.toLowerCase().contains("error"))) {
+            String knownProviderName = getProviderNameForSignal(signalId);
+            if (!knownProviderName.equals("Unbekannt")) {
+                item.setText(ProviderTableHelper.COL_PROVIDER_NAME, knownProviderName);
+                LOGGER.info("Provider-Name aus ID-Translation bei Fehler gesetzt: " + signalId + " -> " + knownProviderName);
+            }
+        }
+        
         // Status-Farbe über Helper setzen
         Color statusColor = tableHelper.getStatusColor(status);
         item.setForeground(ProviderTableHelper.COL_STATUS, statusColor);
@@ -316,6 +437,7 @@ public class SignalProviderTable {
      * Fügt einen leeren Provider-Eintrag hinzu (nur mit Signal-ID)
      * Wird beim Vorladen der Favoriten verwendet
      * ERWEITERT: Setzt auch die Favoritenklasse und Zeilen-Hintergrundfarbe, Profit-Spalten bleiben leer
+     * NEU: Verwendet Provider-Namen aus ID-Translation statt "Lädt..."
      * 
      * @param signalId Die Signal-ID
      * @param initialStatus Der initiale Status
@@ -334,13 +456,23 @@ public class SignalProviderTable {
         // NEU: Favoritenklasse ermitteln
         String favoriteClass = getFavoriteClassForSignal(signalId);
         
+        // NEU: Provider-Namen aus ID-Translation holen statt "Lädt..."
+        String providerName = getProviderNameForSignal(signalId);
+        LOGGER.info("DEBUG: Provider-Name für Signal " + signalId + " aus ID-Translation: '" + providerName + "'");
+        if (providerName.equals("Unbekannt")) {
+            providerName = "Lädt..."; // Fallback nur wenn wirklich unbekannt
+            LOGGER.info("DEBUG: Verwende Fallback 'Lädt...' für Signal " + signalId);
+        } else {
+            LOGGER.info("DEBUG: Verwende Namen aus ID-Translation für Signal " + signalId + ": " + providerName);
+        }
+        
         // Neuen leeren Eintrag erstellen
         TableItem item = new TableItem(table, SWT.NONE);
         
-        // Nur Signal-ID, Favoritenklasse und Status setzen, Rest bleibt leer (ERWEITERT: Neue Profit-Spalte)
+        // Nur Signal-ID, Favoritenklasse, Provider-Name und Status setzen, Rest bleibt leer (ERWEITERT: Neue Profit-Spalte)
         item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
         item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);                          
-        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, "Lädt...");  
+        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);   // NEU: Aus ID-Translation
         item.setText(ProviderTableHelper.COL_STATUS, initialStatus != null ? initialStatus : "Nicht geladen");
         item.setText(ProviderTableHelper.COL_EQUITY, "");
         item.setText(ProviderTableHelper.COL_PROFIT, "");               // NEU: Leer lassen bis Daten verfügbar
@@ -370,8 +502,8 @@ public class SignalProviderTable {
         // In Map eintragen
         signalIdToItem.put(signalId, item);
         
-        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (Modular+Extended+ProfitColumn): " + signalId + 
-                   " (Klasse: " + favoriteClass + ")");
+        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (Modular+Extended+ProfitColumn+IdTranslation): " + signalId + 
+                   " (Klasse: " + favoriteClass + ", Name: " + providerName + ")");
     }
     
     /**
@@ -481,6 +613,37 @@ public class SignalProviderTable {
     }
     
     /**
+     * NEU: Aktualisiert die Provider-Namen aller Provider aus der ID-Translation
+     * Nützlich wenn neue Namen in der ID-Translation verfügbar sind
+     */
+    public void refreshProviderNames() {
+        LOGGER.info("Aktualisiere Provider-Namen für alle Provider aus ID-Translation...");
+        
+        // Cache der ID-Translation neu laden
+        idTranslationManager.refreshCache();
+        
+        for (Map.Entry<String, TableItem> entry : signalIdToItem.entrySet()) {
+            String signalId = entry.getKey();
+            TableItem item = entry.getValue();
+            
+            if (item != null && !item.isDisposed()) {
+                String currentName = item.getText(ProviderTableHelper.COL_PROVIDER_NAME);
+                
+                // Nur aktualisieren wenn aktuell "Lädt..." oder "Unbekannt" angezeigt wird
+                if (currentName.equals("Lädt...") || currentName.equals("Unbekannt")) {
+                    String knownName = getProviderNameForSignal(signalId);
+                    if (!knownName.equals("Unbekannt") && !knownName.equals(currentName)) {
+                        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, knownName);
+                        LOGGER.info("Provider-Name aus ID-Translation aktualisiert: " + signalId + " -> " + knownName);
+                    }
+                }
+            }
+        }
+        
+        LOGGER.info("Provider-Namen-Aktualisierung abgeschlossen");
+    }
+    
+    /**
      * Gibt die Anzahl der Provider in der Tabelle zurück
      * 
      * @return Anzahl der Provider
@@ -502,7 +665,16 @@ public class SignalProviderTable {
             favoritesReader.refreshCache();
         }
         
-        LOGGER.info("Alle Provider aus Tabelle entfernt (Modular+Extended+ProfitColumn)");
+        LOGGER.info("Alle Provider aus Tabelle entfernt (Modular+Extended+ProfitColumn+IdTranslation)");
+    }
+    
+    /**
+     * NEU: Gibt den IdTranslationManager zurück
+     * 
+     * @return Der IdTranslationManager
+     */
+    public IdTranslationManager getIdTranslationManager() {
+        return idTranslationManager;
     }
     
     /**

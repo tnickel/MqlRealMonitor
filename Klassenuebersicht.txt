@@ -40,7 +40,7 @@ com.mql.realmonitor.MqlRealMonitor | Hauptklasse für MQL5 Signal-Monitoring. Or
 
 ## Configuration
 com.mql.realmonitor.config.MqlRealMonitorConfig | Konfigurationsverwaltung für alle konfigurierbaren Parameter, Pfade und Einstellungen. Verwaltet Intervalle in Minuten.
-
+com.mql.realmonitor.config.IdTranslationManager | translation tabelle id zu Signalprovidername
 ## Data Layer
 com.mql.realmonitor.data.TickDataLoader | Lädt und parst Tick-Daten aus CSV-Dateien. Bietet TickData und TickDataSet Klassen für Datencontainer.
 

@@ -22,6 +22,7 @@ import java.util.logging.Level;
  * Haupt-GUI für MqlRealMonitor
  * ERWEITERT: Neuer "Chart-Übersicht" Button für Signalprovider-Overview
  * ERWEITERT: Favoritenklasse-Farben für Zeilen-Hintergrund
+ * DEBUG: initializeTableWithSavedData() mit ausführlicher Diagnostik
  */
 public class MqlRealMonitorGUI {
     
@@ -481,120 +482,171 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * Initialisiert die Tabelle beim Start mit gespeicherten Daten
+     * DEBUG-VERSION: Initialisiert die Tabelle beim Start mit gespeicherten Daten
+     * Erstellt zuerst leere Provider-Einträge mit Namen aus ID-Translation,
+     * dann versucht diese mit Tick-Daten zu füllen
      */
     private void initializeTableWithSavedData() {
         try {
-            LOGGER.info("=== INITIALISIERE TABELLE MIT GESPEICHERTEN DATEN ===");
+            LOGGER.info("=== INITIALISIERE TABELLE MIT GESPEICHERTEN DATEN (DEBUG-VERSION) ===");
             
             // Favoriten-Reader erstellen
+            LOGGER.info("DEBUG: Erstelle FavoritesReader...");
             com.mql.realmonitor.downloader.FavoritesReader favoritesReader = 
                 new com.mql.realmonitor.downloader.FavoritesReader(monitor.getConfig());
             
             // TickDataWriter für das Lesen der letzten Einträge
+            LOGGER.info("DEBUG: Erstelle TickDataWriter...");
             com.mql.realmonitor.tickdata.TickDataWriter tickDataWriter = 
                 new com.mql.realmonitor.tickdata.TickDataWriter(monitor.getConfig());
             
             // Favoriten laden
+            LOGGER.info("DEBUG: Lade Favoriten...");
             List<String> favoriteIds = favoritesReader.readFavorites();
-            LOGGER.info("Gefundene Favoriten: " + favoriteIds.size());
+            LOGGER.info("DEBUG: Favoriten geladen - Anzahl: " + favoriteIds.size());
             
             if (favoriteIds.isEmpty()) {
-                LOGGER.warning("Keine Favoriten gefunden!");
+                LOGGER.warning("DEBUG: Keine Favoriten gefunden!");
                 return;
             }
             
-            // Jede Signal-ID verarbeiten
+            // DEBUG: Zeige alle geladenen Favoriten
+            LOGGER.info("DEBUG: Alle Favoriten-IDs:");
+            for (int i = 0; i < favoriteIds.size(); i++) {
+                String id = favoriteIds.get(i);
+                LOGGER.info("DEBUG:   " + (i+1) + ". " + id);
+            }
+            
+            // SCHRITT 1: Zuerst leere Provider-Einträge für alle Favoriten erstellen
+            LOGGER.info("=== DEBUG SCHRITT 1: Erstelle leere Provider-Einträge mit ID-Translation ===");
+            int createdEntries = 0;
+            
+            for (String signalId : favoriteIds) {
+                if (signalId == null || signalId.trim().isEmpty()) {
+                    LOGGER.warning("DEBUG: Überspringe leere Signal-ID");
+                    continue;
+                }
+                
+                try {
+                    LOGGER.info("DEBUG: Erstelle leeren Eintrag für Signal-ID: " + signalId);
+                    
+                    // Prüfe zuerst, ob Name in ID-Translation vorhanden ist
+                    String providerName = "UNBEKANNT";
+                    if (providerTable != null && providerTable.getIdTranslationManager() != null) {
+                        providerName = providerTable.getIdTranslationManager().getProviderName(signalId);
+                        LOGGER.info("DEBUG: Name aus ID-Translation für " + signalId + ": '" + providerName + "'");
+                    }
+                    
+                    // Leeren Provider-Eintrag erstellen
+                    providerTable.addEmptyProviderEntry(signalId, "Lade Daten...");
+                    createdEntries++;
+                    
+                    LOGGER.info("DEBUG: Eintrag " + createdEntries + " erstellt für " + signalId + " (Name: " + providerName + ")");
+                    
+                } catch (Exception e) {
+                    LOGGER.severe("DEBUG: Fehler beim Erstellen des Eintrags für Signal " + signalId + ": " + e.getMessage());
+                    e.printStackTrace();
+                }
+            }
+            
+            LOGGER.info("DEBUG: " + createdEntries + " leere Provider-Einträge erstellt");
+            
+            // GUI-Update und kurze Pause
+            updateProviderCount();
+            final int finalCreatedEntries = createdEntries;  // <-- FINALE KOPIE ERSTELLEN
+            display.asyncExec(() -> {
+                updateStatus("DEBUG: " + finalCreatedEntries  + " Provider erstellt, lade Tick-Daten...");
+            });
+            
+            // Kurze Pause um GUI zu aktualisieren
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            
+            // SCHRITT 2: Jetzt versuchen, die Einträge mit Tick-Daten zu füllen
+            LOGGER.info("=== DEBUG SCHRITT 2: Versuche Tick-Daten zu laden ===");
             int loadedCount = 0;
             int totalCount = favoriteIds.size();
             
-            for (String signalId : favoriteIds) {
+            for (int i = 0; i < favoriteIds.size(); i++) {
+                String signalId = favoriteIds.get(i);
+                
                 if (signalId == null || signalId.trim().isEmpty()) {
                     continue;
                 }
                 
-                LOGGER.info("Verarbeite Signal-ID: " + signalId);
-                
                 try {
+                    LOGGER.info("DEBUG: (" + (i+1) + "/" + totalCount + ") Versuche Tick-Daten für Signal-ID: " + signalId);
+                    
                     // Tick-Datei-Pfad ermitteln
                     String tickFilePath = monitor.getConfig().getTickFilePath(signalId);
-                    LOGGER.info("Tick-Datei-Pfad: " + tickFilePath);
+                    LOGGER.info("DEBUG: Tick-Datei-Pfad: " + tickFilePath);
                     
                     // Prüfen ob Datei existiert
                     java.io.File tickFile = new java.io.File(tickFilePath);
                     if (!tickFile.exists()) {
-                        LOGGER.warning("Tick-Datei existiert nicht: " + tickFilePath);
-                        providerTable.updateProviderStatus(signalId, "Keine Datei");
+                        LOGGER.info("DEBUG: Tick-Datei existiert nicht - Provider bleibt mit ID-Translation Name");
+                        providerTable.updateProviderStatus(signalId, "Keine Daten");
                         continue;
                     }
                     
-                    LOGGER.info("Tick-Datei gefunden, Größe: " + tickFile.length() + " Bytes");
+                    LOGGER.info("DEBUG: Tick-Datei gefunden, Größe: " + tickFile.length() + " Bytes");
                     
                     // Letzten Eintrag lesen
-                    LOGGER.info("Versuche letzten Tick-Eintrag zu lesen...");
                     SignalData lastSignalData = tickDataWriter.readLastTickEntry(tickFilePath, signalId);
                     
-                    if (lastSignalData != null) {
-                        LOGGER.info("SignalData erhalten: " + lastSignalData.toString());
-                        LOGGER.info("IsValid: " + lastSignalData.isValid());
+                    if (lastSignalData != null && lastSignalData.isValid()) {
+                        LOGGER.info("DEBUG: Gültige Tick-Daten geladen: " + lastSignalData.getSummary());
                         
-                        if (lastSignalData.isValid()) {
-                            LOGGER.info("Gültige Daten geladen: " + lastSignalData.getSummary());
-                            
-                            // Vollständige Provider-Daten in Tabelle anzeigen
-                            providerTable.updateProviderData(lastSignalData);
-                            providerTable.updateProviderStatus(signalId, "Geladen - " + lastSignalData.getFormattedTimestamp());
-                            loadedCount++;
-                        } else {
-                            LOGGER.warning("SignalData ist ungültig für Signal: " + signalId);
-                            LOGGER.warning("Details: SignalId=" + lastSignalData.getSignalId() + 
-                                         ", Currency=" + lastSignalData.getCurrency() + 
-                                         ", Equity=" + lastSignalData.getEquity() + 
-                                         ", Timestamp=" + lastSignalData.getTimestamp());
-                            providerTable.updateProviderStatus(signalId, "Ungültige Daten");
-                        }
+                        // Vollständige Provider-Daten in Tabelle anzeigen
+                        providerTable.updateProviderData(lastSignalData);
+                        loadedCount++;
+                        
+                        LOGGER.info("DEBUG: Provider " + signalId + " erfolgreich mit Tick-Daten aktualisiert");
                     } else {
-                        LOGGER.warning("readLastTickEntry gab null zurück für Signal: " + signalId);
-                        
-                        // Versuche die Datei direkt zu lesen um zu sehen was drin steht
-                        try {
-                            java.nio.file.Path path = java.nio.file.Paths.get(tickFilePath);
-                            java.util.List<String> lines = java.nio.file.Files.readAllLines(path);
-                            LOGGER.info("Datei-Inhalt (" + lines.size() + " Zeilen):");
-                            for (int i = Math.max(0, lines.size() - 5); i < lines.size(); i++) {
-                                LOGGER.info("Zeile " + (i+1) + ": " + lines.get(i));
-                            }
-                        } catch (Exception fileEx) {
-                            LOGGER.log(Level.WARNING, "Konnte Datei nicht direkt lesen", fileEx);
-                        }
-                        
-                        providerTable.updateProviderStatus(signalId, "Keine Daten");
+                        LOGGER.info("DEBUG: Keine gültigen Tick-Daten - Provider bleibt mit ID-Translation Name");
+                        providerTable.updateProviderStatus(signalId, "Keine gültigen Daten");
                     }
                     
                 } catch (Exception e) {
-                    LOGGER.log(Level.SEVERE, "Fehler beim Verarbeiten von Signal: " + signalId, e);
-                    providerTable.updateProviderStatus(signalId, "Fehler: " + e.getMessage());
+                    LOGGER.severe("DEBUG: Fehler beim Laden der Tick-Daten für Signal: " + signalId + " - " + e.getMessage());
+                    e.printStackTrace();
+                    providerTable.updateProviderStatus(signalId, "Fehler beim Laden");
+                }
+                
+                // GUI-Update nach jedem Provider
+                if (i % 5 == 0) { // Alle 5 Provider
+                    final int currentIndex = i;
+                    display.asyncExec(() -> {
+                        updateStatus("DEBUG: Tick-Daten laden... (" + (currentIndex+1) + "/" + totalCount + ")");
+                    });
                 }
             }
             
             updateProviderCount();
-            String resultMessage = "Tabelle initialisiert: " + loadedCount + "/" + totalCount + " Provider geladen";
+            String resultMessage = "DEBUG: Tabelle initialisiert - " + totalCount + " Provider erstellt, " + loadedCount + " mit Tick-Daten gefüllt";
             LOGGER.info("=== " + resultMessage + " ===");
             
-            // Status in GUI setzen
+            // Finale Status-Updates
             display.asyncExec(() -> {
                 updateStatus(resultMessage);
                 
-                // NEU: Initiale Sortierung nach Favoritenklasse durchführen
+                // Initiale Sortierung nach Favoritenklasse durchführen
                 if (providerTable != null) {
+                    LOGGER.info("DEBUG: Führe initiale Sortierung durch...");
                     providerTable.performInitialSort();
                 }
             });
             
+            LOGGER.info("DEBUG: initializeTableWithSavedData() erfolgreich abgeschlossen");
+            
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "FATALER FEHLER beim Initialisieren der Tabelle", e);
+            LOGGER.log(Level.SEVERE, "DEBUG: FATALER FEHLER beim Initialisieren der Tabelle", e);
+            e.printStackTrace();
             display.asyncExec(() -> {
-                updateStatus("Fehler beim Laden der Daten");
+                updateStatus("DEBUG: Fehler beim Laden der Daten - " + e.getMessage());
             });
         }
     }
