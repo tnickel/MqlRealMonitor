@@ -14,9 +14,10 @@ import com.mql.realmonitor.data.TickDataLoader.TickDataSet;
 /**
  * Berechnet Wochen- und Monatsgewinne basierend auf Tick-Daten
  * 
- * GEÄNDERT: Verwendet jetzt Profit-Werte statt Equity-Werte für die Berechnung
- * WeeklyProfit: Berechnet vom letzten Sonntag bis jetzt (basierend auf Profit)
- * MonthlyProfit: Berechnet vom 1. des aktuellen Monats bis jetzt (basierend auf Profit)
+ * PERFORMANCE-BASIERT: Verwendet Profit + FloatingProfit für stabile Berechnungen
+ * - Ignoriert Ein-/Auszahlungen (die nur Equity beeinflussen)
+ * - Gesamt-Performance = Profit + FloatingProfit (echte Trading-Performance)
+ * - Prozentuale Berechnung relativ zum initialen Kapital
  */
 public class PeriodProfitCalculator {
     
@@ -78,7 +79,7 @@ public class PeriodProfitCalculator {
     
     /**
      * Berechnet Wochen- und Monatsgewinne für einen Signal-Provider
-     * GEÄNDERT: Verwendet jetzt Profit-Werte statt Equity-Werte
+     * PERFORMANCE-BASIERT: Verwendet Profit + FloatingProfit für Ein-/Auszahlungs-unabhängige Berechnung
      * 
      * @param tickFilePath Pfad zur Tick-Datei
      * @param signalId Die Signal-ID
@@ -86,134 +87,128 @@ public class PeriodProfitCalculator {
      */
     public static ProfitResult calculateProfits(String tickFilePath, String signalId) {
         if (tickFilePath == null || signalId == null) {
-            LOGGER.warning("PROFIT DEBUG: Ungültige Parameter für Profit-Berechnung: tickFilePath=" + tickFilePath + ", signalId=" + signalId);
+            LOGGER.warning("PERFORMANCE DEBUG: Ungültige Parameter für Profit-Berechnung: tickFilePath=" + tickFilePath + ", signalId=" + signalId);
             return new ProfitResult(0.0, 0.0, false, false, "Ungültige Parameter");
         }
         
-        LOGGER.info("PROFIT DEBUG: Berechne Profits für Signal " + signalId + " - Tick-Datei: " + tickFilePath + " (PROFIT-BASIERT)");
+        LOGGER.info("PERFORMANCE DEBUG: Berechne Profits für Signal " + signalId + " - Tick-Datei: " + tickFilePath + " (PERFORMANCE-BASIERT)");
         
         // Tick-Daten laden
         TickDataSet dataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
         if (dataSet == null || dataSet.getTickCount() == 0) {
-            LOGGER.warning("PROFIT DEBUG: Keine Tick-Daten verfügbar für Signal " + signalId + " - Datei: " + tickFilePath);
+            LOGGER.warning("PERFORMANCE DEBUG: Keine Tick-Daten verfügbar für Signal " + signalId + " - Datei: " + tickFilePath);
             return new ProfitResult(0.0, 0.0, false, false, "Keine Tick-Daten verfügbar: " + tickFilePath);
         }
         
         List<TickData> ticks = dataSet.getTicks();
-        LOGGER.info("PROFIT DEBUG: " + ticks.size() + " Ticks geladen für Signal " + signalId + " (PROFIT-BASIERT)");
+        LOGGER.info("PERFORMANCE DEBUG: " + ticks.size() + " Ticks geladen für Signal " + signalId + " (PERFORMANCE-BASIERT)");
         
         // Mindestens 2 Ticks erforderlich für sinnvolle Profit-Berechnung
         if (ticks.size() < 2) {
-            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Nur " + ticks.size() + " Tick(s) verfügbar, brauche mindestens 2 für Profit-Berechnung");
+            LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Nur " + ticks.size() + " Tick(s) verfügbar, brauche mindestens 2 für Profit-Berechnung");
             return new ProfitResult(0.0, 0.0, false, false, "Nicht genügend Daten für Profit-Berechnung");
         }
         
-        // GEÄNDERT: Aktueller Profit (letzter Tick) statt Equity
-        double currentProfit = dataSet.getLatestTick().getProfit();
+        // PERFORMANCE-BASIERT: Aktuelle Gesamt-Performance (Profit + FloatingProfit)
+        TickData latestTick = dataSet.getLatestTick();
+        double currentPerformance = latestTick.getProfit() + latestTick.getFloatingProfit();
+        
+        // Initiale Equity als Basis für prozentuale Berechnungen (vom ersten Tick)
+        double initialEquity = dataSet.getFirstTick().getEquity();
+        
         LocalDateTime now = LocalDateTime.now();
         
         // Referenzzeitpunkte ermitteln
         LocalDateTime weekStart = getLastSunday(now);
         LocalDateTime monthStart = getFirstOfCurrentMonth(now);
         
-        LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Aktuell: " + now + 
+        LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Aktuell: " + now + 
                    ", Wochenstart: " + weekStart + ", Monatsstart: " + monthStart + 
-                   ", Aktueller Profit: " + currentProfit + " (PROFIT-BASIERT)");
+                   ", Aktuelle Performance: " + currentPerformance + 
+                   " (Profit: " + latestTick.getProfit() + " + Floating: " + latestTick.getFloatingProfit() + ")" +
+                   ", Initiale Equity: " + initialEquity + " [PERFORMANCE-BASIERT]");
         
         // Zeige erste und letzte Ticks für Debugging
         TickData firstTick = ticks.get(0);
         TickData lastTick = ticks.get(ticks.size() - 1);
-        LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Erster Tick: " + firstTick.getTimestamp() + 
-                   " (Profit: " + firstTick.getProfit() + "), Letzter Tick: " + lastTick.getTimestamp() + 
-                   " (Profit: " + lastTick.getProfit() + ") [PROFIT-BASIERT]");
+        LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Erster Tick: " + firstTick.getTimestamp() + 
+                   " (Performance: " + (firstTick.getProfit() + firstTick.getFloatingProfit()) + ")" +
+                   ", Letzter Tick: " + lastTick.getTimestamp() + 
+                   " (Performance: " + (lastTick.getProfit() + lastTick.getFloatingProfit()) + ") [PERFORMANCE-BASIERT]");
         
-        // GEÄNDERT: VERBESSERTE PROFIT-SUCHE: Verwendet intelligente Fallback-Strategien
-        ProfitSearchResult weekProfitResult = findBestProfitForReference(ticks, weekStart, "Wochenstart", signalId);
-        ProfitSearchResult monthProfitResult = findBestProfitForReference(ticks, monthStart, "Monatsstart", signalId);
+        // PERFORMANCE-BASIERT: Suche Performance für Referenzzeitpunkte
+        PerformanceSearchResult weekPerformanceResult = findBestPerformanceForReference(ticks, weekStart, "Wochenstart", signalId);
+        PerformanceSearchResult monthPerformanceResult = findBestPerformanceForReference(ticks, monthStart, "Monatsstart", signalId);
         
-        // Profit-Berechnungen
-        boolean hasWeeklyData = weekProfitResult.hasValidData();
-        boolean hasMonthlyData = monthProfitResult.hasValidData();
+        // Performance-Berechnungen
+        boolean hasWeeklyData = weekPerformanceResult.hasValidData();
+        boolean hasMonthlyData = monthPerformanceResult.hasValidData();
         
         double weeklyProfit = 0.0;
         double monthlyProfit = 0.0;
         
         if (hasWeeklyData) {
-            double weekStartProfit = weekProfitResult.getProfit();
-            // GEÄNDERT: Profit-Differenz in Prozent der Basis berechnen
-            weeklyProfit = calculateProfitChange(currentProfit, weekStartProfit);
-            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Wochenprofit berechnet: (" + currentProfit + " - " + 
-                       weekStartProfit + ") / |" + weekStartProfit + "| * 100 = " + String.format("%.4f%%", weeklyProfit) + " [PROFIT-BASIERT]");
+            double weekStartPerformance = weekPerformanceResult.getPerformance();
+            // Performance-Änderung relativ zur initialen Equity
+            double performanceChange = currentPerformance - weekStartPerformance;
+            weeklyProfit = (performanceChange / initialEquity) * 100.0;
+            
+            LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Wochenprofit berechnet: " +
+                       "(" + currentPerformance + " - " + weekStartPerformance + ") / " + initialEquity + " * 100 = " + 
+                       String.format("%.4f%%", weeklyProfit) + " [PERFORMANCE-BASIERT]");
         } else {
-            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine gültigen Wochendaten verfügbar (PROFIT-BASIERT)");
+            LOGGER.warning("PERFORMANCE DEBUG: Signal " + signalId + " - Keine gültigen Wochendaten verfügbar (PERFORMANCE-BASIERT)");
         }
         
         if (hasMonthlyData) {
-            double monthStartProfit = monthProfitResult.getProfit();
-            // GEÄNDERT: Profit-Differenz in Prozent der Basis berechnen
-            monthlyProfit = calculateProfitChange(currentProfit, monthStartProfit);
-            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Monatsprofit berechnet: (" + currentProfit + " - " + 
-                       monthStartProfit + ") / |" + monthStartProfit + "| * 100 = " + String.format("%.4f%%", monthlyProfit) + " [PROFIT-BASIERT]");
+            double monthStartPerformance = monthPerformanceResult.getPerformance();
+            // Performance-Änderung relativ zur initialen Equity
+            double performanceChange = currentPerformance - monthStartPerformance;
+            monthlyProfit = (performanceChange / initialEquity) * 100.0;
+            
+            LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Monatsprofit berechnet: " +
+                       "(" + currentPerformance + " - " + monthStartPerformance + ") / " + initialEquity + " * 100 = " + 
+                       String.format("%.4f%%", monthlyProfit) + " [PERFORMANCE-BASIERT]");
         } else {
-            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine gültigen Monatsdaten verfügbar (PROFIT-BASIERT)");
+            LOGGER.warning("PERFORMANCE DEBUG: Signal " + signalId + " - Keine gültigen Monatsdaten verfügbar (PERFORMANCE-BASIERT)");
         }
         
         // Diagnostik-Informationen
         StringBuilder diagnostic = new StringBuilder();
         diagnostic.append("Signal: ").append(signalId).append(", ");
-        diagnostic.append("Current Profit: ").append(String.format("%.2f", currentProfit)).append(", ");
-        diagnostic.append("Week: ").append(weekProfitResult.getDiagnosticInfo()).append(", ");
-        diagnostic.append("Month: ").append(monthProfitResult.getDiagnosticInfo()).append(" [PROFIT-BASIERT]");
+        diagnostic.append("Current Performance: ").append(String.format("%.2f", currentPerformance)).append(", ");
+        diagnostic.append("Initial Equity: ").append(String.format("%.2f", initialEquity)).append(", ");
+        diagnostic.append("Week: ").append(weekPerformanceResult.getDiagnosticInfo()).append(", ");
+        diagnostic.append("Month: ").append(monthPerformanceResult.getDiagnosticInfo()).append(" [PERFORMANCE-BASIERT]");
         
-        LOGGER.info("PROFIT DEBUG: Ergebnis für " + signalId + ": WeeklyProfit=" + String.format("%.4f%%", weeklyProfit) + 
-                   ", MonthlyProfit=" + String.format("%.4f%%", monthlyProfit) + " [PROFIT-BASIERT]");
+        LOGGER.info("PERFORMANCE DEBUG: Ergebnis für " + signalId + ": WeeklyProfit=" + String.format("%.4f%%", weeklyProfit) + 
+                   ", MonthlyProfit=" + String.format("%.4f%%", monthlyProfit) + " [PERFORMANCE-BASIERT]");
         
         return new ProfitResult(weeklyProfit, monthlyProfit, hasWeeklyData, hasMonthlyData, diagnostic.toString());
     }
     
     /**
-     * NEUE METHODE: Berechnet die prozentuale Änderung zwischen zwei Profit-Werten
-     * Spezielle Behandlung für positive/negative Profit-Werte
-     * 
-     * @param currentProfit Aktueller Profit-Wert
-     * @param referenceProfit Referenz-Profit-Wert
-     * @return Prozentuale Änderung
+     * PERFORMANCE-BASIERT: Hilfsobjekt für Performance-Suchergebnisse (Profit + FloatingProfit)
      */
-    private static double calculateProfitChange(double currentProfit, double referenceProfit) {
-        // Absolute Differenz
-        double difference = currentProfit - referenceProfit;
-        
-        // Wenn Referenz-Profit 0 ist, geben wir die absolute Differenz als Prozent zurück
-        if (Math.abs(referenceProfit) < 0.01) {
-            return difference * 100.0; // Interpretiere als direkte Prozentpunkte
-        }
-        
-        // Normale prozentuale Berechnung basierend auf Absolutwert der Referenz
-        return (difference / Math.abs(referenceProfit)) * 100.0;
-    }
-    
-    /**
-     * GEÄNDERT: Hilfsobjekt für Profit-Suchergebnisse (statt Equity)
-     */
-    private static class ProfitSearchResult {
-        private final Double profit;
+    private static class PerformanceSearchResult {
+        private final Double performance;
         private final LocalDateTime timestamp;
         private final String strategy;
         private final boolean hasData;
         
-        public ProfitSearchResult(Double profit, LocalDateTime timestamp, String strategy) {
-            this.profit = profit;
+        public PerformanceSearchResult(Double performance, LocalDateTime timestamp, String strategy) {
+            this.performance = performance;
             this.timestamp = timestamp;
             this.strategy = strategy;
-            this.hasData = (profit != null);
+            this.hasData = (performance != null);
         }
         
-        public static ProfitSearchResult noData(String reason) {
-            return new ProfitSearchResult(null, null, reason);
+        public static PerformanceSearchResult noData(String reason) {
+            return new PerformanceSearchResult(null, null, reason);
         }
         
         public boolean hasValidData() { return hasData; }
-        public double getProfit() { return profit != null ? profit : 0.0; }
+        public double getPerformance() { return performance != null ? performance : 0.0; }
         public LocalDateTime getTimestamp() { return timestamp; }
         
         public String getDiagnosticInfo() {
@@ -221,44 +216,46 @@ public class PeriodProfitCalculator {
                 return strategy + " (keine Daten)";
             }
             return String.format("%s=%.2f am %s (%s)", 
-                               strategy.split(" ")[0], profit, 
+                               strategy.split(" ")[0], performance, 
                                timestamp != null ? timestamp.toLocalDate() : "unknown", strategy);
         }
     }
     
     /**
-     * GEÄNDERT: VERBESSERTE METHODE: Findet den besten verfügbaren Profit für einen Referenzzeitpunkt
+     * PERFORMANCE-BASIERT: Findet die beste verfügbare Performance für einen Referenzzeitpunkt
+     * Performance = Profit + FloatingProfit (unabhängig von Ein-/Auszahlungen)
      * 
      * Strategie:
-     * 1. Suche exakt am Referenzzeitpunkt
-     * 2. Suche den nächsten Tick nach dem Referenzzeitpunkt (für "seit diesem Zeitpunkt")
-     * 3. FALLBACK: Suche den letzten verfügbaren Tick VOR dem Referenzzeitpunkt
-     * 4. Als letzte Option: Verwende ersten Tick (nur wenn alle anderen fehlschlagen)
+     * 1. Suche Tick am oder nach dem Referenzzeitpunkt (bevorzugt)
+     * 2. FALLBACK: Suche letzten verfügbaren Tick VOR dem Referenzzeitpunkt
+     * 3. Als letzte Option: Verwende ersten Tick
      */
-    private static ProfitSearchResult findBestProfitForReference(List<TickData> ticks, LocalDateTime referenceTime, String purpose, String signalId) {
+    private static PerformanceSearchResult findBestPerformanceForReference(List<TickData> ticks, LocalDateTime referenceTime, String purpose, String signalId) {
         if (ticks == null || ticks.isEmpty()) {
-            LOGGER.warning("PROFIT DEBUG: Keine Ticks verfügbar für " + purpose + " von Signal " + signalId + " [PROFIT-BASIERT]");
-            return ProfitSearchResult.noData("keine Ticks");
+            LOGGER.warning("PERFORMANCE DEBUG: Keine Ticks verfügbar für " + purpose + " von Signal " + signalId + " [PERFORMANCE-BASIERT]");
+            return PerformanceSearchResult.noData("keine Ticks");
         }
         
-        LOGGER.info("PROFIT DEBUG: Suche " + purpose + " für " + referenceTime + " in " + ticks.size() + " Ticks (Signal " + signalId + ") [PROFIT-BASIERT]");
+        LOGGER.info("PERFORMANCE DEBUG: Suche " + purpose + " für " + referenceTime + " in " + ticks.size() + " Ticks (Signal " + signalId + ") [PERFORMANCE-BASIERT]");
         
         LocalDateTime firstTickTime = ticks.get(0).getTimestamp();
         LocalDateTime lastTickTime = ticks.get(ticks.size() - 1).getTimestamp();
-        LOGGER.info("PROFIT DEBUG: Verfügbarer Zeitraum: " + firstTickTime + " bis " + lastTickTime + " [PROFIT-BASIERT]");
+        LOGGER.info("PERFORMANCE DEBUG: Verfügbarer Zeitraum: " + firstTickTime + " bis " + lastTickTime + " [PERFORMANCE-BASIERT]");
         
         // Strategie 1: Suche Tick am oder nach dem Referenzzeitpunkt (bevorzugt)
         for (TickData tick : ticks) {
             if (!tick.getTimestamp().isBefore(referenceTime)) {
-                LOGGER.info("PROFIT DEBUG: " + purpose + " - Strategie 1 (ab Referenzzeit): " + tick.getProfit() + 
-                           " am " + tick.getTimestamp() + " (Signal " + signalId + ") [PROFIT-BASIERT]");
-                return new ProfitSearchResult(tick.getProfit(), tick.getTimestamp(), 
-                                            "Strategie 1 (ab " + referenceTime.toLocalDate() + ")");
+                double performance = tick.getProfit() + tick.getFloatingProfit();
+                LOGGER.info("PERFORMANCE DEBUG: " + purpose + " - Strategie 1 (ab Referenzzeit): " + performance + 
+                           " (Profit: " + tick.getProfit() + " + Floating: " + tick.getFloatingProfit() + ")" +
+                           " am " + tick.getTimestamp() + " (Signal " + signalId + ") [PERFORMANCE-BASIERT]");
+                return new PerformanceSearchResult(performance, tick.getTimestamp(), 
+                                                 "Strategie 1 (ab " + referenceTime.toLocalDate() + ")");
             }
         }
         
         // Strategie 2: FALLBACK - Suche letzten verfügbaren Tick VOR dem Referenzzeitpunkt
-        LOGGER.info("PROFIT DEBUG: " + purpose + " - Kein Tick ab " + referenceTime + " gefunden, suche letzten Tick davor (Signal " + signalId + ") [PROFIT-BASIERT]");
+        LOGGER.info("PERFORMANCE DEBUG: " + purpose + " - Kein Tick ab " + referenceTime + " gefunden, suche letzten Tick davor (Signal " + signalId + ") [PERFORMANCE-BASIERT]");
         
         TickData lastTickBefore = null;
         for (TickData tick : ticks) {
@@ -270,19 +267,21 @@ public class PeriodProfitCalculator {
         }
         
         if (lastTickBefore != null) {
-            LOGGER.info("PROFIT DEBUG: " + purpose + " - Strategie 2 (letzter vor Referenzzeit): " + lastTickBefore.getProfit() + 
-                       " am " + lastTickBefore.getTimestamp() + " (Signal " + signalId + ") [PROFIT-BASIERT]");
-            return new ProfitSearchResult(lastTickBefore.getProfit(), lastTickBefore.getTimestamp(), 
-                                        "Strategie 2 (letzter vor " + referenceTime.toLocalDate() + ")");
+            double performance = lastTickBefore.getProfit() + lastTickBefore.getFloatingProfit();
+            LOGGER.info("PERFORMANCE DEBUG: " + purpose + " - Strategie 2 (letzter vor Referenzzeit): " + performance + 
+                       " (Profit: " + lastTickBefore.getProfit() + " + Floating: " + lastTickBefore.getFloatingProfit() + ")" +
+                       " am " + lastTickBefore.getTimestamp() + " (Signal " + signalId + ") [PERFORMANCE-BASIERT]");
+            return new PerformanceSearchResult(performance, lastTickBefore.getTimestamp(), 
+                                             "Strategie 2 (letzter vor " + referenceTime.toLocalDate() + ")");
         }
         
         // Strategie 3: Als absolute letzte Option - verwende ersten verfügbaren Tick
-        // (nur wenn alle Ticks nach dem Referenzzeitpunkt liegen)
-        LOGGER.warning("PROFIT DEBUG: " + purpose + " - Alle Ticks liegen nach " + referenceTime + 
-                      ", verwende ersten verfügbaren als Notlösung (Signal " + signalId + ") [PROFIT-BASIERT]");
+        LOGGER.warning("PERFORMANCE DEBUG: " + purpose + " - Alle Ticks liegen nach " + referenceTime + 
+                      ", verwende ersten verfügbaren als Notlösung (Signal " + signalId + ") [PERFORMANCE-BASIERT]");
         TickData firstTick = ticks.get(0);
-        return new ProfitSearchResult(firstTick.getProfit(), firstTick.getTimestamp(), 
-                                    "Strategie 3 (Notlösung - erster Tick)");
+        double performance = firstTick.getProfit() + firstTick.getFloatingProfit();
+        return new PerformanceSearchResult(performance, firstTick.getTimestamp(), 
+                                         "Strategie 3 (Notlösung - erster Tick)");
     }
     
     /**
@@ -326,15 +325,6 @@ public class PeriodProfitCalculator {
     }
     
     /**
-     * VERALTETE METHODE - wird durch findBestProfitForReference ersetzt
-     * Wird für Kompatibilität beibehalten, aber nicht mehr verwendet
-     */
-    @Deprecated
-    private static Double findEquityAtOrAfter(List<TickData> ticks, LocalDateTime targetTime) {
-        return findBestProfitForReference(ticks, targetTime, "Legacy", "unknown").getProfit();
-    }
-    
-    /**
      * Test-Methode für die Datums-Berechnungen
      * 
      * @param testDate Das Testdatum
@@ -350,7 +340,7 @@ public class PeriodProfitCalculator {
     
     /**
      * Erstellt eine detaillierte Diagnose für Debugging
-     * GEÄNDERT: Jetzt mit Profit-Werten statt Equity-Werten
+     * PERFORMANCE-BASIERT: Zeigt Profit + FloatingProfit Werte
      * 
      * @param tickFilePath Pfad zur Tick-Datei
      * @param signalId Die Signal-ID
@@ -358,7 +348,7 @@ public class PeriodProfitCalculator {
      */
     public static String createDetailedDiagnostic(String tickFilePath, String signalId) {
         StringBuilder diag = new StringBuilder();
-        diag.append("=== PERIOD PROFIT DIAGNOSTIC (PROFIT-BASIERT) ===\n");
+        diag.append("=== PERIOD PROFIT DIAGNOSTIC (PERFORMANCE-BASIERT) ===\n");
         diag.append("Signal ID: ").append(signalId).append("\n");
         diag.append("Tick File: ").append(tickFilePath).append("\n");
         
@@ -371,9 +361,15 @@ public class PeriodProfitCalculator {
         if (dataSet != null) {
             diag.append("Tick Count: ").append(dataSet.getTickCount()).append("\n");
             if (dataSet.getTickCount() > 0) {
-                diag.append("First Tick: ").append(dataSet.getFirstTick().getTimestamp()).append("\n");
-                diag.append("Last Tick: ").append(dataSet.getLatestTick().getTimestamp()).append("\n");
-                diag.append("Current Profit: ").append(dataSet.getLatestTick().getProfit()).append(" [PROFIT-BASIERT]\n");
+                TickData firstTick = dataSet.getFirstTick();
+                TickData lastTick = dataSet.getLatestTick();
+                
+                diag.append("First Tick: ").append(firstTick.getTimestamp()).append("\n");
+                diag.append("Last Tick: ").append(lastTick.getTimestamp()).append("\n");
+                diag.append("Initial Equity: ").append(firstTick.getEquity()).append("\n");
+                diag.append("Current Performance: ").append(lastTick.getProfit() + lastTick.getFloatingProfit())
+                    .append(" (Profit: ").append(lastTick.getProfit())
+                    .append(" + Floating: ").append(lastTick.getFloatingProfit()).append(") [PERFORMANCE-BASIERT]\n");
             }
         } else {
             diag.append("No tick data available\n");

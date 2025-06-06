@@ -23,13 +23,14 @@ import com.mql.realmonitor.parser.SignalData;
  * ERWEITERT: Zusätzliche Funktionen für Chart-Übersicht und Favoritenklasse-Spalte
  * NEU: Support für neue Profit-Spalte und angepasste Spalten-Indizes
  * NEU: Support für WeeklyProfit und MonthlyProfit Spalten mit Farbkodierung
+ * KORRIGIERT: Total Value Drawdown für Konsistenz zwischen Chart und Tabelle
  * Enthält Berechnungen, Sortierung und Formatierung
  */
 public class ProviderTableHelper {
     
     private static final Logger LOGGER = Logger.getLogger(ProviderTableHelper.class.getName());
     
-    // Spalten-Indizes (ERWEITERT: Neue Profit-Spalte hinzugefügt, alle nachfolgenden Indizes verschoben)
+    // Spalten-Indizes (KORRIGIERT: Total Value Drawdown statt Equity Drawdown)
     public static final int COL_SIGNAL_ID = 0;
     public static final int COL_FAVORITE_CLASS = 1;        // Favoritenklasse
     public static final int COL_PROVIDER_NAME = 2;        // Provider Name
@@ -37,13 +38,17 @@ public class ProviderTableHelper {
     public static final int COL_EQUITY = 4;               // Kontostand
     public static final int COL_PROFIT = 5;               // NEU: Profit (zwischen Kontostand und Floating Profit)
     public static final int COL_FLOATING = 6;             // Floating Profit (verschoben von 5 zu 6)
-    public static final int COL_EQUITY_DRAWDOWN = 7;      // Equity Drawdown (verschoben von 6 zu 7)
+    public static final int COL_TOTAL_VALUE_DRAWDOWN = 7; // KORRIGIERT: Total Value Drawdown (war Equity Drawdown)
     public static final int COL_TOTAL = 8;                // Gesamtwert (verschoben von 7 zu 8)
     public static final int COL_WEEKLY_PROFIT = 9;        // WeeklyProfit (verschoben von 8 zu 9)
     public static final int COL_MONTHLY_PROFIT = 10;      // MonthlyProfit (verschoben von 9 zu 10)
     public static final int COL_CURRENCY = 11;            // Währung (verschoben von 10 zu 11)
     public static final int COL_LAST_UPDATE = 12;         // Letzte Aktualisierung (verschoben von 11 zu 12)
     public static final int COL_CHANGE = 13;              // Änderung (verschoben von 12 zu 13)
+    
+    // DEPRECATED: Alte Konstante für Rückwärtskompatibilität
+    @Deprecated
+    public static final int COL_EQUITY_DRAWDOWN = COL_TOTAL_VALUE_DRAWDOWN;
     
     private final MqlRealMonitorGUI parentGui;
     
@@ -127,19 +132,28 @@ public class ProviderTableHelper {
     }
     
     /**
-     * Bestimmt die Farbe für Equity Drawdown
+     * Bestimmt die Farbe für Total Value Drawdown
      * 
-     * @param equityDrawdownPercent Der Equity Drawdown in Prozent
+     * @param totalValueDrawdownPercent Der Total Value Drawdown in Prozent
      * @return Die entsprechende Farbe
      */
-    public Color getEquityDrawdownColor(double equityDrawdownPercent) {
-        if (equityDrawdownPercent > 0) {
-            return parentGui.getGreenColor();  // Grün für positive Drawdowns
-        } else if (equityDrawdownPercent < 0) {
-            return parentGui.getRedColor();    // Rot für negative Drawdowns
+    public Color getTotalValueDrawdownColor(double totalValueDrawdownPercent) {
+        if (totalValueDrawdownPercent > 0) {
+            return parentGui.getGreenColor();  // Grün für positive Drawdowns (Gewinne)
+        } else if (totalValueDrawdownPercent < 0) {
+            return parentGui.getRedColor();    // Rot für negative Drawdowns (Verluste)
         } else {
             return null; // Standard-Farbe für 0%
         }
+    }
+    
+    /**
+     * @deprecated Diese Methode war für Equity Drawdown. Verwende getTotalValueDrawdownColor().
+     */
+    @Deprecated
+    public Color getEquityDrawdownColor(double equityDrawdownPercent) {
+        LOGGER.warning("DEPRECATED: getEquityDrawdownColor() wurde durch getTotalValueDrawdownColor() ersetzt");
+        return getTotalValueDrawdownColor(equityDrawdownPercent);
     }
     
     /**
@@ -268,7 +282,7 @@ public class ProviderTableHelper {
     
     /**
      * Vergleicht zwei Tabellen-Texte für Sortierung
-     * ERWEITERT: Bessere Datum/Zeit-Vergleiche und Support für neue Profit-Spalte (angepasste Spalten-Indizes)
+     * ERWEITERT: Bessere Datum/Zeit-Vergleiche und Support für neue Profit-Spalte und Total Value Drawdown
      * 
      * @param text1 Erster Text
      * @param text2 Zweiter Text
@@ -276,9 +290,9 @@ public class ProviderTableHelper {
      * @return Vergleichsresultat
      */
     public int compareTableText(String text1, String text2, int columnIndex) {
-        // Für numerische Spalten versuche numerische Sortierung (ANGEPASST: Neue Profit-Spalte hinzugefügt)
+        // Für numerische Spalten versuche numerische Sortierung (KORRIGIERT: Total Value Drawdown)
         if (columnIndex == COL_EQUITY || columnIndex == COL_PROFIT || columnIndex == COL_FLOATING || 
-            columnIndex == COL_EQUITY_DRAWDOWN || columnIndex == COL_TOTAL ||
+            columnIndex == COL_TOTAL_VALUE_DRAWDOWN || columnIndex == COL_TOTAL ||
             columnIndex == COL_WEEKLY_PROFIT || columnIndex == COL_MONTHLY_PROFIT) {  // NEU: Profit-Spalten
             try {
                 // Extrahiere Zahlen aus formatiertem Text
@@ -310,7 +324,7 @@ public class ProviderTableHelper {
             }
         }
         
-        // NEU: Spezielle Behandlung für Profit-Spalten (N/A Werte am Ende) (ANGEPASST: Neue Spalten-Indizes)
+        // NEU: Spezielle Behandlung für Profit-Spalten (N/A Werte am Ende) (KORRIGIERT: Neue Spalten-Indizes)
         if (columnIndex == COL_PROFIT || columnIndex == COL_WEEKLY_PROFIT || columnIndex == COL_MONTHLY_PROFIT) {
             boolean text1NA = (text1 == null || text1.trim().isEmpty() || text1.equals("N/A"));
             boolean text2NA = (text2 == null || text2.trim().isEmpty() || text2.equals("N/A"));
@@ -330,7 +344,7 @@ public class ProviderTableHelper {
             }
         }
         
-        // Spezielle Behandlung für Datum/Zeit (für Chart-Übersicht relevant) (ANGEPASST: Neuer Spalten-Index)
+        // Spezielle Behandlung für Datum/Zeit (für Chart-Übersicht relevant) (KORRIGIERT: Neuer Spalten-Index)
         if (columnIndex == COL_LAST_UPDATE) {
             try {
                 DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss");
@@ -432,7 +446,7 @@ public class ProviderTableHelper {
     }
     
     /**
-     * ERWEITERT: Zeigt Details für einen Provider an (mit neuer Profit-Spalte und Profit-Informationen)
+     * ERWEITERT: Zeigt Details für einen Provider an (mit neuer Profit-Spalte und Total Value Drawdown)
      * 
      * @param item Das Tabellen-Item
      * @param lastSignalData Map mit den letzten SignalData
@@ -442,6 +456,7 @@ public class ProviderTableHelper {
         String favoriteClass = item.getText(COL_FAVORITE_CLASS);
         String providerName = item.getText(COL_PROVIDER_NAME);
         String profit = item.getText(COL_PROFIT);               // NEU: Profit-Spalte
+        String totalValueDrawdown = item.getText(COL_TOTAL_VALUE_DRAWDOWN);  // KORRIGIERT: Total Value Drawdown
         String weeklyProfit = item.getText(COL_WEEKLY_PROFIT);
         String monthlyProfit = item.getText(COL_MONTHLY_PROFIT);
         SignalData signalData = lastSignalData.get(signalId);
@@ -455,7 +470,7 @@ public class ProviderTableHelper {
         details.append("Kontostand: ").append(item.getText(COL_EQUITY)).append("\n");
         details.append("Profit: ").append(profit).append("\n");              // NEU: Profit-Spalte
         details.append("Floating Profit: ").append(item.getText(COL_FLOATING)).append("\n");
-        details.append("Equity Drawdown: ").append(item.getText(COL_EQUITY_DRAWDOWN)).append("\n");
+        details.append("Total Value Drawdown: ").append(totalValueDrawdown).append("\n");  // KORRIGIERT: Total Value Drawdown
         details.append("Gesamtwert: ").append(item.getText(COL_TOTAL)).append("\n");
         details.append("Wochengewinn: ").append(weeklyProfit).append("\n");
         details.append("Monatsgewinn: ").append(monthlyProfit).append("\n");
@@ -534,7 +549,7 @@ public class ProviderTableHelper {
     
     /**
      * NEU: Hilfsmethode um Provider-Daten aus der Tabelle zu extrahieren
-     * ERWEITERT: Jetzt mit neuer Profit-Spalte und Profit-Informationen
+     * ERWEITERT: Jetzt mit neuer Profit-Spalte und Total Value Drawdown
      * 
      * @param table Die Provider-Tabelle
      * @return Liste mit Provider-Daten als einfache Datenklasse
@@ -557,6 +572,7 @@ public class ProviderTableHelper {
                 String providerName = item.getText(COL_PROVIDER_NAME);
                 String status = item.getText(COL_STATUS);
                 String profit = item.getText(COL_PROFIT);                   // NEU: Profit-Spalte
+                String totalValueDrawdown = item.getText(COL_TOTAL_VALUE_DRAWDOWN);  // KORRIGIERT: Total Value Drawdown
                 String weeklyProfit = item.getText(COL_WEEKLY_PROFIT);
                 String monthlyProfit = item.getText(COL_MONTHLY_PROFIT);
                 
@@ -565,12 +581,14 @@ public class ProviderTableHelper {
                     providerName != null && !providerName.trim().isEmpty() &&
                     !"Lädt...".equals(providerName)) {
                     
-                    ProviderInfo info = new ProviderInfo(signalId, providerName, status, favoriteClass, profit, weeklyProfit, monthlyProfit);
+                    ProviderInfo info = new ProviderInfo(signalId, providerName, status, favoriteClass, 
+                                                        profit, totalValueDrawdown, weeklyProfit, monthlyProfit);
                     providerInfos.add(info);
                     
                     LOGGER.fine("Provider-Info extrahiert: " + signalId + " (" + providerName + 
                                ", Klasse: " + (favoriteClass != null && !favoriteClass.trim().isEmpty() && !favoriteClass.equals("-") ? favoriteClass : "Keine") + 
-                               ", Profit: " + profit + ", Weekly: " + weeklyProfit + ", Monthly: " + monthlyProfit + ")");
+                               ", Profit: " + profit + ", Total Value Drawdown: " + totalValueDrawdown +
+                               ", Weekly: " + weeklyProfit + ", Monthly: " + monthlyProfit + ")");
                 }
                 
             } catch (Exception e) {
@@ -583,8 +601,8 @@ public class ProviderTableHelper {
     }
     
     /**
-     * NEU: Erweiterte Datenklasse für Provider-Informationen (mit neuer Profit-Spalte)
-     * ERWEITERT: Jetzt mit Profit, WeeklyProfit und MonthlyProfit
+     * NEU: Erweiterte Datenklasse für Provider-Informationen (mit Total Value Drawdown)
+     * ERWEITERT: Jetzt mit Profit, Total Value Drawdown, WeeklyProfit und MonthlyProfit
      */
     public static class ProviderInfo {
         public final String signalId;
@@ -592,16 +610,18 @@ public class ProviderTableHelper {
         public final String status;
         public final String favoriteClass;
         public final String profit;           // NEU: Profit-Spalte
+        public final String totalValueDrawdown;  // KORRIGIERT: Total Value Drawdown
         public final String weeklyProfit;
         public final String monthlyProfit;
         
         public ProviderInfo(String signalId, String providerName, String status, String favoriteClass, 
-                           String profit, String weeklyProfit, String monthlyProfit) {
+                           String profit, String totalValueDrawdown, String weeklyProfit, String monthlyProfit) {
             this.signalId = signalId;
             this.providerName = providerName;
             this.status = status;
             this.favoriteClass = favoriteClass;
             this.profit = profit;
+            this.totalValueDrawdown = totalValueDrawdown;
             this.weeklyProfit = weeklyProfit;
             this.monthlyProfit = monthlyProfit;
         }
@@ -610,7 +630,8 @@ public class ProviderTableHelper {
         public String toString() {
             return "ProviderInfo{signalId='" + signalId + "', providerName='" + providerName + 
                    "', status='" + status + "', favoriteClass='" + favoriteClass + 
-                   "', profit='" + profit + "', weeklyProfit='" + weeklyProfit + "', monthlyProfit='" + monthlyProfit + "'}";
+                   "', profit='" + profit + "', totalValueDrawdown='" + totalValueDrawdown +
+                   "', weeklyProfit='" + weeklyProfit + "', monthlyProfit='" + monthlyProfit + "'}";
         }
     }
 }

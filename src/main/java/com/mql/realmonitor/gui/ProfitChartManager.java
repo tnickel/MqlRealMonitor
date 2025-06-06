@@ -19,8 +19,9 @@ import org.jfree.data.time.TimeSeriesCollection;
 import com.mql.realmonitor.data.TickDataLoader;
 
 /**
- * KORRIGIERT: Verwaltet den Profit-Chart mit Kontostand (grün) und Gesamtwert (gelb)
+ * KORRIGIERT: Verwaltet den Profit-Chart mit Profit (grün) und Profit + Open Equity (gelb)
  * ALLE X-ACHSEN PROBLEME BEHOBEN: Korrekte Domain-Achsen-Kalibrierung
+ * PROFIT-BERECHNUNG: Grün = Realized Profit, Gelb = Profit + Open Equity
  */
 public class ProfitChartManager {
     
@@ -29,12 +30,15 @@ public class ProfitChartManager {
     // Chart Komponenten
     private JFreeChart profitChart;
     
-    // TimeSeries für Profit-Chart
-    private TimeSeries equitySeries;      // Kontostand (grün)
-    private TimeSeries totalValueSeries;  // Gesamtwert (gelb)
+    // TimeSeries für Profit-Chart (KORRIGIERT)
+    private TimeSeries profitSeries;           // Realized Profit (grün)
+    private TimeSeries profitPlusOpenSeries;   // Profit + Open Equity (gelb)
     
     private final String signalId;
     private final String providerName;
+    
+    // Profit-Berechnung
+    private Double initialEquity = null;
     
     // DEBUG-COUNTER
     private int updateCounter = 0;
@@ -52,22 +56,22 @@ public class ProfitChartManager {
      * Erstellt den Profit-Chart
      */
     private void createProfitChart() {
-        // TimeSeries für Kontostand (Equity)
-        equitySeries = new TimeSeries("Kontostand");
+        // TimeSeries für Realized Profit (KORRIGIERT)
+        profitSeries = new TimeSeries("Profit");
         
-        // TimeSeries für Gesamtwert (Equity + Floating Profit)
-        totalValueSeries = new TimeSeries("Gesamtwert (inkl. Open Equity)");
+        // TimeSeries für Profit + Open Equity (KORRIGIERT)
+        profitPlusOpenSeries = new TimeSeries("Profit + Open Equity");
         
         // TimeSeriesCollection für Profit-Chart
         TimeSeriesCollection profitDataset = new TimeSeriesCollection();
-        profitDataset.addSeries(equitySeries);
-        profitDataset.addSeries(totalValueSeries);
+        profitDataset.addSeries(profitSeries);
+        profitDataset.addSeries(profitPlusOpenSeries);
         
         // Profit-Chart erstellen
         profitChart = ChartFactory.createTimeSeriesChart(
             "Profit-Entwicklung - " + signalId + " (" + providerName + ") - DIAGNOSEMODUS",
             "Zeit",
-            "Wert (€/$/etc.)",
+            "Profit (€/$/etc.)",
             profitDataset,
             true,  // Legend
             true,  // Tooltips
@@ -88,20 +92,20 @@ public class ProfitChartManager {
         XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer();
         
         // Linien-Renderer konfigurieren
-        renderer.setSeriesLinesVisible(0, true);  // Equity-Linie
-        renderer.setSeriesShapesVisible(0, true); // Equity-Punkte
-        renderer.setSeriesLinesVisible(1, true);  // Gesamtwert-Linie
-        renderer.setSeriesShapesVisible(1, true); // Gesamtwert-Punkte
+        renderer.setSeriesLinesVisible(0, true);  // Profit-Linie
+        renderer.setSeriesShapesVisible(0, true); // Profit-Punkte
+        renderer.setSeriesLinesVisible(1, true);  // Profit+Open-Linie
+        renderer.setSeriesShapesVisible(1, true); // Profit+Open-Punkte
         
         // Shape-Größe für bessere Sichtbarkeit
-        renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-3, -3, 6, 6)); // Equity
-        renderer.setSeriesShape(1, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Gesamtwert (etwas größer)
+        renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-3, -3, 6, 6)); // Profit
+        renderer.setSeriesShape(1, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Profit+Open (etwas größer)
         
-        // Farben setzen
-        renderer.setSeriesPaint(0, new Color(0, 150, 0));   // Grün für Kontostand
-        renderer.setSeriesPaint(1, new Color(255, 200, 0)); // Gelb für Gesamtwert
-        renderer.setSeriesStroke(0, new BasicStroke(2.0f)); // Kontostand-Linie
-        renderer.setSeriesStroke(1, new BasicStroke(3.0f)); // Gesamtwert-Linie (dicker)
+        // Farben setzen (KORRIGIERT)
+        renderer.setSeriesPaint(0, new Color(0, 150, 0));   // Grün für Profit
+        renderer.setSeriesPaint(1, new Color(255, 200, 0)); // Gelb für Profit + Open Equity
+        renderer.setSeriesStroke(0, new BasicStroke(2.0f)); // Profit-Linie
+        renderer.setSeriesStroke(1, new BasicStroke(3.0f)); // Profit+Open-Linie (dicker)
         
         plot.setRenderer(renderer);
         
@@ -115,8 +119,8 @@ public class ProfitChartManager {
         plot.setDomainGridlinesVisible(true);
         plot.setRangeGridlinesVisible(true);
         
-        // Achsen-Labels
-        plot.getRangeAxis().setLabel("Wert - DIAGNOSEMODUS");
+        // Achsen-Labels (KORRIGIERT)
+        plot.getRangeAxis().setLabel("Profit - DIAGNOSEMODUS");
         plot.getDomainAxis().setLabel("Zeit");
         
         // Y-Achse manuell konfigurieren für intelligente Skalierung
@@ -127,6 +131,7 @@ public class ProfitChartManager {
     
     /**
      * KORRIGIERT: Aktualisiert den Profit-Chart mit gefilterten Daten
+     * PROFIT-BERECHNUNG: Grün = Realized Profit, Gelb = Profit + Open Equity
      */
     public void updateProfitChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         updateCounter++;
@@ -153,9 +158,15 @@ public class ProfitChartManager {
         try {
             LOGGER.info("Anzahl gefilterte Ticks: " + filteredTicks.size());
             
+            // SCHRITT 1: Initial Equity bestimmen für Profit-Berechnung
+            TickDataLoader.TickData firstTick = filteredTicks.get(0);
+            initialEquity = firstTick.getEquity();
+            
+            LOGGER.info("=== PROFIT-BERECHNUNG INITIALISIERT ===");
+            LOGGER.info("Initial Equity (Startkontostand): " + String.format("%.6f", initialEquity));
+            
             // Beispiel-Daten loggen für Diagnostik
             if (filteredTicks.size() > 0) {
-                TickDataLoader.TickData firstTick = filteredTicks.get(0);
                 TickDataLoader.TickData lastTick = filteredTicks.get(filteredTicks.size() - 1);
                 LOGGER.info("ERSTER TICK: " + formatTickForLog(firstTick));
                 LOGGER.info("LETZTER TICK: " + formatTickForLog(lastTick));
@@ -165,8 +176,8 @@ public class ProfitChartManager {
             LOGGER.info("Leere Profit-Chart-Serien...");
             clearProfitSeries();
             
-            // SCHRITT-FÜR-SCHRITT: Gefilterte Tick-Daten zu beiden Serien hinzufügen
-            LOGGER.info("=== BEGINNE PROFIT-DATEN-HINZUFÜGUNG ===");
+            // SCHRITT 2: Gefilterte Tick-Daten zu beiden Serien hinzufügen (KORRIGIERT)
+            LOGGER.info("=== BEGINNE PROFIT-DATEN-HINZUFÜGUNG (KORRIGIERTE BERECHNUNG) ===");
             int addedCount = 0;
             
             for (int i = 0; i < filteredTicks.size(); i++) {
@@ -177,20 +188,23 @@ public class ProfitChartManager {
                     Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
                     Second second = new Second(javaDate);
                     
-                    // Kontostand (Equity) hinzufügen - GRÜN
-                    double equity = tick.getEquity();
-                    equitySeries.add(second, equity);
+                    // KORRIGIERT: Realized Profit berechnen (Equity - Initial Equity)
+                    double currentEquity = tick.getEquity();
+                    double realizedProfit = currentEquity - initialEquity;
+                    profitSeries.add(second, realizedProfit);
                     
-                    // Gesamtwert (Equity + Floating Profit) hinzufügen - GELB
-                    double totalValue = tick.getTotalValue();
-                    totalValueSeries.add(second, totalValue);
+                    // KORRIGIERT: Profit + Open Equity berechnen
+                    double floatingProfit = tick.getFloatingProfit();
+                    double profitPlusOpen = realizedProfit + floatingProfit;
+                    profitPlusOpenSeries.add(second, profitPlusOpen);
                     
                     // DETAILLIERTES LOGGING für jeden Datenpunkt
                     if (i < 3 || i >= filteredTicks.size() - 3) { // Erste und letzte 3
                         LOGGER.info("PROFIT TICK #" + (i+1) + " HINZUGEFÜGT: Zeit=" + tick.getTimestamp() + 
-                                   ", Equity=" + String.format("%.2f", equity) + 
-                                   ", Floating=" + String.format("%.2f", tick.getFloatingProfit()) + 
-                                   ", Total=" + String.format("%.2f", totalValue));
+                                   ", Equity=" + String.format("%.6f", currentEquity) + 
+                                   ", Realized Profit=" + String.format("%.6f", realizedProfit) + 
+                                   ", Floating=" + String.format("%.6f", floatingProfit) + 
+                                   ", Profit+Open=" + String.format("%.6f", profitPlusOpen));
                     }
                     
                     addedCount++;
@@ -232,9 +246,9 @@ public class ProfitChartManager {
             return "NULL";
         }
         return "Zeit=" + tick.getTimestamp() + 
-               ", Equity=" + String.format("%.2f", tick.getEquity()) + 
-               ", Floating=" + String.format("%.2f", tick.getFloatingProfit()) + 
-               ", Total=" + String.format("%.2f", tick.getTotalValue());
+               ", Equity=" + String.format("%.6f", tick.getEquity()) + 
+               ", Floating=" + String.format("%.6f", tick.getFloatingProfit()) + 
+               ", Total=" + String.format("%.6f", tick.getTotalValue());
     }
     
     /**
@@ -242,26 +256,26 @@ public class ProfitChartManager {
      */
     private void checkProfitSeriesStatus() {
         LOGGER.info("=== PROFIT-SERIES-STATUS CHECK ===");
-        LOGGER.info("equitySeries: " + (equitySeries != null ? equitySeries.getItemCount() + " Items" : "NULL"));
-        LOGGER.info("totalValueSeries: " + (totalValueSeries != null ? totalValueSeries.getItemCount() + " Items" : "NULL"));
+        LOGGER.info("profitSeries: " + (profitSeries != null ? profitSeries.getItemCount() + " Items" : "NULL"));
+        LOGGER.info("profitPlusOpenSeries: " + (profitPlusOpenSeries != null ? profitPlusOpenSeries.getItemCount() + " Items" : "NULL"));
         
-        // Detaillierte Equity-Serie Analyse
-        if (equitySeries != null && equitySeries.getItemCount() > 0) {
-            LOGGER.info("=== EQUITY SERIE DETAILS ===");
-            for (int i = 0; i < Math.min(3, equitySeries.getItemCount()); i++) {
-                org.jfree.data.time.RegularTimePeriod period = equitySeries.getTimePeriod(i);
-                Number value = equitySeries.getValue(i);
-                LOGGER.info("Equity Item #" + (i+1) + ": Zeit=" + period + ", Wert=" + value);
+        // Detaillierte Profit-Serie Analyse
+        if (profitSeries != null && profitSeries.getItemCount() > 0) {
+            LOGGER.info("=== PROFIT SERIE DETAILS ===");
+            for (int i = 0; i < Math.min(3, profitSeries.getItemCount()); i++) {
+                org.jfree.data.time.RegularTimePeriod period = profitSeries.getTimePeriod(i);
+                Number value = profitSeries.getValue(i);
+                LOGGER.info("Profit Item #" + (i+1) + ": Zeit=" + period + ", Wert=" + value);
             }
         }
         
-        // Detaillierte Gesamtwert-Serie Analyse
-        if (totalValueSeries != null && totalValueSeries.getItemCount() > 0) {
-            LOGGER.info("=== GESAMTWERT SERIE DETAILS ===");
-            for (int i = 0; i < Math.min(3, totalValueSeries.getItemCount()); i++) {
-                org.jfree.data.time.RegularTimePeriod period = totalValueSeries.getTimePeriod(i);
-                Number value = totalValueSeries.getValue(i);
-                LOGGER.info("Gesamtwert Item #" + (i+1) + ": Zeit=" + period + ", Wert=" + value);
+        // Detaillierte Profit+Open-Serie Analyse
+        if (profitPlusOpenSeries != null && profitPlusOpenSeries.getItemCount() > 0) {
+            LOGGER.info("=== PROFIT+OPEN SERIE DETAILS ===");
+            for (int i = 0; i < Math.min(3, profitPlusOpenSeries.getItemCount()); i++) {
+                org.jfree.data.time.RegularTimePeriod period = profitPlusOpenSeries.getTimePeriod(i);
+                Number value = profitPlusOpenSeries.getValue(i);
+                LOGGER.info("Profit+Open Item #" + (i+1) + ": Zeit=" + period + ", Wert=" + value);
             }
         }
     }
@@ -270,8 +284,8 @@ public class ProfitChartManager {
      * Leert die Profit-Chart-Serien
      */
     private void clearProfitSeries() {
-        if (equitySeries != null) equitySeries.clear();
-        if (totalValueSeries != null) totalValueSeries.clear();
+        if (profitSeries != null) profitSeries.clear();
+        if (profitPlusOpenSeries != null) profitPlusOpenSeries.clear();
         LOGGER.info("Profit-Chart-Serien geleert");
     }
     
@@ -306,7 +320,7 @@ public class ProfitChartManager {
             renderer.setSeriesLinesVisible(1, false);
             renderer.setSeriesShapesVisible(1, true);
             renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-8, -8, 16, 16)); // Sehr große Punkte
-            renderer.setSeriesShape(1, new java.awt.geom.Ellipse2D.Double(-10, -10, 20, 20)); // Noch größer für Gesamtwert
+            renderer.setSeriesShape(1, new java.awt.geom.Ellipse2D.Double(-10, -10, 20, 20)); // Noch größer für Profit+Open
             LOGGER.info("Profit-Chart: Ein-Punkt-Modus aktiviert (nur große Shapes)");
             
         } else if (tickCount <= 5) {
@@ -336,9 +350,10 @@ public class ProfitChartManager {
      * Funktioniert für alle Signalprovider unabhängig von der Wertegröße
      */
     private void adjustProfitChartYAxisRangeRobust(List<TickDataLoader.TickData> filteredTicks) {
-        if (profitChart == null || filteredTicks.isEmpty()) {
+        if (profitChart == null || filteredTicks.isEmpty() || initialEquity == null) {
             LOGGER.warning("Kann Profit Y-Achse nicht anpassen: Chart=" + (profitChart != null) + 
-                          ", Ticks=" + (filteredTicks != null ? filteredTicks.size() : "null"));
+                          ", Ticks=" + (filteredTicks != null ? filteredTicks.size() : "null") +
+                          ", InitialEquity=" + initialEquity);
             return;
         }
         
@@ -346,36 +361,30 @@ public class ProfitChartManager {
         
         XYPlot plot = profitChart.getXYPlot();
         
-        // SCHRITT 1: Alle relevanten Werte sammeln
-        double[] allValues = new double[filteredTicks.size() * 2]; // Equity + Total für jeden Tick
-        int index = 0;
-        
-        double minEquity = Double.MAX_VALUE;
-        double maxEquity = Double.MIN_VALUE;
-        double minTotal = Double.MAX_VALUE;
-        double maxTotal = Double.MIN_VALUE;
+        // SCHRITT 1: Alle relevanten Profit-Werte sammeln
+        double minProfit = Double.MAX_VALUE;
+        double maxProfit = Double.MIN_VALUE;
+        double minProfitPlusOpen = Double.MAX_VALUE;
+        double maxProfitPlusOpen = Double.MIN_VALUE;
         
         for (TickDataLoader.TickData tick : filteredTicks) {
-            double equity = tick.getEquity();
-            double total = tick.getTotalValue();
+            double realizedProfit = tick.getEquity() - initialEquity;
+            double profitPlusOpen = realizedProfit + tick.getFloatingProfit();
             
-            allValues[index++] = equity;
-            allValues[index++] = total;
-            
-            if (equity < minEquity) minEquity = equity;
-            if (equity > maxEquity) maxEquity = equity;
-            if (total < minTotal) minTotal = total;
-            if (total > maxTotal) maxTotal = total;
+            if (realizedProfit < minProfit) minProfit = realizedProfit;
+            if (realizedProfit > maxProfit) maxProfit = realizedProfit;
+            if (profitPlusOpen < minProfitPlusOpen) minProfitPlusOpen = profitPlusOpen;
+            if (profitPlusOpen > maxProfitPlusOpen) maxProfitPlusOpen = profitPlusOpen;
         }
         
         // SCHRITT 2: Globale Min/Max-Werte ermitteln
-        double globalMin = Math.min(minEquity, minTotal);
-        double globalMax = Math.max(maxEquity, maxTotal);
+        double globalMin = Math.min(minProfit, minProfitPlusOpen);
+        double globalMax = Math.max(maxProfit, maxProfitPlusOpen);
         double dataRange = globalMax - globalMin;
         
-        LOGGER.info("DATEN-ANALYSE:");
-        LOGGER.info("  Equity-Bereich: " + String.format("%.6f bis %.6f", minEquity, maxEquity));
-        LOGGER.info("  Total-Bereich: " + String.format("%.6f bis %.6f", minTotal, maxTotal));
+        LOGGER.info("PROFIT-DATEN-ANALYSE:");
+        LOGGER.info("  Realized Profit-Bereich: " + String.format("%.6f bis %.6f", minProfit, maxProfit));
+        LOGGER.info("  Profit+Open-Bereich: " + String.format("%.6f bis %.6f", minProfitPlusOpen, maxProfitPlusOpen));
         LOGGER.info("  Globaler Bereich: " + String.format("%.6f bis %.6f", globalMin, globalMax));
         LOGGER.info("  Daten-Spanne: " + String.format("%.6f", dataRange));
         
@@ -385,8 +394,7 @@ public class ProfitChartManager {
         if (dataRange == 0) {
             // Alle Werte identisch - erstelle minimalen sinnvollen Bereich
             double centerValue = globalMin;
-            double minimalRange = Math.abs(centerValue) * 0.001; // 0.1% des Wertes
-            if (minimalRange < 0.01) minimalRange = 0.01; // Mindestens 1 Cent
+            double minimalRange = Math.max(Math.abs(centerValue) * 0.001, 0.01); // 0.1% oder mindestens 1 Cent
             
             lowerBound = centerValue - minimalRange;
             upperBound = centerValue + minimalRange;
@@ -395,19 +403,11 @@ public class ProfitChartManager {
             
         } else {
             // DYNAMISCHE PADDING-BERECHNUNG basierend auf der Daten-Spanne
-            
-            // Basis-Padding: 15% der Daten-Spanne (visueller Puffer)
-            double basePadding = dataRange * 0.15;
-            
-            // Zusätzliches relatives Padding basierend auf der Wertegröße
-            double avgValue = (globalMin + globalMax) / 2.0;
-            double relativePadding = Math.abs(avgValue) * 0.005; // 0.5% des Durchschnittswertes
-            
-            // Wähle das größere Padding für bessere Sichtbarkeit
+            double basePadding = dataRange * 0.15;  // 15% der Daten-Spanne
+            double relativePadding = Math.abs((globalMin + globalMax) / 2.0) * 0.005; // 0.5% des Durchschnittswertes
             double finalPadding = Math.max(basePadding, relativePadding);
-            
-            // Mindest-Padding für sehr kleine Bereiche
             double minPadding = dataRange * 0.05; // Mindestens 5% der Spanne
+            
             if (finalPadding < minPadding) {
                 finalPadding = minPadding;
             }
@@ -421,35 +421,12 @@ public class ProfitChartManager {
             LOGGER.info("  Finales Padding: " + String.format("%.6f", finalPadding));
         }
         
-        // SCHRITT 4: Qualitätsprüfung des berechneten Bereichs
-        double finalRange = upperBound - lowerBound;
-        double rangeQuality = finalRange / Math.abs((globalMin + globalMax) / 2.0);
-        
-        LOGGER.info("BEREICHS-QUALITÄT:");
-        LOGGER.info("  Finale Spanne: " + String.format("%.6f", finalRange));
-        LOGGER.info("  Qualitäts-Verhältnis: " + String.format("%.6f", rangeQuality));
-        
-        // Bei extrem kleinen Bereichen: Erweitere den Bereich
-        if (rangeQuality < 0.001) { // Weniger als 0.1% des Durchschnittswertes
-            double centerValue = (lowerBound + upperBound) / 2.0;
-            double enhancedRange = Math.abs(centerValue) * 0.01; // 1% des Zentralwertes
-            if (enhancedRange < 0.1) enhancedRange = 0.1; // Mindestens 10 Cent
-            
-            lowerBound = centerValue - enhancedRange / 2.0;
-            upperBound = centerValue + enhancedRange / 2.0;
-            
-            LOGGER.info("BEREICH ERWEITERT für bessere Sichtbarkeit: " + 
-                       String.format("%.6f bis %.6f", lowerBound, upperBound));
-        }
-        
-        // SCHRITT 5: Y-Achsen-Bereich setzen
+        // SCHRITT 4: Y-Achsen-Bereich setzen
         plot.getRangeAxis().setRange(lowerBound, upperBound);
         
         LOGGER.info("=== Y-ACHSEN-BEREICH FINAL GESETZT ===");
         LOGGER.info("Bereich: " + String.format("%.6f bis %.6f", lowerBound, upperBound));
         LOGGER.info("Sichtbare Spanne: " + String.format("%.6f", upperBound - lowerBound));
-        LOGGER.info("Verhältnis Spanne/Daten: " + String.format("%.2f%%", 
-                   ((upperBound - lowerBound) / dataRange - 1) * 100));
         LOGGER.info("=== DYNAMISCHE PROFIT Y-ACHSEN KALIBRIERUNG ENDE ===");
     }
     
@@ -550,16 +527,29 @@ public class ProfitChartManager {
         LOGGER.info("=== INTELLIGENTE PROFIT X-ACHSEN KALIBRIERUNG ENDE ===");
     }
     
-    // Getter-Methoden
+    // Getter-Methoden (KORRIGIERT)
     public JFreeChart getProfitChart() {
         return profitChart;
     }
     
-    public TimeSeries getEquitySeries() {
-        return equitySeries;
+    public TimeSeries getProfitSeries() {
+        return profitSeries;
     }
     
+    public TimeSeries getProfitPlusOpenSeries() {
+        return profitPlusOpenSeries;
+    }
+    
+    // Deprecated Getter (für Rückwärtskompatibilität)
+    @Deprecated
+    public TimeSeries getEquitySeries() {
+        LOGGER.warning("getEquitySeries() deprecated - verwende getProfitSeries()");
+        return profitSeries;
+    }
+    
+    @Deprecated  
     public TimeSeries getTotalValueSeries() {
-        return totalValueSeries;
+        LOGGER.warning("getTotalValueSeries() deprecated - verwende getProfitPlusOpenSeries()");
+        return profitPlusOpenSeries;
     }
 }

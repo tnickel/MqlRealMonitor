@@ -19,6 +19,7 @@ import java.util.logging.Level;
 /**
  * VERBESSERT: Writer für Tick-Daten mit robustem Lesen für Chart-Diagnostik
  * Verwaltet das Schreiben von Signaldaten in Tick-Dateien
+ * NEU: Format-Konvertierung von 4-Spalten zu 5-Spalten Format
  * ALLE LESE-PROBLEME BEHOBEN: Umfassende Diagnostik und Fehlerbehandlung
  */
 public class TickDataWriter {
@@ -368,8 +369,6 @@ public class TickDataWriter {
     }
     
     /**
-    
-    /**
      * NEU: Parst Standard-Format (4 Teile)
      */
     private SignalData parseStandardFormat(String signalId, String[] parts, int lineNumber) {
@@ -405,6 +404,44 @@ public class TickDataWriter {
         }
     }
     
+    /**
+     * NEU: Parst erweitertes Format (5 Teile)
+     */
+    private SignalData parseExtendedFormat(String signalId, String[] parts, int lineNumber) {
+        LOGGER.info("Parse Erweitertes Format mit Profit (5 Teile)");
+        
+        try {
+            String dateStr = parts[0].trim();
+            String timeStr = parts[1].trim();
+            String equityStr = parts[2].trim();
+            String floatingStr = parts[3].trim();
+            String profitStr = parts[4].trim();
+            
+            LOGGER.info("Datum: '" + dateStr + "', Zeit: '" + timeStr + 
+                       "', Equity: '" + equityStr + "', Floating: '" + floatingStr + 
+                       "', Profit: '" + profitStr + "'");
+            
+            // Timestamp parsen
+            java.time.LocalDateTime timestamp = java.time.LocalDateTime.parse(
+                dateStr + " " + timeStr, SignalData.FILE_TIMESTAMP_FORMATTER);
+            LOGGER.info("Geparster Timestamp: " + timestamp);
+            
+            // Werte parsen
+            double equity = Double.parseDouble(equityStr);
+            double floatingProfit = Double.parseDouble(floatingStr);
+            double profit = Double.parseDouble(profitStr);
+            LOGGER.info("Geparste Werte: Equity=" + equity + ", Floating=" + floatingProfit + ", Profit=" + profit);
+            
+            SignalData result = new SignalData(signalId, null, equity, floatingProfit, profit, "USD", timestamp);
+            LOGGER.info("ERWEITERTES FORMAT ERFOLGREICH: " + result.getSummary());
+            
+            return result;
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Parsen erweitertes Format in Zeile " + lineNumber, e);
+            return null;
+        }
+    }
     
     /**
      * NEU: Parst fehlerhaftes Format (6 Teile)
@@ -447,6 +484,61 @@ public class TickDataWriter {
             
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Fehler beim Parsen fehlerhaftes Format in Zeile " + lineNumber, e);
+            return null;
+        }
+    }
+    
+    /**
+     * NEU: Parst fehlerhaftes erweitertes Format (7 Teile)
+     */
+    private SignalData parseBrokenExtendedFormat(String signalId, String[] parts, int lineNumber) {
+        LOGGER.info("Parse Fehlerhaftes Erweitertes Format mit Profit (7 Teile)");
+        
+        try {
+            String dateStr = parts[0].trim();
+            String timeStr = parts[1].trim();
+            String equityWhole = parts[2].trim();
+            String equityDecimal = parts[3].trim();
+            String floatingWhole = parts[4].trim();
+            String floatingDecimal = parts[5].trim();
+            String profitStr = parts[6].trim();
+            
+            // Prüfe ob Profit auch aufgeteilt ist (8 Teile)
+            if (parts.length >= 8) {
+                String profitDecimal = parts[7].trim();
+                profitStr = profitStr + "." + profitDecimal;
+                LOGGER.info("Profit zusammengesetzt aus 2 Teilen: " + profitStr);
+            }
+            
+            LOGGER.info("Teile: Datum='" + dateStr + "', Zeit='" + timeStr + "', " +
+                       "EquityWhole='" + equityWhole + "', EquityDecimal='" + equityDecimal + "', " +
+                       "FloatingWhole='" + floatingWhole + "', FloatingDecimal='" + floatingDecimal + "', " +
+                       "Profit='" + profitStr + "'");
+            
+            // Timestamp parsen
+            java.time.LocalDateTime timestamp = java.time.LocalDateTime.parse(
+                dateStr + " " + timeStr, SignalData.FILE_TIMESTAMP_FORMATTER);
+            LOGGER.info("Geparster Timestamp: " + timestamp);
+            
+            // Werte zusammensetzen und parsen
+            String equityStr = equityWhole + "." + equityDecimal;
+            String floatingStr = floatingWhole + "." + floatingDecimal;
+            
+            double equity = Double.parseDouble(equityStr);
+            double floatingProfit = Double.parseDouble(floatingStr);
+            double profit = Double.parseDouble(profitStr);
+            
+            LOGGER.info("Zusammengesetzte Werte: Equity='" + equityStr + "'=" + equity + 
+                       ", Floating='" + floatingStr + "'=" + floatingProfit +
+                       ", Profit='" + profitStr + "'=" + profit);
+            
+            SignalData result = new SignalData(signalId, null, equity, floatingProfit, profit, "USD", timestamp);
+            LOGGER.info("FEHLERHAFTES ERWEITERTES FORMAT REPARIERT: " + result.getSummary());
+            
+            return result;
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Parsen fehlerhaftes erweitertes Format in Zeile " + lineNumber, e);
             return null;
         }
     }
@@ -510,6 +602,367 @@ public class TickDataWriter {
         }
         
         return entries;
+    }
+    
+    /**
+     * NEU: Konvertiert alle Tick-Dateien vom alten ins neue Format
+     * 
+     * @return Map mit Signal-ID und Konvertierungs-Status (true=konvertiert, false=Fehler, null=bereits neues Format)
+     */
+    public Map<String, Boolean> convertAllTickFilesToNewFormat() {
+        Map<String, Boolean> results = new HashMap<>();
+        
+        try {
+            Path tickDir = Paths.get(config.getTickDir());
+            
+            if (!Files.exists(tickDir)) {
+                LOGGER.warning("Tick-Verzeichnis existiert nicht: " + tickDir);
+                return results;
+            }
+            
+            LOGGER.info("=== STARTE FORMAT-KONVERTIERUNG ALLER TICK-DATEIEN ===");
+            LOGGER.info("Verzeichnis: " + tickDir);
+            
+            try (var stream = Files.list(tickDir)) {
+                List<Path> tickFiles = stream
+                    .filter(path -> path.toString().toLowerCase().endsWith(".txt"))
+                    .collect(java.util.stream.Collectors.toList());
+                
+                LOGGER.info("Gefundene Tick-Dateien: " + tickFiles.size());
+                
+                for (Path tickFile : tickFiles) {
+                    String fileName = tickFile.getFileName().toString();
+                    String signalId = fileName.substring(0, fileName.lastIndexOf('.'));
+                    
+                    LOGGER.info("Konvertiere: " + signalId + " (" + fileName + ")");
+                    
+                    // Format-Analyse vor Konvertierung
+                    FormatAnalysisResult analysis = analyzeTickFileFormat(tickFile.toString());
+                    
+                    if (analysis.isNewFormat) {
+                        LOGGER.info("Datei " + signalId + " ist bereits im neuen Format - überspringe");
+                        results.put(signalId, null); // null = bereits neues Format
+                    } else if (analysis.isOldFormat) {
+                        boolean success = convertTickFileToNewFormat(signalId);
+                        results.put(signalId, success);
+                        LOGGER.info("Konvertierung " + signalId + ": " + (success ? "ERFOLG" : "FEHLER"));
+                    } else {
+                        LOGGER.warning("Datei " + signalId + " hat unbekanntes Format - überspringe");
+                        results.put(signalId, false);
+                    }
+                }
+            }
+            
+            long convertedCount = results.values().stream().filter(v -> v != null && v).count();
+            long skippedCount = results.values().stream().filter(v -> v == null).count();
+            long failedCount = results.values().stream().filter(v -> v != null && !v).count();
+            
+            LOGGER.info("=== FORMAT-KONVERTIERUNG ABGESCHLOSSEN ===");
+            LOGGER.info("Gesamt: " + results.size() + " Dateien");
+            LOGGER.info("Konvertiert: " + convertedCount);
+            LOGGER.info("Bereits neues Format: " + skippedCount);
+            LOGGER.info("Fehlgeschlagen: " + failedCount);
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Konvertieren aller Tick-Dateien", e);
+        }
+        
+        return results;
+    }
+    
+    /**
+     * NEU: Konvertiert eine Tick-Datei vom alten 4-Spalten-Format ins neue 5-Spalten-Format
+     * Format ALT: Datum,Zeit,Equity,FloatingProfit
+     * Format NEU: Datum,Zeit,Equity,FloatingProfit,Profit (Equity wird als Profit übernommen)
+     * 
+     * @param signalId Die Signal-ID
+     * @return true wenn erfolgreich konvertiert, false bei Fehlern
+     */
+    public boolean convertTickFileToNewFormat(String signalId) {
+        String tickFilePath = config.getTickFilePath(signalId);
+        Path filePath = Paths.get(tickFilePath);
+        
+        LOGGER.info("=== KONVERTIERE TICKDATEN-FORMAT für Signal: " + signalId + " ===");
+        LOGGER.info("Datei: " + tickFilePath);
+        
+        if (!Files.exists(filePath)) {
+            LOGGER.warning("Tick-Datei existiert nicht: " + tickFilePath);
+            return false;
+        }
+        
+        try {
+            // Datei analysieren um Format zu bestimmen
+            FormatAnalysisResult analysis = analyzeTickFileFormat(tickFilePath);
+            LOGGER.info("Format-Analyse: " + analysis.toString());
+            
+            if (analysis.isNewFormat) {
+                LOGGER.info("Datei ist bereits im neuen 5-Spalten-Format - keine Konvertierung notwendig");
+                return true;
+            }
+            
+            if (!analysis.isOldFormat) {
+                LOGGER.warning("Unbekanntes oder beschädigtes Format - kann nicht konvertieren");
+                return false;
+            }
+            
+            // Backup erstellen
+            Path backupPath = Paths.get(tickFilePath + ".backup_format_" + System.currentTimeMillis());
+            Files.copy(filePath, backupPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            LOGGER.info("Backup erstellt: " + backupPath);
+            
+            // Datei lesen
+            List<String> lines = Files.readAllLines(filePath, StandardCharsets.UTF_8);
+            List<String> convertedLines = new ArrayList<>();
+            
+            int convertedCount = 0;
+            int headerLines = 0;
+            
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i);
+                
+                // Kommentare und leere Zeilen - Header aktualisieren
+                if (line.trim().isEmpty() || line.trim().startsWith("#")) {
+                    if (line.contains("Format: Datum,Uhrzeit,Equity,FloatingProfit")) {
+                        // Header aktualisieren auf neues Format
+                        convertedLines.add("# MQL5 Signal Tick Data - Format: Datum,Uhrzeit,Equity,FloatingProfit,Profit");
+                        LOGGER.info("Header aktualisiert auf neues Format");
+                    } else {
+                        convertedLines.add(line);
+                    }
+                    headerLines++;
+                    continue;
+                }
+                
+                // Datenzeile konvertieren
+                String convertedLine = convertOldFormatLine(line, i + 1);
+                if (convertedLine != null) {
+                    convertedLines.add(convertedLine);
+                    convertedCount++;
+                    
+                    // Logge erste und letzte paar Konvertierungen
+                    if (convertedCount <= 3 || i >= lines.size() - 3) {
+                        LOGGER.info("Konvertiert Zeile " + (i + 1) + ": " + line + " -> " + convertedLine);
+                    }
+                } else {
+                    LOGGER.warning("Konnte Zeile " + (i + 1) + " nicht konvertieren: " + line);
+                    convertedLines.add(line); // Unverändert übernehmen
+                }
+            }
+            
+            if (convertedCount > 0) {
+                // Konvertierte Datei schreiben
+                Files.write(filePath, convertedLines, StandardCharsets.UTF_8);
+                LOGGER.info("FORMAT-KONVERTIERUNG ERFOLGREICH: " + convertedCount + " Datenzeilen konvertiert, " + 
+                           headerLines + " Header-Zeilen, Backup: " + backupPath.getFileName());
+                return true;
+            } else {
+                LOGGER.warning("Keine Zeilen konvertiert - möglicherweise bereits im neuen Format oder beschädigt");
+                // Backup löschen wenn keine Änderungen
+                Files.delete(backupPath);
+                return false;
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Konvertieren der Tick-Datei: " + tickFilePath, e);
+            return false;
+        }
+    }
+    
+    /**
+     * NEU: Konvertiert eine einzelne Zeile vom alten ins neue Format
+     * ALT: 24.05.2025,15:28:39,411.38,0.00
+     * NEU: 24.05.2025,15:28:39,411.38,0.00,411.38
+     * 
+     * @param line Die zu konvertierende Zeile
+     * @param lineNumber Die Zeilennummer für Logging
+     * @return Konvertierte Zeile oder null bei Fehlern
+     */
+    private String convertOldFormatLine(String line, int lineNumber) {
+        if (line == null || line.trim().isEmpty()) {
+            return null;
+        }
+        
+        try {
+            String[] parts = line.split(",");
+            
+            if (parts.length == 4) {
+                // Altes Standard-Format: Datum,Zeit,Equity,FloatingProfit
+                // Neues Format: Datum,Zeit,Equity,FloatingProfit,Profit (Equity als Profit)
+                String dateStr = parts[0].trim();
+                String timeStr = parts[1].trim();
+                String equityStr = parts[2].trim();
+                String floatingStr = parts[3].trim();
+                
+                // Equity als Profit verwenden
+                String profitStr = equityStr;
+                
+                String converted = String.format("%s,%s,%s,%s,%s", 
+                                                dateStr, timeStr, equityStr, floatingStr, profitStr);
+                
+                return converted;
+                
+            } else if (parts.length == 6) {
+                // Altes fehlerhaftes Format: 24.05.2025,15:28:39,411,38,0,00
+                // Repariere und konvertiere: 24.05.2025,15:28:39,411.38,0.00,411.38
+                String dateStr = parts[0].trim();
+                String timeStr = parts[1].trim();
+                String equityWhole = parts[2].trim();
+                String equityDecimal = parts[3].trim();
+                String floatingWhole = parts[4].trim();
+                String floatingDecimal = parts[5].trim();
+                
+                String equityStr = equityWhole + "." + equityDecimal;
+                String floatingStr = floatingWhole + "." + floatingDecimal;
+                String profitStr = equityStr; // Equity als Profit
+                
+                String converted = String.format("%s,%s,%s,%s,%s", 
+                                                dateStr, timeStr, equityStr, floatingStr, profitStr);
+                
+                return converted;
+                
+            } else if (parts.length == 5) {
+                // Bereits neues Format - unverändert zurückgeben
+                return line;
+                
+            } else {
+                LOGGER.warning("Unbekanntes Format in Zeile " + lineNumber + " (" + parts.length + " Teile): " + line);
+                return null;
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Konvertieren von Zeile " + lineNumber + ": " + line, e);
+            return null;
+        }
+    }
+    
+    /**
+     * NEU: Analysiert das Format einer Tick-Datei
+     * 
+     * @param tickFilePath Der Pfad zur Tick-Datei
+     * @return FormatAnalysisResult mit Analyseergebnissen
+     */
+    private FormatAnalysisResult analyzeTickFileFormat(String tickFilePath) {
+        FormatAnalysisResult result = new FormatAnalysisResult();
+        
+        try {
+            Path filePath = Paths.get(tickFilePath);
+            
+            if (!Files.exists(filePath)) {
+                result.error = "Datei existiert nicht";
+                return result;
+            }
+            
+            List<String> lines = Files.readAllLines(filePath, StandardCharsets.UTF_8);
+            result.totalLines = lines.size();
+            
+            if (lines.isEmpty()) {
+                result.error = "Datei ist leer";
+                return result;
+            }
+            
+            // Analysiere erste paar Datenzeilen
+            for (String line : lines) {
+                line = line.trim();
+                
+                // Kommentare und leere Zeilen überspringen
+                if (line.isEmpty() || line.startsWith("#")) {
+                    // Prüfe Header auf Format-Information
+                    if (line.contains("Format: Datum,Uhrzeit,Equity,FloatingProfit,Profit")) {
+                        result.headerIndicatesNewFormat = true;
+                    } else if (line.contains("Format: Datum,Uhrzeit,Equity,FloatingProfit")) {
+                        result.headerIndicatesOldFormat = true;
+                    }
+                    continue;
+                }
+                
+                // Erste Datenzeile analysieren
+                String[] parts = line.split(",");
+                result.sampleDataLine = line;
+                result.sampleColumnCount = parts.length;
+                
+                if (parts.length == 4) {
+                    result.oldFormatLines++;
+                } else if (parts.length == 5) {
+                    result.newFormatLines++;
+                } else if (parts.length == 6) {
+                    result.brokenFormatLines++;
+                } else {
+                    result.unknownFormatLines++;
+                }
+                
+                result.dataLinesAnalyzed++;
+                
+                // Nur erste paar Datenzeilen analysieren
+                if (result.dataLinesAnalyzed >= 10) {
+                    break;
+                }
+            }
+            
+            // Format-Bestimmung
+            if (result.dataLinesAnalyzed == 0) {
+                result.error = "Keine Datenzeilen gefunden";
+            } else if (result.newFormatLines > 0 && result.oldFormatLines == 0 && result.brokenFormatLines == 0) {
+                result.isNewFormat = true;
+            } else if (result.oldFormatLines > 0 && result.newFormatLines == 0) {
+                result.isOldFormat = true;
+            } else if (result.brokenFormatLines > 0 && result.newFormatLines == 0) {
+                result.isOldFormat = true; // Fehlerhaftes altes Format kann repariert werden
+            } else {
+                result.error = "Gemischte Formate gefunden - Datei möglicherweise beschädigt";
+            }
+            
+        } catch (Exception e) {
+            result.error = "Fehler beim Analysieren: " + e.getMessage();
+        }
+        
+        return result;
+    }
+    
+    /**
+     * NEU: Ergebnis der Format-Analyse
+     */
+    private static class FormatAnalysisResult {
+        public int totalLines = 0;
+        public int dataLinesAnalyzed = 0;
+        public int oldFormatLines = 0;     // 4 Spalten
+        public int newFormatLines = 0;     // 5 Spalten
+        public int brokenFormatLines = 0;  // 6 Spalten (fehlerhaft)
+        public int unknownFormatLines = 0; // Andere
+        public String sampleDataLine = "";
+        public int sampleColumnCount = 0;
+        public boolean headerIndicatesOldFormat = false;
+        public boolean headerIndicatesNewFormat = false;
+        public boolean isOldFormat = false;
+        public boolean isNewFormat = false;
+        public String error = null;
+        
+        @Override
+        public String toString() {
+            if (error != null) {
+                return "FEHLER: " + error;
+            }
+            
+            StringBuilder sb = new StringBuilder();
+            sb.append("Zeilen: ").append(totalLines).append(" (").append(dataLinesAnalyzed).append(" analysiert), ");
+            sb.append("Alt: ").append(oldFormatLines).append(", ");
+            sb.append("Neu: ").append(newFormatLines).append(", ");
+            sb.append("Fehlerhaft: ").append(brokenFormatLines).append(", ");
+            sb.append("Unbekannt: ").append(unknownFormatLines).append(", ");
+            
+            if (isNewFormat) {
+                sb.append("Format: NEU (5 Spalten)");
+            } else if (isOldFormat) {
+                sb.append("Format: ALT (4 Spalten)");
+            } else {
+                sb.append("Format: UNBEKANNT");
+            }
+            
+            if (!sampleDataLine.isEmpty()) {
+                sb.append(", Beispiel: ").append(sampleDataLine);
+            }
+            
+            return sb.toString();
+        }
     }
     
     /**
@@ -614,7 +1067,7 @@ public class TickDataWriter {
     }
     
     /**
-     * Repariert eine Tick-Datei mit fehlerhaftem Format
+     * Repariert eine Tick-Datei mit fehlerhaftem Format (Tausendertrennzeichen)
      * Konvertiert Format von "53745,30,0,00" zu "53745.30,0.00"
      * 
      * @param signalId Die Signal-ID
@@ -691,94 +1144,9 @@ public class TickDataWriter {
             return false;
         }
     }
-    private SignalData parseExtendedFormat(String signalId, String[] parts, int lineNumber) {
-        LOGGER.info("Parse Erweitertes Format mit Profit (5 Teile)");
-        
-        try {
-            String dateStr = parts[0].trim();
-            String timeStr = parts[1].trim();
-            String equityStr = parts[2].trim();
-            String floatingStr = parts[3].trim();
-            String profitStr = parts[4].trim();
-            
-            LOGGER.info("Datum: '" + dateStr + "', Zeit: '" + timeStr + 
-                       "', Equity: '" + equityStr + "', Floating: '" + floatingStr + 
-                       "', Profit: '" + profitStr + "'");
-            
-            // Timestamp parsen
-            java.time.LocalDateTime timestamp = java.time.LocalDateTime.parse(
-                dateStr + " " + timeStr, SignalData.FILE_TIMESTAMP_FORMATTER);
-            LOGGER.info("Geparster Timestamp: " + timestamp);
-            
-            // Werte parsen
-            double equity = Double.parseDouble(equityStr);
-            double floatingProfit = Double.parseDouble(floatingStr);
-            double profit = Double.parseDouble(profitStr);
-            LOGGER.info("Geparste Werte: Equity=" + equity + ", Floating=" + floatingProfit + ", Profit=" + profit);
-            
-            SignalData result = new SignalData(signalId, null, equity, floatingProfit, profit, "USD", timestamp);
-            LOGGER.info("ERWEITERTES FORMAT ERFOLGREICH: " + result.getSummary());
-            
-            return result;
-            
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Parsen erweitertes Format in Zeile " + lineNumber, e);
-            return null;
-        }
-    }
-    private SignalData parseBrokenExtendedFormat(String signalId, String[] parts, int lineNumber) {
-        LOGGER.info("Parse Fehlerhaftes Erweitertes Format mit Profit (7 Teile)");
-        
-        try {
-            String dateStr = parts[0].trim();
-            String timeStr = parts[1].trim();
-            String equityWhole = parts[2].trim();
-            String equityDecimal = parts[3].trim();
-            String floatingWhole = parts[4].trim();
-            String floatingDecimal = parts[5].trim();
-            String profitStr = parts[6].trim();
-            
-            // Prüfe ob Profit auch aufgeteilt ist (8 Teile)
-            if (parts.length >= 8) {
-                String profitDecimal = parts[7].trim();
-                profitStr = profitStr + "." + profitDecimal;
-                LOGGER.info("Profit zusammengesetzt aus 2 Teilen: " + profitStr);
-            }
-            
-            LOGGER.info("Teile: Datum='" + dateStr + "', Zeit='" + timeStr + "', " +
-                       "EquityWhole='" + equityWhole + "', EquityDecimal='" + equityDecimal + "', " +
-                       "FloatingWhole='" + floatingWhole + "', FloatingDecimal='" + floatingDecimal + "', " +
-                       "Profit='" + profitStr + "'");
-            
-            // Timestamp parsen
-            java.time.LocalDateTime timestamp = java.time.LocalDateTime.parse(
-                dateStr + " " + timeStr, SignalData.FILE_TIMESTAMP_FORMATTER);
-            LOGGER.info("Geparster Timestamp: " + timestamp);
-            
-            // Werte zusammensetzen und parsen
-            String equityStr = equityWhole + "." + equityDecimal;
-            String floatingStr = floatingWhole + "." + floatingDecimal;
-            
-            double equity = Double.parseDouble(equityStr);
-            double floatingProfit = Double.parseDouble(floatingStr);
-            double profit = Double.parseDouble(profitStr);
-            
-            LOGGER.info("Zusammengesetzte Werte: Equity='" + equityStr + "'=" + equity + 
-                       ", Floating='" + floatingStr + "'=" + floatingProfit +
-                       ", Profit='" + profitStr + "'=" + profit);
-            
-            SignalData result = new SignalData(signalId, null, equity, floatingProfit, profit, "USD", timestamp);
-            LOGGER.info("FEHLERHAFTES ERWEITERTES FORMAT REPARIERT: " + result.getSummary());
-            
-            return result;
-            
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Parsen fehlerhaftes erweitertes Format in Zeile " + lineNumber, e);
-            return null;
-        }
-    }
+    
     /**
-     * Repariert alle Tick-Dateien im Tick-Verzeichnis
+     * Repariert alle Tick-Dateien im Tick-Verzeichnis (alte Tausendertrennzeichen-Reparatur)
      * 
      * @return Map mit Signal-ID und Reparatur-Status
      */

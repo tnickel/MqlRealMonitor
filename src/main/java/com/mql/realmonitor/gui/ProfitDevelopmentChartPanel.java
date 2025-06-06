@@ -19,6 +19,7 @@ import com.mql.realmonitor.data.TickDataLoader;
  * WIEDERVERWENDBARE Profit Development Chart Panel Komponente
  * Kapselt die komplette Profit-Chart-Anzeige (Canvas, Painting, Event-Handling)
  * Kann in verschiedenen Fenstern verwendet werden
+ * KORRIGIERT: Bessere Beschriftung für Profit-Chart mit automatischer Legende
  */
 public class ProfitDevelopmentChartPanel extends Composite {
     
@@ -71,9 +72,9 @@ public class ProfitDevelopmentChartPanel extends Composite {
     private void createComponents() {
         setLayout(new org.eclipse.swt.layout.GridLayout(1, false));
         
-        // Label für Profit-Chart
+        // Label für Profit-Chart (KORRIGIERT - Generischer Text mit Hinweis auf Legende)
         profitLabel = new Label(this, SWT.NONE);
-        profitLabel.setText("Profit-Entwicklung Chart (Grün: Kontostand, Gelb: Gesamtwert)");
+        profitLabel.setText("Profit-Entwicklung Chart (siehe Legende im Chart)");
         profitLabel.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, true, false));
         if (parentGui != null && parentGui.getBoldFont() != null) {
             profitLabel.setFont(parentGui.getBoldFont());
@@ -119,7 +120,7 @@ public class ProfitDevelopmentChartPanel extends Composite {
         } else if (!isDataLoaded) {
             gc.setForeground(getDisplay().getSystemColor(SWT.COLOR_DARK_GRAY));
             gc.drawText("Profit-Chart wird geladen...", 20, 20, true);
-            gc.drawText("Grün: Kontostand, Gelb: Gesamtwert", 20, 40, true);
+            gc.drawText("Grün: Profit, Gelb: Profit + Open Equity", 20, 40, true);
         } else {
             gc.setForeground(getDisplay().getSystemColor(SWT.COLOR_RED));
             gc.drawText("FEHLER beim Laden des Profit-Charts", 20, 20, true);

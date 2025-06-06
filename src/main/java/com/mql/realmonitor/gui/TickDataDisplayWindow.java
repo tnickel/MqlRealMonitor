@@ -20,6 +20,7 @@ import com.mql.realmonitor.data.TickDataLoader;
 /**
  * Separates Fenster für die Anzeige von Tickdaten
  * Zeigt Tickdaten in einem scrollbaren Textfeld an
+ * KORRIGIERT: Profit-Spalte hinzugefügt
  */
 public class TickDataDisplayWindow {
     
@@ -188,7 +189,7 @@ public class TickDataDisplayWindow {
     }
     
     /**
-     * Formatiert die Tickdaten für die Anzeige
+     * KORRIGIERT: Formatiert die Tickdaten für die Anzeige mit Profit-Spalte
      * 
      * @param tickDataSet Das TickDataSet
      * @param signalId Die Signal-ID
@@ -213,23 +214,34 @@ public class TickDataDisplayWindow {
                                  tickDataSet.getMinEquity(), tickDataSet.getMaxEquity())).append("\n");
             tickDataContent.append("Floating Profit: ").append(String.format("%.2f - %.2f", 
                                  tickDataSet.getMinFloatingProfit(), tickDataSet.getMaxFloatingProfit())).append("\n");
+            
+            // NEU: Profit-Bereich anzeigen falls vorhanden
+            double minProfit = tickDataSet.getMinProfit();
+            double maxProfit = tickDataSet.getMaxProfit();
+            if (minProfit != 0.0 || maxProfit != 0.0) {
+                tickDataContent.append("Profit: ").append(String.format("%.2f - %.2f", minProfit, maxProfit)).append("\n");
+            } else {
+                tickDataContent.append("Profit: Nicht verfügbar in dieser Datei\n");
+            }
+            
             tickDataContent.append("Gesamtwert: ").append(String.format("%.2f - %.2f", 
                                  tickDataSet.getMinTotalValue(), tickDataSet.getMaxTotalValue())).append("\n");
         }
         
-        // Trennlinie
+        // Trennlinie (KORRIGIERT - Profit-Spalte hinzugefügt)
         tickDataContent.append("\n").append("=".repeat(80)).append("\n");
-        tickDataContent.append("TICK-DATEN (Format: Zeitstempel | Equity | Floating Profit | Gesamtwert)\n");
+        tickDataContent.append("TICK-DATEN (Format: Zeitstempel | Equity | Floating Profit | Profit | Gesamtwert)\n");
         tickDataContent.append("=".repeat(80)).append("\n\n");
         
-        // Tick-Daten ausgeben (neueste zuerst)
+        // Tick-Daten ausgeben (neueste zuerst) - KORRIGIERT mit Profit-Spalte
         var ticks = tickDataSet.getTicks();
         for (int i = ticks.size() - 1; i >= 0; i--) {
             TickDataLoader.TickData tick = ticks.get(i);
-            tickDataContent.append(String.format("%s | %8.2f | %8.2f | %8.2f\n",
+            tickDataContent.append(String.format("%s | %8.2f | %8.2f | %8.2f | %8.2f\n",
                                  tick.getTimestamp().format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")),
                                  tick.getEquity(),
                                  tick.getFloatingProfit(),
+                                 tick.getProfit(),  // NEU: Profit-Spalte hinzugefügt
                                  tick.getTotalValue()));
         }
         

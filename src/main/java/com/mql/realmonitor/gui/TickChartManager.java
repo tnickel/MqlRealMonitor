@@ -5,6 +5,7 @@ import java.awt.Color;
 import java.time.ZoneId;
 import java.util.Date;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -22,6 +23,7 @@ import com.mql.realmonitor.data.TickDataLoader;
  * KORRIGIERT: Verwaltet jetzt sowohl Drawdown-Chart als auch Profit-Chart
  * Kombiniert beide Chart-Manager für eine einheitliche Verwaltung
  * ALLE X-ACHSEN PROBLEME BEHOBEN: Korrekte Domain-Achsen-Kalibrierung
+ * KORRIGIERT: ECHTER TOTAL VALUE DRAWDOWN mit Peak-Tracking (nicht mehr Equity-basiert)
  */
 public class TickChartManager {
     
@@ -31,7 +33,7 @@ public class TickChartManager {
     private JFreeChart drawdownChart;
     private JFreeChart profitChart;
     
-    // TimeSeries für Drawdown-Chart
+    // TimeSeries für Drawdown-Chart (KORRIGIERT: Total Value statt Equity)
     private TimeSeries drawdownPercentSeries;
     
     // TimeSeries für Profit-Chart
@@ -60,21 +62,21 @@ public class TickChartManager {
     }
     
     /**
-     * Erstellt nur den Drawdown-Chart
+     * Erstellt nur den Drawdown-Chart (KORRIGIERT: Total Value Drawdown)
      */
     private void createDrawdownChart() {
-        // TimeSeries für Drawdown-Prozentsatz
-        drawdownPercentSeries = new TimeSeries("Equity Drawdown (%)");
+        // TimeSeries für Total Value Drawdown-Prozentsatz
+        drawdownPercentSeries = new TimeSeries("Total Value Drawdown (%)");
         
         // TimeSeriesCollection für Drawdown
         TimeSeriesCollection drawdownDataset = new TimeSeriesCollection();
         drawdownDataset.addSeries(drawdownPercentSeries);
         
-        // Drawdown-Chart erstellen
+        // Drawdown-Chart erstellen (KORRIGIERT: Title zeigt Total Value)
         drawdownChart = ChartFactory.createTimeSeriesChart(
-            "Equity Drawdown (%) - " + signalId + " (" + providerName + ") - DIAGNOSEMODUS",
+            "Total Value Drawdown (%) - " + signalId + " (" + providerName + ") - DIAGNOSEMODUS",
             "Zeit",
-            "Prozent (%)",
+            "Total Value Drawdown (%)",
             drawdownDataset,
             true,  // Legend
             true,  // Tooltips
@@ -84,7 +86,7 @@ public class TickChartManager {
         // Drawdown-Chart konfigurieren
         configureDrawdownChart();
         
-        LOGGER.info("=== DRAWDOWN-CHART ERSTELLT für Signal: " + signalId + " ===");
+        LOGGER.info("=== TOTAL VALUE DRAWDOWN-CHART ERSTELLT für Signal: " + signalId + " ===");
     }
     
     /**
@@ -102,7 +104,7 @@ public class TickChartManager {
     }
     
     /**
-     * Konfiguriert den Drawdown-Chart
+     * Konfiguriert den Drawdown-Chart (KORRIGIERT: Total Value Drawdown Labels)
      */
     private void configureDrawdownChart() {
         XYPlot plot = drawdownChart.getXYPlot();
@@ -115,8 +117,8 @@ public class TickChartManager {
         // Shape-Größe für bessere Sichtbarkeit einzelner Punkte
         renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Größere Punkte
         
-        // Farbe für Drawdown
-        renderer.setSeriesPaint(0, new Color(200, 0, 200)); // Magenta für Drawdown
+        // Farbe für Drawdown (Rot für negative Werte macht mehr Sinn)
+        renderer.setSeriesPaint(0, new Color(200, 0, 0)); // Rot für Drawdown
         renderer.setSeriesStroke(0, new BasicStroke(3.0f));  // Dickere Linie
         
         plot.setRenderer(renderer);
@@ -131,13 +133,13 @@ public class TickChartManager {
         plot.setDomainGridlinesVisible(true);
         plot.setRangeGridlinesVisible(true);
         
-        // Nulllinie hervorheben
+        // Nulllinie hervorheben (wichtig für Drawdown)
         plot.setRangeZeroBaselineVisible(true);
         plot.setRangeZeroBaselinePaint(Color.BLACK);
         plot.setRangeZeroBaselineStroke(new BasicStroke(2.0f));
         
-        // Achsen-Labels
-        plot.getRangeAxis().setLabel("Drawdown (%) - DIAGNOSEMODUS");
+        // Achsen-Labels (KORRIGIERT: Total Value Labels)
+        plot.getRangeAxis().setLabel("Total Value Drawdown (%) - EQUITY+FLOATING");
         plot.getDomainAxis().setLabel("Zeit");
         
         // Y-Achse manuell konfigurieren für intelligente Skalierung
@@ -161,7 +163,7 @@ public class TickChartManager {
             return;
         }
         
-        // 1. Drawdown-Chart aktualisieren
+        // 1. Drawdown-Chart aktualisieren (KORRIGIERT mit Total Value Drawdown)
         updateDrawdownChartWithData(filteredTicks, timeScale);
         
         // 2. Profit-Chart über Manager aktualisieren
@@ -173,13 +175,15 @@ public class TickChartManager {
     }
     
     /**
-     * KORRIGIERT: Aktualisiert nur den Drawdown-Chart (für Rückwärtskompatibilität)
+     * KOMPLETT KORRIGIERT: Aktualisiert den Drawdown-Chart mit TOTAL VALUE DRAWDOWN
+     * Implementiert Peak-Tracking für historisch korrekte Drawdown-Berechnung
+     * BUGFIX: Verwendet jetzt Total Value statt Equity für korrekte Drawdown-Anzeige
      */
     public void updateDrawdownChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
-        LOGGER.info("=== DRAWDOWN CHART UPDATE GESTARTET ===");
+        LOGGER.info("=== TOTAL VALUE DRAWDOWN CHART UPDATE GESTARTET ===");
         
         if (filteredTicks == null || filteredTicks.isEmpty()) {
-            LOGGER.warning("WARNUNG: Keine gefilterten Ticks für Drawdown-Chart!");
+            LOGGER.warning("WARNUNG: Keine gefilterten Ticks für Total Value Drawdown-Chart!");
             return;
         }
         
@@ -192,81 +196,159 @@ public class TickChartManager {
             LOGGER.info("Anzahl gefilterte Ticks: " + filteredTicks.size());
             
             // Chart Serie leeren
-            LOGGER.info("Leere Drawdown-Chart-Serie...");
+            LOGGER.info("Leere Total Value Drawdown-Chart-Serie...");
             clearDrawdownSeries();
             
-            // SCHRITT-FÜR-SCHRITT: Gefilterte Tick-Daten zur Drawdown-Serie hinzufügen
-            LOGGER.info("=== BEGINNE DRAWDOWN-DATEN-HINZUFÜGUNG ===");
+            // SCHRITT 1: Peak-Tracking und Total Value Drawdown-Berechnung
+            LOGGER.info("=== BEGINNE PEAK-TRACKING UND TOTAL VALUE DRAWDOWN-BERECHNUNG ===");
+            
+            double peakTotalValue = 0.0;  // KORRIGIERT: Peak Total Value statt Peak Equity
             int addedCount = 0;
             
             for (int i = 0; i < filteredTicks.size(); i++) {
                 TickDataLoader.TickData tick = filteredTicks.get(i);
                 
                 try {
-                    // Zeitstempel konvertieren
+                    // KORRIGIERT: Verwende Total Value statt Equity
+                    double currentTotalValue = tick.getTotalValue();
+                    
+                    // SCHRITT 2: Peak-Total-Value verfolgen
+                    if (i == 0) {
+                        // Erster Datenpunkt: Peak initialisieren
+                        peakTotalValue = currentTotalValue;
+                        LOGGER.info("PEAK TOTAL VALUE INITIALISIERT mit erstem Wert: " + String.format("%.6f", peakTotalValue));
+                    } else if (currentTotalValue > peakTotalValue) {
+                        // Neuer Peak erreicht
+                        double oldPeak = peakTotalValue;
+                        peakTotalValue = currentTotalValue;
+                        LOGGER.fine("NEUER TOTAL VALUE PEAK ERREICHT: " + String.format("%.6f -> %.6f", oldPeak, peakTotalValue));
+                    }
+                    
+                    // SCHRITT 3: Total Value Drawdown berechnen
+                    double totalValueDrawdownPercent = calculateTotalValueDrawdownPercent(currentTotalValue, peakTotalValue);
+                    
+                    // SCHRITT 4: Zeitstempel konvertieren und zu Serie hinzufügen
                     Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
                     Second second = new Second(javaDate);
-                    
-                    // KRITISCH: Drawdown-Prozentsatz berechnen und hinzufügen
-                    double drawdownPercent = calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit());
-                    drawdownPercentSeries.add(second, drawdownPercent);
+                    drawdownPercentSeries.add(second, totalValueDrawdownPercent);
                     
                     // DETAILLIERTES LOGGING für jeden Datenpunkt
-                    if (i < 3 || i >= filteredTicks.size() - 3) {
-                        LOGGER.info("DRAWDOWN TICK #" + (i+1) + " HINZUGEFÜGT: Zeit=" + tick.getTimestamp() + 
-                                   ", Equity=" + tick.getEquity() + 
-                                   ", Floating=" + tick.getFloatingProfit() + 
-                                   ", Berechnet Drawdown=" + String.format("%.6f%%", drawdownPercent));
+                    if (i < 5 || i >= filteredTicks.size() - 5) { // Erste und letzte 5
+                        LOGGER.info("TOTAL VALUE DRAWDOWN TICK #" + (i+1) + " HINZUGEFÜGT: Zeit=" + tick.getTimestamp() + 
+                                   ", Current Total Value=" + String.format("%.6f", currentTotalValue) + 
+                                   ", Peak Total Value=" + String.format("%.6f", peakTotalValue) + 
+                                   ", Total Value Drawdown=" + String.format("%.6f%%", totalValueDrawdownPercent));
                     }
                     
                     addedCount++;
                     
                 } catch (Exception e) {
-                    LOGGER.log(Level.SEVERE, "FEHLER beim Hinzufügen von Drawdown-Tick #" + (i+1) + ": " + tick, e);
+                    LOGGER.log(Level.SEVERE, "FEHLER beim Hinzufügen von Total Value Drawdown-Tick #" + (i+1) + ": " + tick, e);
                 }
             }
             
-            LOGGER.info("HINZUGEFÜGTE DRAWDOWN-DATENPUNKTE: " + addedCount + " von " + filteredTicks.size());
+            LOGGER.info("HINZUGEFÜGTE TOTAL VALUE DRAWDOWN-DATENPUNKTE: " + addedCount + " von " + filteredTicks.size());
+            LOGGER.info("FINALER PEAK-TOTAL-VALUE: " + String.format("%.6f", peakTotalValue));
             
             // Serie-Status überprüfen
             checkDrawdownSeriesStatus();
             
             // Chart-Titel aktualisieren
-            updateDrawdownChartTitle(timeScale, filteredTicks.size());
+            updateTotalValueDrawdownChartTitle(timeScale, filteredTicks.size());
             
             // Renderer für Drawdown-Chart anpassen basierend auf Datenpunkt-Anzahl
             adjustDrawdownChartRenderer(filteredTicks.size());
             
-            // Y-Achsen-Bereich anpassen
-            adjustDrawdownChartYAxisRangeRobust(filteredTicks);
+            // Y-Achsen-Bereich anpassen für Total Value Drawdown
+            adjustTotalValueDrawdownChartYAxisRange(filteredTicks);
             
-            // KORRIGIERT: X-Achsen-Bereich anpassen
+            // X-Achsen-Bereich anpassen
             adjustDrawdownChartXAxisRange(filteredTicks);
             
             // Drawdown-Chart Farben aktualisieren
             updateDrawdownChartColors(filteredTicks);
             
-            LOGGER.info("=== DRAWDOWN CHART UPDATE ERFOLGREICH ABGESCHLOSSEN ===");
+            LOGGER.info("=== TOTAL VALUE DRAWDOWN CHART UPDATE ERFOLGREICH ABGESCHLOSSEN ===");
             
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "FATALER FEHLER im Drawdown Chart Update für Signal " + signalId, e);
+            LOGGER.log(Level.SEVERE, "FATALER FEHLER im Total Value Drawdown Chart Update für Signal " + signalId, e);
         }
+    }
+    
+    /**
+     * KORRIGIERT: Berechnet den TOTAL VALUE Drawdown in Prozent
+     * Für Fälle mit konstanter Equity aber schwankendem Floating Profit
+     * 
+     * @param currentTotalValue Der aktuelle Total Value (Equity + Floating)
+     * @param peakTotalValue Der historische Peak-Total-Value
+     * @return Der Total Value Drawdown in Prozent
+     */
+    private double calculateTotalValueDrawdownPercent(double currentTotalValue, double peakTotalValue) {
+        if (peakTotalValue == 0) {
+            LOGGER.warning("WARNUNG: Peak Total Value ist 0 - kann Total Value Drawdown nicht berechnen");
+            return 0.0;
+        }
+        
+        if (Double.isNaN(currentTotalValue) || Double.isInfinite(currentTotalValue) ||
+            Double.isNaN(peakTotalValue) || Double.isInfinite(peakTotalValue)) {
+            LOGGER.warning("WARNUNG: Ungültige Total Value-Werte - Current: " + currentTotalValue + ", Peak: " + peakTotalValue);
+            return 0.0;
+        }
+        
+        // TOTAL VALUE DRAWDOWN: (Current Total - Peak Total) / Peak Total * 100
+        double result = ((currentTotalValue - peakTotalValue) / peakTotalValue) * 100.0;
+        
+        // DETAILLIERTES LOGGING für Total Value Drawdown
+        LOGGER.fine("TOTAL VALUE DRAWDOWN BERECHNUNG: (" + String.format("%.6f", currentTotalValue) + " - " + 
+                   String.format("%.6f", peakTotalValue) + ") / " + String.format("%.6f", peakTotalValue) + 
+                   " * 100 = " + String.format("%.6f%%", result));
+        
+        return result;
+    }
+    
+    /**
+     * @deprecated Diese Methode war für Equity Drawdown - wird durch calculateTotalValueDrawdownPercent ersetzt.
+     */
+    @Deprecated
+    private double calculateTrueDrawdownPercent(double currentEquity, double peakEquity) {
+        LOGGER.warning("DEPRECATED: calculateTrueDrawdownPercent() für Equity Drawdown wurde durch calculateTotalValueDrawdownPercent() ersetzt");
+        
+        if (peakEquity == 0) {
+            LOGGER.warning("WARNUNG: Peak Equity ist 0 - kann echten Drawdown nicht berechnen");
+            return 0.0;
+        }
+        
+        if (Double.isNaN(currentEquity) || Double.isInfinite(currentEquity) ||
+            Double.isNaN(peakEquity) || Double.isInfinite(peakEquity)) {
+            LOGGER.warning("WARNUNG: Ungültige Equity-Werte - Current: " + currentEquity + ", Peak: " + peakEquity);
+            return 0.0;
+        }
+        
+        // ECHTER DRAWDOWN: (Current Equity - Peak Equity) / Peak Equity * 100
+        double result = ((currentEquity - peakEquity) / peakEquity) * 100.0;
+        
+        // DETAILLIERTES LOGGING für echten Drawdown
+        LOGGER.fine("DEPRECATED EQUITY DRAWDOWN BERECHNUNG: (" + String.format("%.6f", currentEquity) + " - " + 
+                   String.format("%.6f", peakEquity) + ") / " + String.format("%.6f", peakEquity) + 
+                   " * 100 = " + String.format("%.6f%%", result));
+        
+        return result;
     }
     
     /**
      * Überprüft den Status der Drawdown-Serie
      */
     private void checkDrawdownSeriesStatus() {
-        LOGGER.info("=== DRAWDOWN-SERIES-STATUS CHECK ===");
+        LOGGER.info("=== TOTAL VALUE DRAWDOWN-SERIES-STATUS CHECK ===");
         LOGGER.info("drawdownPercentSeries: " + (drawdownPercentSeries != null ? drawdownPercentSeries.getItemCount() + " Items" : "NULL"));
         
         // Detaillierte Drawdown-Serie Analyse
         if (drawdownPercentSeries != null && drawdownPercentSeries.getItemCount() > 0) {
-            LOGGER.info("=== DRAWDOWN SERIE DETAILS ===");
+            LOGGER.info("=== TOTAL VALUE DRAWDOWN SERIE DETAILS ===");
             for (int i = 0; i < Math.min(3, drawdownPercentSeries.getItemCount()); i++) {
                 org.jfree.data.time.RegularTimePeriod period = drawdownPercentSeries.getTimePeriod(i);
                 Number value = drawdownPercentSeries.getValue(i);
-                LOGGER.info("Drawdown Item #" + (i+1) + ": Zeit=" + period + ", Wert=" + value + "%");
+                LOGGER.info("Total Value Drawdown Item #" + (i+1) + ": Zeit=" + period + ", Wert=" + value + "%");
             }
         } else {
             LOGGER.warning("PROBLEM: drawdownPercentSeries ist leer oder NULL!");
@@ -278,19 +360,28 @@ public class TickChartManager {
      */
     private void clearDrawdownSeries() {
         if (drawdownPercentSeries != null) drawdownPercentSeries.clear();
-        LOGGER.info("Drawdown-Chart-Serie geleert");
+        LOGGER.info("Total Value Drawdown-Chart-Serie geleert");
     }
     
     /**
-     * Aktualisiert den Drawdown-Chart-Titel
+     * Aktualisiert den Total Value Drawdown-Chart-Titel
      */
-    private void updateDrawdownChartTitle(TimeScale timeScale, int tickCount) {
+    private void updateTotalValueDrawdownChartTitle(TimeScale timeScale, int tickCount) {
         if (drawdownChart != null) {
-            drawdownChart.setTitle("Equity Drawdown (%) - " + signalId + " (" + providerName + ") - " + 
+            drawdownChart.setTitle("Total Value Drawdown (%) - EQUITY+FLOATING - " + signalId + " (" + providerName + ") - " + 
                                   (timeScale != null ? timeScale.getLabel() : "Unbekannt") + " [DIAGNOSE #" + updateCounter + "]");
         }
         
-        LOGGER.info("Drawdown-Chart-Titel aktualisiert mit " + tickCount + " Ticks");
+        LOGGER.info("Total Value Drawdown-Chart-Titel aktualisiert mit " + tickCount + " Ticks");
+    }
+    
+    /**
+     * @deprecated Diese Methode war für Equity Drawdown - wird durch updateTotalValueDrawdownChartTitle ersetzt.
+     */
+    @Deprecated
+    private void updateDrawdownChartTitle(TimeScale timeScale, int tickCount) {
+        LOGGER.warning("DEPRECATED: updateDrawdownChartTitle() wurde durch updateTotalValueDrawdownChartTitle() ersetzt");
+        updateTotalValueDrawdownChartTitle(timeScale, tickCount);
     }
     
     /**
@@ -310,157 +401,167 @@ public class TickChartManager {
             renderer.setSeriesLinesVisible(0, false);
             renderer.setSeriesShapesVisible(0, true);
             renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-6, -6, 12, 12)); // Sehr große Punkte
-            LOGGER.info("Drawdown-Chart: Ein-Punkt-Modus aktiviert (nur große Shapes)");
+            LOGGER.info("Total Value Drawdown-Chart: Ein-Punkt-Modus aktiviert (nur große Shapes)");
             
         } else if (tickCount <= 5) {
             // Bei wenigen Datenpunkten: Linien und große Shapes anzeigen
             renderer.setSeriesLinesVisible(0, true);
             renderer.setSeriesShapesVisible(0, true);
             renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Große Punkte
-            LOGGER.info("Drawdown-Chart: Wenig-Punkte-Modus aktiviert (Linien + große Shapes)");
+            LOGGER.info("Total Value Drawdown-Chart: Wenig-Punkte-Modus aktiviert (Linien + große Shapes)");
             
         } else {
             // Bei vielen Datenpunkten: Linien und kleine Shapes anzeigen
             renderer.setSeriesLinesVisible(0, true);
             renderer.setSeriesShapesVisible(0, true);
             renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-2, -2, 4, 4)); // Normale Punkte
-            LOGGER.info("Drawdown-Chart: Viel-Punkte-Modus aktiviert (Linien + kleine Shapes)");
+            LOGGER.info("Total Value Drawdown-Chart: Viel-Punkte-Modus aktiviert (Linien + kleine Shapes)");
         }
     }
     
     /**
-     * KRITISCH: Berechnet den Drawdown-Prozentsatz mit verbessertem Logging
+     * KORRIGIERT: Y-Achsen-Bereich-Anpassung für TOTAL VALUE Drawdown-Chart
+     * OHNE hardcodierte Schwellenwerte - funktioniert für alle Drawdown-Bereiche
      */
-    private double calculateDrawdownPercent(double equity, double floatingProfit) {
-        if (equity == 0) {
-            LOGGER.warning("WARNUNG: Equity ist 0 - kann Drawdown nicht berechnen");
-            return 0.0;
-        }
-        
-        double result = (floatingProfit / equity) * 100.0;
-        
-        // DETAILLIERTES LOGGING - JETZT MIT INFO LEVEL
-        LOGGER.info("DRAWDOWN BERECHNUNG: " + floatingProfit + " / " + equity + " * 100 = " + String.format("%.6f%%", result));
-        
-        return result;
-    }
-    
-    /**
-     * ROBUSTE Y-Achsen-Bereich-Anpassung für Drawdown-Chart
-     */
-    private void adjustDrawdownChartYAxisRangeRobust(List<TickDataLoader.TickData> filteredTicks) {
-        if (drawdownChart == null || filteredTicks.isEmpty()) {
-            LOGGER.warning("Kann Drawdown Y-Achse nicht anpassen: Chart=" + (drawdownChart != null) + 
-                          ", Ticks=" + (filteredTicks != null ? filteredTicks.size() : "null"));
+    private void adjustTotalValueDrawdownChartYAxisRange(List<TickDataLoader.TickData> tickList) {
+        if (drawdownChart == null || tickList.isEmpty()) {
+            LOGGER.warning("Kann Total Value Drawdown Y-Achse nicht anpassen: Chart=" + (drawdownChart != null) + 
+                          ", Ticks=" + (tickList != null ? tickList.size() : "null"));
             return;
         }
         
-        LOGGER.info("=== ROBUSTE DRAWDOWN Y-ACHSEN ANPASSUNG START ===");
+        LOGGER.info("=== TOTAL VALUE DRAWDOWN Y-ACHSEN ANPASSUNG START ===");
         
         XYPlot plot = drawdownChart.getXYPlot();
         
-        // SCHRITT 1: Alle Drawdown-Werte berechnen und sammeln
-        double[] drawdownValues = new double[filteredTicks.size()];
+        // SCHRITT 1: Sortiere Ticks chronologisch für korrekte Peak-Berechnung
+        List<TickDataLoader.TickData> sortedTicks = new java.util.ArrayList<>(tickList);
+        sortedTicks.sort((a, b) -> a.getTimestamp().compareTo(b.getTimestamp()));
+        
+        // SCHRITT 2: Alle Total Value Drawdown-Werte berechnen (mit korrektem Peak-Tracking)
+        double peakTotalValue = 0.0;
         double minDrawdown = Double.MAX_VALUE;
         double maxDrawdown = Double.MIN_VALUE;
         
-        for (int i = 0; i < filteredTicks.size(); i++) {
-            TickDataLoader.TickData tick = filteredTicks.get(i);
-            double drawdown = calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit());
-            drawdownValues[i] = drawdown;
+        for (int i = 0; i < sortedTicks.size(); i++) {
+            TickDataLoader.TickData tick = sortedTicks.get(i);
+            double currentTotalValue = tick.getTotalValue();  // KORRIGIERT: Total Value statt Equity
+            
+            // Peak-Tracking für Total Value
+            if (i == 0) {
+                peakTotalValue = currentTotalValue;
+            } else if (currentTotalValue > peakTotalValue) {
+                peakTotalValue = currentTotalValue;
+            }
+            
+            // Total Value Drawdown berechnen
+            double drawdown = calculateTotalValueDrawdownPercent(currentTotalValue, peakTotalValue);
             
             if (drawdown < minDrawdown) minDrawdown = drawdown;
             if (drawdown > maxDrawdown) maxDrawdown = drawdown;
             
             if (i < 3) { // Nur erste 3 loggen
-                LOGGER.info("Drawdown-Wert #" + (i+1) + ": " + String.format("%.6f%%", drawdown));
+                LOGGER.info("Total Value Drawdown-Wert #" + (i+1) + ": " + String.format("%.6f%%", drawdown) + 
+                           " (Total Value: " + String.format("%.6f", currentTotalValue) + ", Peak: " + String.format("%.6f", peakTotalValue) + ")");
             }
         }
         
-        LOGGER.info("DRAWDOWN-BEREICH: Min=" + String.format("%.6f%%", minDrawdown) + 
+        LOGGER.info("TOTAL VALUE DRAWDOWN-BEREICH: Min=" + String.format("%.6f%%", minDrawdown) + 
                    ", Max=" + String.format("%.6f%%", maxDrawdown));
         
-        // SCHRITT 2: Fallback für ungültige Werte
+        // SCHRITT 3: Fallback für ungültige Werte
         if (minDrawdown == Double.MAX_VALUE || maxDrawdown == Double.MIN_VALUE) {
-            LOGGER.severe("FEHLER: Keine gültigen Drawdown-Werte - setze Notfall-Bereich");
-            plot.getRangeAxis().setRange(-5.0, 5.0);
+            LOGGER.severe("FEHLER: Keine gültigen Total Value Drawdown-Werte - setze Notfall-Bereich");
+            plot.getRangeAxis().setRange(-2.0, 1.0);
             return;
         }
         
-        // SCHRITT 3: Intelligente Bereichsberechnung
+        // SCHRITT 4: ALLGEMEINE BEREICHSBERECHNUNG (ohne hardcodierte Schwellenwerte)
         double dataRange = maxDrawdown - minDrawdown;
-        double centerValue = (minDrawdown + maxDrawdown) / 2.0;
-        double maxAbsValue = Math.max(Math.abs(minDrawdown), Math.abs(maxDrawdown));
+        double dataCenter = (minDrawdown + maxDrawdown) / 2.0;
         
-        LOGGER.info("BEREICHS-ANALYSE: Spanne=" + String.format("%.6f%%", dataRange) + 
-                   ", Zentrum=" + String.format("%.6f%%", centerValue) + 
-                   ", Max-Abs=" + String.format("%.6f%%", maxAbsValue));
+        LOGGER.info("TOTAL VALUE DRAWDOWN-ANALYSE: Spanne=" + String.format("%.6f%%", dataRange) + 
+                   ", Zentrum=" + String.format("%.6f%%", dataCenter));
         
-        double lowerBound, upperBound;
-        String strategie;
+        // SCHRITT 5: EINFACHE, ALLGEMEINE PADDING-BERECHNUNG
+        double basePadding, lowerBound, upperBound;
         
-        // SCHRITT 4: Adaptive Strategie basierend auf Datenlage
         if (dataRange < 0.001) {
-            // Alle Werte praktisch identisch - symmetrischer kleiner Bereich um Zentrum
-            double padding = Math.max(0.01, Math.abs(centerValue) * 0.1);
-            lowerBound = centerValue - padding;
-            upperBound = centerValue + padding;
-            strategie = "Identische Werte (Spanne < 0.001%)";
-            
-        } else if (maxAbsValue < 0.1) {
-            // Sehr kleine Werte - feiner Bereich mit garantierter Mindestgröße
-            double padding = Math.max(dataRange * 0.5, 0.02);
-            lowerBound = minDrawdown - padding;
-            upperBound = maxDrawdown + padding;
-            strategie = "Sehr kleine Werte (< 0.1%)";
-            
-        } else if (maxAbsValue < 1.0) {
-            // Kleine Werte - normaler Bereich mit angemessenem Padding
-            double padding = Math.max(dataRange * 0.3, 0.1);
-            lowerBound = minDrawdown - padding;
-            upperBound = maxDrawdown + padding;
-            strategie = "Kleine Werte (< 1.0%)";
-            
-        } else if (maxAbsValue < 10.0) {
-            // Mittlere Werte - proportionaler Bereich
-            double padding = Math.max(dataRange * 0.2, 0.5);
-            lowerBound = minDrawdown - padding;
-            upperBound = maxDrawdown + padding;
-            strategie = "Mittlere Werte (< 10.0%)";
+            // Alle Werte praktisch identisch - erstelle sinnvollen Bereich um den Zentral-Wert
+            basePadding = Math.max(Math.abs(dataCenter) * 0.2, 0.1); // 20% des Wertes oder min. 0.1%
+            lowerBound = dataCenter - basePadding;
+            upperBound = dataCenter + basePadding;
+            LOGGER.info("Identische Werte - Symmetrischer Bereich um " + String.format("%.6f%%", dataCenter));
             
         } else {
-            // Große Werte - symmetrischer Bereich
-            double padding = Math.max(maxAbsValue * 0.1, 1.0);
-            lowerBound = -maxAbsValue - padding;
-            upperBound = maxAbsValue + padding;
-            strategie = "Große Werte (>= 10.0%) - symmetrisch";
+            // Normale Daten - ALLGEMEINE FORMEL ohne If-Abfragen
+            
+            // Basis-Padding: 50% der Datenspanne (großzügig für bessere Sichtbarkeit)
+            basePadding = dataRange * 0.5;
+            
+            // Mindest-Padding basierend auf Absolutwerten (garantiert Sichtbarkeit)
+            double maxAbsValue = Math.max(Math.abs(minDrawdown), Math.abs(maxDrawdown));
+            double minPadding = Math.max(maxAbsValue * 0.1, 0.05); // 10% des größten Wertes oder min. 0.05%
+            
+            // Verwende das größere Padding
+            double finalPadding = Math.max(basePadding, minPadding);
+            
+            lowerBound = minDrawdown - finalPadding;
+            upperBound = maxDrawdown + finalPadding;
+            
+            LOGGER.info("Allgemeine Berechnung - Basis-Padding: " + String.format("%.6f%%", basePadding) + 
+                       ", Min-Padding: " + String.format("%.6f%%", minPadding) + 
+                       ", Final-Padding: " + String.format("%.6f%%", finalPadding));
         }
         
-        // SCHRITT 5: Mindestbereich garantieren
+        // SCHRITT 6: Stelle sicher, dass 0% Linie sichtbar ist (wichtige Referenz für Drawdown)
+        if (upperBound < 0) {
+            // Alle Werte negativ - erweitere etwas nach oben
+            upperBound = Math.max(0, upperBound + Math.abs(lowerBound) * 0.1);
+        }
+        if (lowerBound > 0) {
+            // Alle Werte positiv - erweitere etwas nach unten
+            lowerBound = Math.min(0, lowerBound - upperBound * 0.1);
+        }
+        
+        // SCHRITT 7: Garantierter Mindestbereich für jede Situation
         double finalRange = upperBound - lowerBound;
-        if (finalRange < 0.02) { // Mindestens 0.02% Spanne
+        double minRequiredRange = 0.2; // Mindestens 0.2% Gesamtspanne
+        
+        if (finalRange < minRequiredRange) {
             double center = (upperBound + lowerBound) / 2;
-            lowerBound = center - 0.01;
-            upperBound = center + 0.01;
-            strategie += " + Mindestbereich-Garantie";
+            double halfRange = minRequiredRange / 2;
+            lowerBound = center - halfRange;
+            upperBound = center + halfRange;
+            LOGGER.info("Mindestbereich angewendet: " + minRequiredRange + "%");
         }
         
-        // SCHRITT 6: Y-Achsen-Bereich setzen
+        // SCHRITT 8: Y-Achsen-Bereich setzen
         plot.getRangeAxis().setRange(lowerBound, upperBound);
         
-        LOGGER.info("STRATEGIE ANGEWENDET: " + strategie);
-        LOGGER.info("Y-ACHSEN-BEREICH GESETZT: " + String.format("%.6f%% bis %.6f%%", lowerBound, upperBound));
-        LOGGER.info("=== ROBUSTE DRAWDOWN Y-ACHSEN ANPASSUNG ENDE ===");
+        LOGGER.info("=== TOTAL VALUE DRAWDOWN Y-ACHSEN-BEREICH GESETZT ===");
+        LOGGER.info("Bereich: " + String.format("%.6f%% bis %.6f%%", lowerBound, upperBound));
+        LOGGER.info("Finale Spanne: " + String.format("%.6f%%", upperBound - lowerBound));
+        LOGGER.info("=== TOTAL VALUE DRAWDOWN Y-ACHSEN ANPASSUNG ENDE ===");
+    }
+    
+    /**
+     * @deprecated Diese Methode war für Equity Drawdown - wird durch adjustTotalValueDrawdownChartYAxisRange ersetzt.
+     */
+    @Deprecated
+    private void adjustTrueDrawdownChartYAxisRange(List<TickDataLoader.TickData> tickList) {
+        LOGGER.warning("DEPRECATED: adjustTrueDrawdownChartYAxisRange() wurde durch adjustTotalValueDrawdownChartYAxisRange() ersetzt");
+        adjustTotalValueDrawdownChartYAxisRange(tickList);
     }
     
     /**
      * KORRIGIERT: INTELLIGENTE X-Achsen (Zeit) Kalibrierung für Drawdown-Chart
      * Verhindert zu enge Zeitbereiche bei wenigen Datenpunkten
      */
-    private void adjustDrawdownChartXAxisRange(List<TickDataLoader.TickData> filteredTicks) {
-        if (drawdownChart == null || filteredTicks.isEmpty()) {
+    private void adjustDrawdownChartXAxisRange(List<TickDataLoader.TickData> tickList) {
+        if (drawdownChart == null || tickList.isEmpty()) {
             LOGGER.warning("Kann Drawdown X-Achse nicht anpassen: Chart=" + (drawdownChart != null) + 
-                          ", Ticks=" + (filteredTicks != null ? filteredTicks.size() : "null"));
+                          ", Ticks=" + (tickList != null ? tickList.size() : "null"));
             return;
         }
         
@@ -468,12 +569,16 @@ public class TickChartManager {
         
         XYPlot plot = drawdownChart.getXYPlot();
         
+        // Sortiere für korrekte chronologische Reihenfolge
+        List<TickDataLoader.TickData> sortedTicks = new java.util.ArrayList<>(tickList);
+        sortedTicks.sort((a, b) -> a.getTimestamp().compareTo(b.getTimestamp()));
+        
         // Zeitbereich der Daten ermitteln
-        java.time.LocalDateTime earliestTime = filteredTicks.get(0).getTimestamp();
-        java.time.LocalDateTime latestTime = filteredTicks.get(filteredTicks.size() - 1).getTimestamp();
+        java.time.LocalDateTime earliestTime = sortedTicks.get(0).getTimestamp();
+        java.time.LocalDateTime latestTime = sortedTicks.get(sortedTicks.size() - 1).getTimestamp();
         
         LOGGER.info("ZEIT-DATEN:");
-        LOGGER.info("  Anzahl Datenpunkte: " + filteredTicks.size());
+        LOGGER.info("  Anzahl Datenpunkte: " + sortedTicks.size());
         LOGGER.info("  Früheste Zeit: " + earliestTime);
         LOGGER.info("  Späteste Zeit: " + latestTime);
         
@@ -486,7 +591,7 @@ public class TickChartManager {
         
         java.time.LocalDateTime displayStart, displayEnd;
         
-        if (filteredTicks.size() == 1) {
+        if (sortedTicks.size() == 1) {
             // Ein Datenpunkt: Erstelle sinnvollen Zeitbereich um den Punkt
             java.time.LocalDateTime centerTime = earliestTime;
             
@@ -551,38 +656,40 @@ public class TickChartManager {
     }
     
     /**
-     * Aktualisiert die Farben des Drawdown-Charts
+     * Aktualisiert die Farben des Drawdown-Charts für Total Value Drawdown
      */
-    private void updateDrawdownChartColors(List<TickDataLoader.TickData> filteredTicks) {
-        if (drawdownChart == null || filteredTicks.isEmpty()) {
+    private void updateDrawdownChartColors(List<TickDataLoader.TickData> tickList) {
+        if (drawdownChart == null || tickList.isEmpty()) {
             return;
         }
         
         XYPlot plot = drawdownChart.getXYPlot();
         XYLineAndShapeRenderer renderer = (XYLineAndShapeRenderer) plot.getRenderer();
         
-        // Prüfe Werteverteilung
-        long positiveCount = filteredTicks.stream().filter(tick -> 
-            calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit()) > 0
-        ).count();
+        // Für Total Value Drawdown ist die Farbe rot (Drawdown-Werte)
+        renderer.setSeriesPaint(0, new Color(200, 0, 0)); // Rot für Drawdown
+        LOGGER.info("Total Value Drawdown-Chart Farbe: Rot (für Drawdown-Werte)");
+    }
+    
+    /**
+     * @deprecated Diese Methode verwendet die alte Floating Profit % Berechnung.
+     * Wird jetzt durch calculateTotalValueDrawdownPercent ersetzt.
+     */
+    @Deprecated
+    private double calculateDrawdownPercent(double equity, double floatingProfit) {
+        LOGGER.warning("DEPRECATED: calculateDrawdownPercent() verwendet alte Floating Profit % Berechnung. Verwende calculateTotalValueDrawdownPercent()");
         
-        long negativeCount = filteredTicks.stream().filter(tick -> 
-            calculateDrawdownPercent(tick.getEquity(), tick.getFloatingProfit()) < 0
-        ).count();
-        
-        LOGGER.info("Drawdown Werteverteilung: Positiv=" + positiveCount + ", Negativ=" + negativeCount);
-        
-        // Farbe basierend auf Mehrheit setzen
-        if (positiveCount > negativeCount) {
-            renderer.setSeriesPaint(0, new Color(0, 150, 0)); // Grün für überwiegend positive Werte
-            LOGGER.info("Drawdown-Chart Farbe: Grün (mehr positive Werte)");
-        } else if (negativeCount > positiveCount) {
-            renderer.setSeriesPaint(0, new Color(200, 0, 0)); // Rot für überwiegend negative Werte
-            LOGGER.info("Drawdown-Chart Farbe: Rot (mehr negative Werte)");
-        } else {
-            renderer.setSeriesPaint(0, new Color(200, 0, 200)); // Magenta für ausgeglichen
-            LOGGER.info("Drawdown-Chart Farbe: Magenta (ausgeglichen)");
+        if (equity == 0) {
+            LOGGER.warning("WARNUNG: Equity ist 0 - kann Floating Profit % nicht berechnen");
+            return 0.0;
         }
+        
+        double result = (floatingProfit / equity) * 100.0;
+        
+        // DETAILLIERTES LOGGING - DEPRECATED
+        LOGGER.fine("DEPRECATED FLOATING PROFIT % BERECHNUNG: " + floatingProfit + " / " + equity + " * 100 = " + String.format("%.6f%%", result));
+        
+        return result;
     }
     
     // Getter-Methoden - BEIDE CHARTS

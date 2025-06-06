@@ -20,10 +20,11 @@ import org.eclipse.swt.widgets.Text;
 
 import com.mql.realmonitor.data.TickDataLoader;
 import com.mql.realmonitor.parser.SignalData;
+import com.mql.realmonitor.tickdata.TickDataWriter;
 
 /**
  * Toolbar für das TickChartWindow mit allen Buttons und Event-Handlern
- * Verwaltet: Refresh, Diagnostik, Tickdaten, MQL5 Website, Zoom-Funktionen
+ * Verwaltet: Refresh, Diagnostik, Tickdaten, MQL5 Website, Zoom-Funktionen, Format-Reparatur
  */
 public class TickChartWindowToolbar extends Composite {
     
@@ -33,6 +34,7 @@ public class TickChartWindowToolbar extends Composite {
     private Button refreshButton;
     private Button diagnosticButton;
     private Button tickDataButton;
+    private Button repairTickDataButton;  // NEU: Format-Reparatur Button
     private Button mql5WebsiteButton;
     private Button zoomInButton;
     private Button zoomOutButton;
@@ -98,7 +100,7 @@ public class TickChartWindowToolbar extends Composite {
      * Erstellt alle Buttons
      */
     private void createButtons() {
-        setLayout(new GridLayout(9, false)); // 9 Buttons
+        setLayout(new GridLayout(10, false)); // 10 Buttons (war 9)
         
         refreshButton = new Button(this, SWT.PUSH);
         refreshButton.setText("Aktualisieren");
@@ -113,6 +115,12 @@ public class TickChartWindowToolbar extends Composite {
         tickDataButton.setText("Tickdaten");
         tickDataButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
         tickDataButton.setToolTipText("Zeigt die rohen Tickdaten aus der Datei");
+        
+        // NEU: Format-Reparatur Button
+        repairTickDataButton = new Button(this, SWT.PUSH);
+        repairTickDataButton.setText("🔧 Reparieren");
+        repairTickDataButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        repairTickDataButton.setToolTipText("Konvertiert alte Tickdaten (4 Spalten) in das neue Format (5 Spalten mit Profit)");
         
         mql5WebsiteButton = new Button(this, SWT.PUSH);
         mql5WebsiteButton.setText("🌐 MQL5 Website");
@@ -138,7 +146,7 @@ public class TickChartWindowToolbar extends Composite {
         closeButton.setText("Schließen");
         closeButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
         
-        LOGGER.fine("Toolbar-Buttons erstellt");
+        LOGGER.fine("Toolbar-Buttons erstellt (mit Format-Reparatur)");
     }
     
     /**
@@ -165,6 +173,14 @@ public class TickChartWindowToolbar extends Composite {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 showTickDataWindow();
+            }
+        });
+        
+        // NEU: Event Handler für Format-Reparatur
+        repairTickDataButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                repairTickDataFormat();
             }
         });
         
@@ -211,7 +227,117 @@ public class TickChartWindowToolbar extends Composite {
             }
         });
         
-        LOGGER.fine("Event-Handler für Toolbar-Buttons eingerichtet");
+        LOGGER.fine("Event-Handler für Toolbar-Buttons eingerichtet (mit Format-Reparatur)");
+    }
+    
+    /**
+     * NEU: Repariert das Tickdaten-Format von 4 auf 5 Spalten
+     */
+    private void repairTickDataFormat() {
+        try {
+            LOGGER.info("=== TICKDATEN-FORMAT REPARATUR für Signal: " + signalId + " ===");
+            
+            // Bestätigungsdialog anzeigen
+            if (!showRepairConfirmationDialog()) {
+                LOGGER.info("Format-Reparatur von Benutzer abgebrochen");
+                return;
+            }
+            
+            // Button temporär deaktivieren
+            repairTickDataButton.setEnabled(false);
+            repairTickDataButton.setText("Repariere...");
+            
+            // TickDataWriter für Reparatur verwenden
+            TickDataWriter tickDataWriter = new TickDataWriter(parentGui.getMonitor().getConfig());
+            boolean success = tickDataWriter.convertTickFileToNewFormat(signalId);
+            
+            // Button wieder aktivieren
+            repairTickDataButton.setEnabled(true);
+            repairTickDataButton.setText("🔧 Reparieren");
+            
+            // Ergebnis anzeigen
+            if (success) {
+                showRepairSuccessDialog();
+                
+                // Chart aktualisieren wenn Callbacks verfügbar
+                if (callbacks != null) {
+                    callbacks.onRefresh();
+                }
+            } else {
+                showRepairErrorDialog("Unbekannter Fehler bei der Format-Konvertierung");
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler bei Tickdaten-Format-Reparatur für Signal: " + signalId, e);
+            
+            // Button wieder aktivieren
+            repairTickDataButton.setEnabled(true);
+            repairTickDataButton.setText("🔧 Reparieren");
+            
+            showRepairErrorDialog(e.getMessage());
+        }
+    }
+    
+    /**
+     * NEU: Zeigt Bestätigungsdialog für Format-Reparatur
+     */
+    private boolean showRepairConfirmationDialog() {
+        MessageBox confirmBox = new MessageBox(parentShell, SWT.ICON_QUESTION | SWT.YES | SWT.NO);
+        confirmBox.setText("Tick-Dateien reparieren");
+        
+        StringBuilder message = new StringBuilder();
+        message.append("Diese Funktion konvertiert alte Tickdaten ins neue Format.\n\n");
+        message.append("Format ALT (4 Spalten):  Datum,Zeit,Equity,FloatingProfit\n");
+        message.append("Format NEU (5 Spalten):  Datum,Zeit,Equity,FloatingProfit,Profit\n\n");
+        message.append("Die Equity wird als Profit-Wert übernommen.\n\n");
+        message.append("Es wird automatisch ein Backup erstellt.\n\n");
+        message.append("Möchten Sie fortfahren?");
+        
+        confirmBox.setMessage(message.toString());
+        
+        return confirmBox.open() == SWT.YES;
+    }
+    
+    /**
+     * NEU: Zeigt Erfolgsmeldung für Format-Reparatur
+     */
+    private void showRepairSuccessDialog() {
+        MessageBox successBox = new MessageBox(parentShell, SWT.ICON_INFORMATION | SWT.OK);
+        successBox.setText("Format-Reparatur erfolgreich");
+        
+        StringBuilder message = new StringBuilder();
+        message.append("Tickdaten-Format erfolgreich konvertiert!\n\n");
+        message.append("Signal: ").append(signalId).append(" (").append(providerName).append(")\n");
+        message.append("Datei: ").append(tickFilePath).append("\n\n");
+        message.append("Alte Daten wurden in das neue 5-Spalten-Format konvertiert.\n");
+        message.append("Die Equity wurde als Profit-Wert übernommen.\n\n");
+        message.append("Ein Backup der Originaldatei wurde erstellt.\n");
+        message.append("Die Charts werden automatisch aktualisiert.");
+        
+        successBox.setMessage(message.toString());
+        successBox.open();
+    }
+    
+    /**
+     * NEU: Zeigt Fehlerdialog für Format-Reparatur
+     */
+    private void showRepairErrorDialog(String errorMessage) {
+        MessageBox errorBox = new MessageBox(parentShell, SWT.ICON_ERROR | SWT.OK);
+        errorBox.setText("Fehler bei Format-Reparatur");
+        
+        StringBuilder message = new StringBuilder();
+        message.append("Fehler beim Reparieren des Tickdaten-Formats:\n\n");
+        message.append("Signal: ").append(signalId).append("\n");
+        message.append("Datei: ").append(tickFilePath).append("\n\n");
+        message.append("Fehler: ").append(errorMessage).append("\n\n");
+        message.append("Mögliche Ursachen:\n");
+        message.append("- Datei ist bereits im neuen Format\n");
+        message.append("- Datei ist beschädigt oder leer\n");
+        message.append("- Keine Schreibberechtigung\n");
+        message.append("- Unbekanntes Datenformat");
+        
+        errorBox.setMessage(message.toString());
+        errorBox.open();
     }
     
     /**
@@ -367,7 +493,7 @@ public class TickChartWindowToolbar extends Composite {
         report.append("Refresh Counter: ").append(callbacks.getRefreshCounter()).append("\n");
         report.append("Data Loaded: ").append(callbacks.isDataLoaded()).append("\n");
         report.append("Zoom Factor: ").append(callbacks.getZoomFactor()).append("\n");
-        report.append("Chart Typ: DRAWDOWN + PROFIT (DUAL-CHART) + TICKDATEN + MQL5 LINK\n\n");
+        report.append("Chart Typ: DRAWDOWN + PROFIT (DUAL-CHART) + TICKDATEN + MQL5 LINK + FORMAT-REPARATUR\n\n");
         
         // SignalData Info
         report.append("SIGNALDATA:\n");

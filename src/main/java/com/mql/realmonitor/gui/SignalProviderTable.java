@@ -2,7 +2,9 @@ package com.mql.realmonitor.gui;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
 import java.util.logging.Logger;
+import java.util.logging.Level;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.SelectionAdapter;
@@ -17,6 +19,7 @@ import org.eclipse.swt.widgets.TableItem;
 import com.mql.realmonitor.config.IdTranslationManager;
 import com.mql.realmonitor.parser.SignalData;
 import com.mql.realmonitor.utils.PeriodProfitCalculator;
+import com.mql.realmonitor.data.TickDataLoader;
 
 /**
  * Refactored: Tabelle für die Anzeige der Signalprovider-Daten
@@ -27,12 +30,13 @@ import com.mql.realmonitor.utils.PeriodProfitCalculator;
  * NEU: Profit-Spalte zwischen Kontostand und Floating Profit hinzugefügt
  * NEU: WeeklyProfit und MonthlyProfit Spalten hinzugefügt
  * NEU: IdTranslationManager für Provider-Namen beim Start und bei Fehlern
+ * KORRIGIERT: Total Value Drawdown für Konsistenz zwischen Chart und Tabelle
  */
 public class SignalProviderTable {
     
     private static final Logger LOGGER = Logger.getLogger(SignalProviderTable.class.getName());
     
-    // Spalten-Definitionen (ERWEITERT: Neue "Profit" Spalte hinzugefügt)
+    // Spalten-Definitionen (KORRIGIERT: Spalte heißt jetzt "Total Value Drawdown")
     private static final String[] COLUMN_TEXTS = {
         "Signal ID", 
         "Favoritenklasse",     // NEU: Spalte 1
@@ -41,7 +45,7 @@ public class SignalProviderTable {
         "Kontostand",          // war "Kontostand"
         "Profit",              // NEU: Spalte 5 (zwischen Kontostand und Floating Profit)
         "Floating Profit",     // war "Floating Profit" (verschoben von 5 zu 6)
-        "Equity Drawdown",     // war "Equity Drawdown" (verschoben von 6 zu 7)
+        "Total Value Drawdown",// KORRIGIERT: war "Equity Drawdown" (verschoben von 6 zu 7)
         "Gesamtwert",          // war "Gesamtwert" (verschoben von 7 zu 8)
         "WeeklyProfit",        // NEU: Spalte 9 (verschoben von 8 zu 9)
         "MonthlyProfit",       // NEU: Spalte 10 (verschoben von 9 zu 10)
@@ -58,7 +62,7 @@ public class SignalProviderTable {
         120,  // Kontostand
         100,  // Profit (NEU)
         120,  // Floating Profit (verschoben)
-        100,  // Equity Drawdown (verschoben)
+        120,  // Total Value Drawdown (ERWEITERT: breitere Spalte)
         120,  // Gesamtwert (verschoben)
         100,  // WeeklyProfit (verschoben)
         100,  // MonthlyProfit (verschoben)
@@ -86,11 +90,15 @@ public class SignalProviderTable {
     // NEU: IdTranslationManager für Provider-Namen
     private IdTranslationManager idTranslationManager;
     
+    // NEU: Peak-Total-Value Cache für konsistente Drawdown-Berechnung
+    private Map<String, Double> peakTotalValueCache;
+    
     public SignalProviderTable(Composite parent, MqlRealMonitorGUI parentGui) {
-        LOGGER.info("=== NEUE SIGNALPROVIDER TABLE MIT ID-TRANSLATION WIRD GELADEN ===");
+        LOGGER.info("=== NEUE SIGNALPROVIDER TABLE MIT TOTAL VALUE DRAWDOWN WIRD GELADEN ===");
         this.parentGui = parentGui;
         this.signalIdToItem = new HashMap<>();
         this.lastSignalData = new HashMap<>();
+        this.peakTotalValueCache = new HashMap<>();  // NEU: Peak-Cache initialisieren
         
         // Helfer-Klassen initialisieren
         this.tableHelper = new ProviderTableHelper(parentGui);
@@ -121,7 +129,7 @@ public class SignalProviderTable {
         // Tabellenverhalten mit Kontextmenü konfigurieren
         contextMenu.setupTableBehavior(table);
         
-        LOGGER.info("SignalProviderTable (Refactored+Extended+ProfitColumn+IdTranslation) initialisiert mit " + COLUMN_TEXTS.length + " Spalten - Modular aufgeteilt mit Favoritenklasse, Profit-Spalte, Profit-Berechnungen und ID-Translation für Provider-Namen");
+        LOGGER.info("SignalProviderTable (KORRIGIERT - Total Value Drawdown für Chart-Konsistenz) initialisiert mit " + COLUMN_TEXTS.length + " Spalten");
     }
     
     /**
@@ -174,6 +182,7 @@ public class SignalProviderTable {
             (signalId, item) -> {
                 signalIdToItem.remove(signalId);
                 lastSignalData.remove(signalId);
+                peakTotalValueCache.remove(signalId);  // NEU: Auch Peak-Cache leeren
             }
         );
     }
@@ -210,7 +219,109 @@ public class SignalProviderTable {
             });
         }
         
-        LOGGER.info("Tabellenspalten erstellt: " + java.util.Arrays.toString(COLUMN_TEXTS));
+        LOGGER.info("Tabellenspalten erstellt (KORRIGIERT - Total Value Drawdown): " + java.util.Arrays.toString(COLUMN_TEXTS));
+    }
+    
+    /**
+     * NEU: Berechnet den Peak-Total-Value für eine Signal-ID aus den Tick-Daten
+     * KONSISTENT MIT CHART: Verwendet die gleiche Peak-Tracking-Logik wie der Chart
+     * 
+     * @param signalId Die Signal-ID
+     * @return Der Peak-Total-Value oder aktueller Total Value als Fallback
+     */
+    private double calculatePeakTotalValueFromTickData(String signalId, SignalData currentData) {
+        try {
+            LOGGER.fine("PEAK BERECHNUNG: Starte für Signal " + signalId);
+            
+            // Prüfe Cache zuerst
+            if (peakTotalValueCache.containsKey(signalId)) {
+                double cachedPeak = peakTotalValueCache.get(signalId);
+                double currentTotalValue = currentData.getTotalValue();
+                
+                // Aktualisiere Cache falls neuer Peak erreicht
+                if (currentTotalValue > cachedPeak) {
+                    LOGGER.info("NEUER PEAK ERREICHT für " + signalId + ": " + 
+                               String.format("%.6f -> %.6f", cachedPeak, currentTotalValue));
+                    peakTotalValueCache.put(signalId, currentTotalValue);
+                    return currentTotalValue;
+                }
+                
+                LOGGER.fine("PEAK aus Cache für " + signalId + ": " + String.format("%.6f", cachedPeak));
+                return cachedPeak;
+            }
+            
+            // Tick-Datei-Pfad ermitteln
+            String tickFilePath = parentGui.getMonitor().getConfig().getTickFilePath(signalId);
+            
+            // Prüfen ob Datei existiert
+            java.io.File tickFile = new java.io.File(tickFilePath);
+            if (!tickFile.exists()) {
+                LOGGER.info("PEAK BERECHNUNG: Tick-Datei existiert nicht für " + signalId + " - verwende aktuellen Total Value");
+                double currentTotalValue = currentData.getTotalValue();
+                peakTotalValueCache.put(signalId, currentTotalValue);
+                return currentTotalValue;
+            }
+            
+            // Alle Tick-Daten laden (KORRIGIERT: Statische Methode verwenden)
+            TickDataLoader.TickDataSet dataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
+            
+            if (dataSet == null || dataSet.getTickCount() == 0) {
+                LOGGER.info("PEAK BERECHNUNG: Keine Tick-Daten gefunden für " + signalId + " - verwende aktuellen Total Value");
+                double currentTotalValue = currentData.getTotalValue();
+                peakTotalValueCache.put(signalId, currentTotalValue);
+                return currentTotalValue;
+            }
+            
+            // Tick-Daten aus DataSet extrahieren
+            List<TickDataLoader.TickData> allTickData = dataSet.getTicks();
+            
+            if (allTickData.isEmpty()) {
+                LOGGER.info("PEAK BERECHNUNG: Keine Tick-Daten gefunden für " + signalId + " - verwende aktuellen Total Value");
+                double currentTotalValue = currentData.getTotalValue();
+                peakTotalValueCache.put(signalId, currentTotalValue);
+                return currentTotalValue;
+            }
+            
+            // KONSISTENT MIT CHART: Peak-Tracking durch alle historischen Daten
+            double peakTotalValue = 0.0;
+            boolean firstData = true;
+            
+            // Sortiere chronologisch
+            allTickData.sort((a, b) -> a.getTimestamp().compareTo(b.getTimestamp()));
+            
+            for (TickDataLoader.TickData tick : allTickData) {
+                double totalValue = tick.getTotalValue();
+                
+                if (firstData) {
+                    peakTotalValue = totalValue;
+                    firstData = false;
+                    LOGGER.fine("PEAK INITIALISIERT für " + signalId + ": " + String.format("%.6f", peakTotalValue));
+                } else if (totalValue > peakTotalValue) {
+                    peakTotalValue = totalValue;
+                }
+            }
+            
+            // Auch aktuellen Wert prüfen (falls noch nicht in Datei)
+            double currentTotalValue = currentData.getTotalValue();
+            if (currentTotalValue > peakTotalValue) {
+                peakTotalValue = currentTotalValue;
+                LOGGER.fine("PEAK AKTUALISIERT durch aktuellen Wert für " + signalId + ": " + String.format("%.6f", peakTotalValue));
+            }
+            
+            // Cache aktualisieren
+            peakTotalValueCache.put(signalId, peakTotalValue);
+            
+            LOGGER.info("PEAK BERECHNUNG ABGESCHLOSSEN für " + signalId + ": " + 
+                       String.format("%.6f", peakTotalValue) + " (aus " + allTickData.size() + " Tick-Datenpunkten)");
+            
+            return peakTotalValue;
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "FEHLER bei Peak-Berechnung für Signal " + signalId + " - verwende aktuellen Total Value als Fallback", e);
+            double currentTotalValue = currentData.getTotalValue();
+            peakTotalValueCache.put(signalId, currentTotalValue);
+            return currentTotalValue;
+        }
     }
     
     /**
@@ -312,6 +423,7 @@ public class SignalProviderTable {
     
     /**
      * Aktualisiert die Daten eines Providers (Thread-sicher)
+     * KORRIGIERT: Verwendet jetzt Total Value Drawdown für Konsistenz mit Chart
      * ERWEITERT: Setzt auch die Favoritenklasse, Zeilen-Hintergrundfarbe, neue Profit-Spalte und berechnet Profit-Werte
      * NEU: Speichert neue Provider-Namen in der ID-Translation
      * 
@@ -360,7 +472,15 @@ public class SignalProviderTable {
         // NEU: Profit-Werte berechnen
         PeriodProfitCalculator.ProfitResult profitResult = calculateProfitsForSignal(signalId);
         
-        // Tabellendaten setzen - KORRIGIERT: Verwende bevorzugten Provider-Namen
+        // KORRIGIERT: Total Value Drawdown berechnen (KONSISTENT MIT CHART)
+        double peakTotalValue = calculatePeakTotalValueFromTickData(signalId, signalData);
+        String totalValueDrawdown = signalData.getFormattedTotalValueDrawdown(peakTotalValue);
+        
+        LOGGER.info("TOTAL VALUE DRAWDOWN für Tabelle " + signalId + ": " + totalValueDrawdown + 
+                   " (Peak: " + String.format("%.6f", peakTotalValue) + 
+                   ", Current: " + String.format("%.6f", signalData.getTotalValue()) + ")");
+        
+        // Tabellendaten setzen - KORRIGIERT: Verwende bevorzugten Provider-Namen und Total Value Drawdown
         item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
         item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);                     
         item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);  // ← KORRIGIERT: Bevorzugte Namen
@@ -368,7 +488,7 @@ public class SignalProviderTable {
         item.setText(ProviderTableHelper.COL_EQUITY, signalData.getFormattedEquity());
         item.setText(ProviderTableHelper.COL_PROFIT, signalData.getFormattedProfit());
         item.setText(ProviderTableHelper.COL_FLOATING, signalData.getFormattedFloatingProfit());
-        item.setText(ProviderTableHelper.COL_EQUITY_DRAWDOWN, signalData.getFormattedEquityDrawdown());
+        item.setText(ProviderTableHelper.COL_TOTAL_VALUE_DRAWDOWN, totalValueDrawdown);  // ← KORRIGIERT: Total Value Drawdown!
         item.setText(ProviderTableHelper.COL_TOTAL, signalData.getFormattedTotalValue());
         item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT, profitResult.getFormattedWeeklyProfit());
         item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT, profitResult.getFormattedMonthlyProfit());
@@ -379,7 +499,11 @@ public class SignalProviderTable {
         // Farben setzen über Helper
         item.setForeground(ProviderTableHelper.COL_PROFIT, tableHelper.getProfitColor(signalData.getProfit()));
         item.setForeground(ProviderTableHelper.COL_FLOATING, tableHelper.getFloatingProfitColor(signalData.getFloatingProfit()));
-        item.setForeground(ProviderTableHelper.COL_EQUITY_DRAWDOWN, tableHelper.getEquityDrawdownColor(signalData.getEquityDrawdownPercent()));
+        
+        // KORRIGIERT: Verwende Total Value Drawdown für Farbbestimmung und neue Konstante
+        double totalValueDrawdownPercent = signalData.getTotalValueDrawdownPercent(peakTotalValue);
+        item.setForeground(ProviderTableHelper.COL_TOTAL_VALUE_DRAWDOWN, tableHelper.getTotalValueDrawdownColor(totalValueDrawdownPercent));
+        
         item.setForeground(ProviderTableHelper.COL_CHANGE, changeColor);
         
         // Farben für Profit-Spalten setzen
@@ -405,8 +529,9 @@ public class SignalProviderTable {
         // Daten im Cache speichern
         lastSignalData.put(signalId, signalData);
         
-        LOGGER.fine("Provider-Daten aktualisiert (KORRIGIERT - ID-Translation bevorzugt): " + signalData.getSummary() + 
+        LOGGER.fine("Provider-Daten aktualisiert (KORRIGIERT - Total Value Drawdown konsistent mit Chart): " + signalData.getSummary() + 
                    " (Klasse: " + favoriteClass + ", Name: " + providerName + 
+                   ", Total Value Drawdown: " + totalValueDrawdown +
                    ", WeeklyProfit: " + profitResult.getFormattedWeeklyProfit() + 
                    ", MonthlyProfit: " + profitResult.getFormattedMonthlyProfit() + ")");
     }
@@ -482,7 +607,7 @@ public class SignalProviderTable {
         // Neuen leeren Eintrag erstellen
         TableItem item = new TableItem(table, SWT.NONE);
         
-        // Nur Signal-ID, Favoritenklasse, Provider-Name und Status setzen, Rest bleibt leer (ERWEITERT: Neue Profit-Spalte)
+        // Nur Signal-ID, Favoritenklasse, Provider-Name und Status setzen, Rest bleibt leer (ERWEITERT: Total Value Drawdown Spalte)
         item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
         item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);                          
         item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);   // NEU: Aus ID-Translation
@@ -490,7 +615,7 @@ public class SignalProviderTable {
         item.setText(ProviderTableHelper.COL_EQUITY, "");
         item.setText(ProviderTableHelper.COL_PROFIT, "");               // NEU: Leer lassen bis Daten verfügbar
         item.setText(ProviderTableHelper.COL_FLOATING, "");
-        item.setText(ProviderTableHelper.COL_EQUITY_DRAWDOWN, "");
+        item.setText(ProviderTableHelper.COL_TOTAL_VALUE_DRAWDOWN, "");      // KORRIGIERT: Total Value Drawdown
         item.setText(ProviderTableHelper.COL_TOTAL, "");
         item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT, "");        // NEU: Leer lassen bis Daten verfügbar
         item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT, "");       // NEU: Leer lassen bis Daten verfügbar
@@ -515,7 +640,7 @@ public class SignalProviderTable {
         // In Map eintragen
         signalIdToItem.put(signalId, item);
         
-        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (Modular+Extended+ProfitColumn+IdTranslation): " + signalId + 
+        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (KORRIGIERT - Total Value Drawdown): " + signalId + 
                    " (Klasse: " + favoriteClass + ", Name: " + providerName + ")");
     }
     
@@ -657,6 +782,15 @@ public class SignalProviderTable {
     }
     
     /**
+     * NEU: Leert den Peak-Cache (nützlich bei Problemen oder für Debugging)
+     */
+    public void clearPeakCache() {
+        LOGGER.info("Leere Peak-Total-Value-Cache für alle Signale...");
+        peakTotalValueCache.clear();
+        LOGGER.info("Peak-Cache geleert - Peaks werden bei nächstem Update neu berechnet");
+    }
+    
+    /**
      * Gibt die Anzahl der Provider in der Tabelle zurück
      * 
      * @return Anzahl der Provider
@@ -672,13 +806,14 @@ public class SignalProviderTable {
         table.removeAll();
         signalIdToItem.clear();
         lastSignalData.clear();
+        peakTotalValueCache.clear();  // NEU: Auch Peak-Cache leeren
         
         // FavoritesReader Cache leeren
         if (favoritesReader != null) {
             favoritesReader.refreshCache();
         }
         
-        LOGGER.info("Alle Provider aus Tabelle entfernt (Modular+Extended+ProfitColumn+IdTranslation)");
+        LOGGER.info("Alle Provider aus Tabelle entfernt (KORRIGIERT - Total Value Drawdown für Chart-Konsistenz)");
     }
     
     /**

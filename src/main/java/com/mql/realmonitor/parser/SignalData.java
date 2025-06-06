@@ -10,6 +10,8 @@ import java.util.logging.Logger;
  * ERWEITERT: Model-Klasse für Signalprovider-Daten mit Profit
  * Repräsentiert die extrahierten Daten eines MQL5-Signalproviders
  * NEU: Profit-Feld für Gesamtgewinn des Signals
+ * KORRIGIERT: Echter Equity Drawdown anstatt Floating Profit %
+ * NEU: Total Value Drawdown für Konsistenz zwischen Chart und Tabelle
  */
 public class SignalData {
     
@@ -51,14 +53,13 @@ public class SignalData {
         this.currency = currency;
         this.timestamp = timestamp;
         
-        // DIAGNOSTIK: Logge Erstellung mit Drawdown-Berechnung
+        // DIAGNOSTIK: Logge Erstellung (ohne falschen Drawdown)
         if (LOGGER.isLoggable(java.util.logging.Level.FINE)) {
-            double calculatedDrawdown = getEquityDrawdownPercent();
             LOGGER.fine("SignalData erstellt: Signal=" + signalId + 
                        ", Equity=" + equity + 
                        ", Floating=" + floatingProfit + 
                        ", Profit=" + profit +
-                       ", Berechnet Drawdown=" + String.format("%.6f%%", calculatedDrawdown));
+                       " (Echter Drawdown benötigt Peak-Wert)");
         }
     }
     
@@ -131,13 +132,85 @@ public class SignalData {
     }
     
     /**
-     * VERBESSERT: Berechnet den Equity Drawdown in Prozent mit robuster Fehlerbehandlung
+     * NEU: Berechnet den TOTAL VALUE Drawdown in Prozent (KONSISTENT MIT CHART)
      * 
-     * @return Der Equity Drawdown in Prozent
+     * @param peakTotalValue Der historische Peak-Total-Value
+     * @return Der Total Value Drawdown in Prozent
      */
-    public double getEquityDrawdownPercent() {
-        if (equity == 0.0) {
-            LOGGER.warning("DRAWDOWN BERECHNUNG: Equity ist 0 für Signal " + signalId + " - kann Drawdown nicht berechnen");
+    public double getTotalValueDrawdownPercent(double peakTotalValue) {
+        if (peakTotalValue == 0.0) {
+            LOGGER.warning("TOTAL VALUE DRAWDOWN BERECHNUNG: Peak Total Value ist 0 für Signal " + signalId + " - kann Drawdown nicht berechnen");
+            return 0.0;
+        }
+        
+        double currentTotalValue = getTotalValue();
+        
+        if (Double.isNaN(currentTotalValue) || Double.isInfinite(currentTotalValue)) {
+            LOGGER.warning("TOTAL VALUE DRAWDOWN BERECHNUNG: Total Value ist ungültig (" + currentTotalValue + ") für Signal " + signalId);
+            return 0.0;
+        }
+        
+        if (Double.isNaN(peakTotalValue) || Double.isInfinite(peakTotalValue)) {
+            LOGGER.warning("TOTAL VALUE DRAWDOWN BERECHNUNG: Peak Total Value ist ungültig (" + peakTotalValue + ") für Signal " + signalId);
+            return 0.0;
+        }
+        
+        // TOTAL VALUE DRAWDOWN: (Current Total - Peak Total) / Peak Total * 100
+        // IDENTISCH MIT CHART-BERECHNUNG!
+        double result = ((currentTotalValue - peakTotalValue) / peakTotalValue) * 100.0;
+        
+        // Zusätzliche Validierung
+        if (Double.isNaN(result) || Double.isInfinite(result)) {
+            LOGGER.warning("TOTAL VALUE DRAWDOWN BERECHNUNG: Ergebnis ist ungültig (" + result + ") für Signal " + signalId + 
+                          " - Current Total=" + currentTotalValue + ", Peak=" + peakTotalValue);
+            return 0.0;
+        }
+        
+        // DIAGNOSTIK: Detailliertes Logging für Total Value Drawdown
+        LOGGER.fine("TOTAL VALUE DRAWDOWN für Signal " + signalId + ": " + 
+                   String.format("(%.6f - %.6f) / %.6f * 100 = %.6f%%", currentTotalValue, peakTotalValue, peakTotalValue, result));
+        
+        return result;
+    }
+    
+    /**
+     * NEU: Formatiert den TOTAL VALUE Drawdown für Anzeige (KONSISTENT MIT CHART)
+     * 
+     * @param peakTotalValue Der historische Peak-Total-Value
+     * @return Formatierter Total Value Drawdown mit Prozentzeichen und Vorzeichen
+     */
+    public String getFormattedTotalValueDrawdown(double peakTotalValue) {
+        double drawdownPercent = getTotalValueDrawdownPercent(peakTotalValue);
+        
+        // Fallback für ungültige Werte
+        if (Double.isNaN(drawdownPercent) || Double.isInfinite(drawdownPercent)) {
+            return "N/A";
+        }
+        
+        String sign = drawdownPercent >= 0 ? "+" : "";
+        
+        // Dynamische Präzision basierend auf Wertegröße
+        if (Math.abs(drawdownPercent) < 0.01) {
+            // Sehr kleine Werte: 6 Dezimalstellen
+            return String.format("%s%.6f%%", sign, drawdownPercent);
+        } else if (Math.abs(drawdownPercent) < 1.0) {
+            // Kleine Werte: 4 Dezimalstellen
+            return String.format("%s%.4f%%", sign, drawdownPercent);
+        } else {
+            // Normale Werte: 2 Dezimalstellen
+            return String.format("%s%.2f%%", sign, drawdownPercent);
+        }
+    }
+    
+    /**
+     * NEU: Berechnet den ECHTEN Equity Drawdown in Prozent
+     * 
+     * @param peakEquity Der historische Peak-Equity-Wert
+     * @return Der echte Equity Drawdown in Prozent
+     */
+    public double getTrueEquityDrawdownPercent(double peakEquity) {
+        if (peakEquity == 0.0) {
+            LOGGER.warning("DRAWDOWN BERECHNUNG: Peak Equity ist 0 für Signal " + signalId + " - kann Drawdown nicht berechnen");
             return 0.0;
         }
         
@@ -146,8 +219,49 @@ public class SignalData {
             return 0.0;
         }
         
+        if (Double.isNaN(peakEquity) || Double.isInfinite(peakEquity)) {
+            LOGGER.warning("DRAWDOWN BERECHNUNG: Peak Equity ist ungültig (" + peakEquity + ") für Signal " + signalId);
+            return 0.0;
+        }
+        
+        // ECHTER DRAWDOWN: (Current Equity - Peak Equity) / Peak Equity * 100
+        double result = ((equity - peakEquity) / peakEquity) * 100.0;
+        
+        // Zusätzliche Validierung
+        if (Double.isNaN(result) || Double.isInfinite(result)) {
+            LOGGER.warning("DRAWDOWN BERECHNUNG: Ergebnis ist ungültig (" + result + ") für Signal " + signalId + 
+                          " - Equity=" + equity + ", Peak=" + peakEquity);
+            return 0.0;
+        }
+        
+        // DIAGNOSTIK: Detailliertes Logging für Drawdown-Berechnung
+        LOGGER.fine("ECHTER DRAWDOWN für Signal " + signalId + ": " + 
+                   String.format("(%.6f - %.6f) / %.6f * 100 = %.6f%%", equity, peakEquity, peakEquity, result));
+        
+        return result;
+    }
+    
+    /**
+     * @deprecated Diese Methode berechnet NICHT den echten Equity Drawdown, sondern Floating Profit %.
+     * Verwende getTrueEquityDrawdownPercent(peakEquity) für echten Drawdown oder
+     * getTotalValueDrawdownPercent(peakTotalValue) für Total Value Drawdown.
+     */
+    @Deprecated
+    public double getEquityDrawdownPercent() {
+        LOGGER.warning("DEPRECATED: getEquityDrawdownPercent() berechnet nur Floating Profit %. Verwende getTotalValueDrawdownPercent(peakTotalValue) für Konsistenz mit Chart");
+        
+        if (equity == 0.0) {
+            LOGGER.warning("FLOATING PROFIT % BERECHNUNG: Equity ist 0 für Signal " + signalId + " - kann Prozentsatz nicht berechnen");
+            return 0.0;
+        }
+        
+        if (Double.isNaN(equity) || Double.isInfinite(equity)) {
+            LOGGER.warning("FLOATING PROFIT % BERECHNUNG: Equity ist ungültig (" + equity + ") für Signal " + signalId);
+            return 0.0;
+        }
+        
         if (Double.isNaN(floatingProfit) || Double.isInfinite(floatingProfit)) {
-            LOGGER.warning("DRAWDOWN BERECHNUNG: FloatingProfit ist ungültig (" + floatingProfit + ") für Signal " + signalId);
+            LOGGER.warning("FLOATING PROFIT % BERECHNUNG: FloatingProfit ist ungültig (" + floatingProfit + ") für Signal " + signalId);
             return 0.0;
         }
         
@@ -155,14 +269,42 @@ public class SignalData {
         
         // Zusätzliche Validierung
         if (Double.isNaN(result) || Double.isInfinite(result)) {
-            LOGGER.warning("DRAWDOWN BERECHNUNG: Ergebnis ist ungültig (" + result + ") für Signal " + signalId + 
+            LOGGER.warning("FLOATING PROFIT % BERECHNUNG: Ergebnis ist ungültig (" + result + ") für Signal " + signalId + 
                           " - Equity=" + equity + ", FloatingProfit=" + floatingProfit);
             return 0.0;
         }
         
-        // DIAGNOSTIK: Detailliertes Logging für Drawdown-Berechnung
-        LOGGER.info("DRAWDOWN BERECHNUNG für Signal " + signalId + ": " + 
+        // DIAGNOSTIK: Detailliertes Logging für Floating Profit %
+        LOGGER.fine("FLOATING PROFIT % für Signal " + signalId + ": " + 
                    String.format("%.2f / %.2f * 100 = %.6f%%", floatingProfit, equity, result));
+        
+        return result;
+    }
+    
+    /**
+     * NEU: Berechnet den Floating Profit als Prozentsatz der Equity
+     * 
+     * @return Der Floating Profit in Prozent
+     */
+    public double getFloatingProfitPercent() {
+        if (equity == 0.0) {
+            LOGGER.warning("FLOATING PROFIT % BERECHNUNG: Equity ist 0 für Signal " + signalId + " - kann Prozentsatz nicht berechnen");
+            return 0.0;
+        }
+        
+        if (Double.isNaN(equity) || Double.isInfinite(equity) || 
+            Double.isNaN(floatingProfit) || Double.isInfinite(floatingProfit)) {
+            LOGGER.warning("FLOATING PROFIT % BERECHNUNG: Ungültige Werte für Signal " + signalId + 
+                          " - Equity=" + equity + ", FloatingProfit=" + floatingProfit);
+            return 0.0;
+        }
+        
+        double result = (floatingProfit / equity) * 100.0;
+        
+        if (Double.isNaN(result) || Double.isInfinite(result)) {
+            LOGGER.warning("FLOATING PROFIT % BERECHNUNG: Ungültiges Ergebnis (" + result + ") für Signal " + signalId);
+            return 0.0;
+        }
         
         return result;
     }
@@ -215,12 +357,43 @@ public class SignalData {
     }
     
     /**
-     * VERBESSERT: Formatiert den Equity Drawdown für Anzeige mit verbesserter Präzision
+     * KORRIGIERT: Formatiert den ECHTEN Equity Drawdown für Anzeige
      * 
-     * @return Formatierter Equity Drawdown mit Prozentzeichen und Vorzeichen
+     * @param peakEquity Der historische Peak-Equity-Wert
+     * @return Formatierter echter Equity Drawdown mit Prozentzeichen und Vorzeichen
      */
+    public String getFormattedTrueEquityDrawdown(double peakEquity) {
+        double drawdownPercent = getTrueEquityDrawdownPercent(peakEquity);
+        
+        // Fallback für ungültige Werte
+        if (Double.isNaN(drawdownPercent) || Double.isInfinite(drawdownPercent)) {
+            return "N/A";
+        }
+        
+        String sign = drawdownPercent >= 0 ? "+" : "";
+        
+        // Dynamische Präzision basierend auf Wertegröße
+        if (Math.abs(drawdownPercent) < 0.01) {
+            // Sehr kleine Werte: 6 Dezimalstellen
+            return String.format("%s%.6f%%", sign, drawdownPercent);
+        } else if (Math.abs(drawdownPercent) < 1.0) {
+            // Kleine Werte: 4 Dezimalstellen
+            return String.format("%s%.4f%%", sign, drawdownPercent);
+        } else {
+            // Normale Werte: 2 Dezimalstellen
+            return String.format("%s%.2f%%", sign, drawdownPercent);
+        }
+    }
+    
+    /**
+     * @deprecated Diese Methode verwendet die veraltete Drawdown-Berechnung. 
+     * Verwende getFormattedTotalValueDrawdown(peakTotalValue) für Konsistenz mit Chart.
+     */
+    @Deprecated
     public String getFormattedEquityDrawdown() {
-        double drawdownPercent = getEquityDrawdownPercent();
+        LOGGER.warning("DEPRECATED: getFormattedEquityDrawdown() verwendet veraltete Berechnung. Verwende getFormattedTotalValueDrawdown(peakTotalValue) für Konsistenz mit Chart");
+        
+        double drawdownPercent = getEquityDrawdownPercent(); // Verwendet deprecated Methode
         
         // Fallback für ungültige Werte
         if (Double.isNaN(drawdownPercent) || Double.isInfinite(drawdownPercent)) {
@@ -276,7 +449,7 @@ public class SignalData {
     }
     
     /**
-     * VERBESSERT: Prüft ob die Signaldaten gültig sind (mit Drawdown-Validierung)
+     * VERBESSERT: Prüft ob die Signaldaten gültig sind (ohne deprecated Drawdown-Validierung)
      * 
      * @return true wenn alle Daten gültig sind, false sonst
      */
@@ -294,16 +467,7 @@ public class SignalData {
             return false;
         }
         
-        // Zusätzliche Drawdown-Validierung
-        double drawdown = getEquityDrawdownPercent();
-        if (Double.isNaN(drawdown) || Double.isInfinite(drawdown)) {
-            LOGGER.warning("SignalData Drawdown-Validierung fehlgeschlagen für Signal " + signalId + 
-                          ": Berechneter Drawdown ist ungültig (" + drawdown + ")");
-            return false;
-        }
-        
-        LOGGER.fine("SignalData Validierung erfolgreich für Signal " + signalId + 
-                   " - Drawdown: " + String.format("%.6f%%", drawdown));
+        LOGGER.fine("SignalData Validierung erfolgreich für Signal " + signalId);
         
         return true;
     }
@@ -364,12 +528,41 @@ public class SignalData {
     }
     
     /**
-     * VERBESSERT: Berechnet die Änderung des Drawdowns im Vergleich zu anderen Daten
+     * NEU: Berechnet die Änderung des TOTAL VALUE Drawdowns im Vergleich zu anderen Daten
      * 
      * @param other Das andere SignalData-Objekt
-     * @return Die Änderung des Drawdowns in Prozentpunkten
+     * @param thisPeakTotalValue Der Peak-Total-Value für dieses Signal
+     * @param otherPeakTotalValue Der Peak-Total-Value für das andere Signal
+     * @return Die Änderung des Total Value Drawdowns in Prozentpunkten
      */
+    public double getTotalValueDrawdownChange(SignalData other, double thisPeakTotalValue, double otherPeakTotalValue) {
+        if (other == null) {
+            return getTotalValueDrawdownPercent(thisPeakTotalValue);
+        }
+        return this.getTotalValueDrawdownPercent(thisPeakTotalValue) - other.getTotalValueDrawdownPercent(otherPeakTotalValue);
+    }
+    
+    /**
+     * KORRIGIERT: Berechnet die Änderung des ECHTEN Drawdowns im Vergleich zu anderen Daten
+     * 
+     * @param other Das andere SignalData-Objekt
+     * @param thisPeakEquity Der Peak-Equity-Wert für dieses Signal
+     * @param otherPeakEquity Der Peak-Equity-Wert für das andere Signal
+     * @return Die Änderung des echten Drawdowns in Prozentpunkten
+     */
+    public double getTrueDrawdownChange(SignalData other, double thisPeakEquity, double otherPeakEquity) {
+        if (other == null) {
+            return getTrueEquityDrawdownPercent(thisPeakEquity);
+        }
+        return this.getTrueEquityDrawdownPercent(thisPeakEquity) - other.getTrueEquityDrawdownPercent(otherPeakEquity);
+    }
+    
+    /**
+     * @deprecated Verwendet veraltete Drawdown-Berechnung. Verwende getTotalValueDrawdownChange().
+     */
+    @Deprecated
     public double getDrawdownChange(SignalData other) {
+        LOGGER.warning("DEPRECATED: getDrawdownChange() verwendet veraltete Berechnung. Verwende getTotalValueDrawdownChange()");
         if (other == null) {
             return getEquityDrawdownPercent();
         }
@@ -386,18 +579,51 @@ public class SignalData {
     }
     
     /**
-     * VERBESSERT: Gibt eine zusammenfassende Beschreibung der Signaldaten zurück (mit Profit)
+     * VERBESSERT: Gibt eine zusammenfassende Beschreibung der Signaldaten zurück (mit Profit, ohne deprecated Drawdown)
      * 
      * @return Textuelle Beschreibung
      */
     public String getSummary() {
+        return String.format("Signal %s (%s): %s (Floating: %s, Profit: %s) - %s", 
+                           signalId, 
+                           providerName,
+                           getFormattedEquity(), 
+                           getFormattedFloatingProfit(),
+                           getFormattedProfit(),
+                           getFormattedTimestamp());
+    }
+    
+    /**
+     * NEU: Gibt eine zusammenfassende Beschreibung mit Total Value Drawdown zurück
+     * 
+     * @param peakTotalValue Der historische Peak-Total-Value
+     * @return Textuelle Beschreibung mit Total Value Drawdown
+     */
+    public String getSummaryWithTotalValueDrawdown(double peakTotalValue) {
+        return String.format("Signal %s (%s): %s (Floating: %s, Profit: %s, Total Value Drawdown: %s) - %s", 
+                           signalId, 
+                           providerName,
+                           getFormattedEquity(), 
+                           getFormattedFloatingProfit(),
+                           getFormattedProfit(),
+                           getFormattedTotalValueDrawdown(peakTotalValue),
+                           getFormattedTimestamp());
+    }
+    
+    /**
+     * NEU: Gibt eine zusammenfassende Beschreibung mit echtem Drawdown zurück
+     * 
+     * @param peakEquity Der historische Peak-Equity-Wert
+     * @return Textuelle Beschreibung mit echtem Drawdown
+     */
+    public String getSummaryWithTrueDrawdown(double peakEquity) {
         return String.format("Signal %s (%s): %s (Floating: %s, Profit: %s, Drawdown: %s) - %s", 
                            signalId, 
                            providerName,
                            getFormattedEquity(), 
                            getFormattedFloatingProfit(),
                            getFormattedProfit(),
-                           getFormattedEquityDrawdown(),
+                           getFormattedTrueEquityDrawdown(peakEquity),
                            getFormattedTimestamp());
     }
     
@@ -417,20 +643,22 @@ public class SignalData {
         diag.append("Currency: ").append(currency).append(" (valid: ").append(currency != null && currency.length() == 3).append(")\n");
         diag.append("Timestamp: ").append(timestamp).append("\n");
         
-        double drawdown = getEquityDrawdownPercent();
-        diag.append("Calculated Drawdown: ").append(String.format("%.6f%%", drawdown))
-            .append(" (valid: ").append(!Double.isNaN(drawdown) && !Double.isInfinite(drawdown)).append(")\n");
+        double floatingPercent = getFloatingProfitPercent();
+        diag.append("Floating Profit %: ").append(String.format("%.6f%%", floatingPercent))
+            .append(" (valid: ").append(!Double.isNaN(floatingPercent) && !Double.isInfinite(floatingPercent)).append(")\n");
         
         diag.append("Total Value: ").append(getTotalValue()).append("\n");
         diag.append("Is Valid: ").append(isValid()).append("\n");
+        diag.append("HINWEIS: Echter Drawdown benötigt Peak-Werte\n");
+        diag.append("HINWEIS: Total Value Drawdown für Chart-Konsistenz verwenden\n");
         
         return diag.toString();
     }
     
     @Override
     public String toString() {
-        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, profit=%.2f, drawdown=%.6f%%, currency='%s', time='%s'}", 
-                           signalId, providerName, equity, floatingProfit, profit, getEquityDrawdownPercent(), currency, getFormattedTimestamp());
+        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, profit=%.2f, floatingPercent=%.6f%%, currency='%s', time='%s'}", 
+                           signalId, providerName, equity, floatingProfit, profit, getFloatingProfitPercent(), currency, getFormattedTimestamp());
     }
     
     @Override

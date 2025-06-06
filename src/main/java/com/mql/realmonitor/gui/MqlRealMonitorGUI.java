@@ -23,10 +23,17 @@ import java.util.logging.Level;
  * ERWEITERT: Neuer "Chart-Übersicht" Button für Signalprovider-Overview
  * ERWEITERT: Favoritenklasse-Farben für Zeilen-Hintergrund
  * DEBUG: initializeTableWithSavedData() mit ausführlicher Diagnostik
+ * AKTUALISIERT: Format-Konvertierung statt Tausendertrennzeichen-Reparatur
+ * NEU: Versionsnummer in der Titelleiste
  */
 public class MqlRealMonitorGUI {
     
     private static final Logger LOGGER = Logger.getLogger(MqlRealMonitorGUI.class.getName());
+    
+    // VERSION INFORMATION
+    private static final String VERSION = "1.2.0";
+    private static final String BUILD_DATE = "2025-06-06";
+    private static final String APPLICATION_TITLE = "MQL5 Real Monitor - Signal Provider Überwachung";
     
     private final MqlRealMonitor monitor;
     
@@ -110,13 +117,13 @@ public class MqlRealMonitorGUI {
      */
     private void createShell() {
         shell = new Shell(display);
-        shell.setText("MQL5 Real Monitor - Signal Provider Überwachung");
+        shell.setText(APPLICATION_TITLE + " v" + VERSION);
         shell.setSize(1000, 700);
         shell.setLayout(new GridLayout(1, false));
         
         // Beim Schließen ordnungsgemäß beenden
         shell.addListener(SWT.Close, event -> {
-            LOGGER.info("GUI wird geschlossen");
+            LOGGER.info("GUI wird geschlossen (Version " + VERSION + ")");
             monitor.shutdown();
             disposeResources();
         });
@@ -220,10 +227,11 @@ public class MqlRealMonitorGUI {
         new Label(toolbar, SWT.SEPARATOR | SWT.VERTICAL)
             .setLayoutData(new GridData(SWT.LEFT, SWT.FILL, false, false));
         
-        // Repair Button
+        // Repair Button - AKTUALISIERT: Format-Konvertierung
         Button repairButton = new Button(toolbar, SWT.PUSH);
         repairButton.setText("Tick-Dateien reparieren");
         repairButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        repairButton.setToolTipText("Konvertiert alte Tickdaten (4 Spalten) ins neue Format (5 Spalten mit Profit)");
         repairButton.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent e) {
@@ -417,66 +425,74 @@ public class MqlRealMonitorGUI {
     private void showConfiguration() {
         MessageBox box = new MessageBox(shell, SWT.ICON_INFORMATION | SWT.OK);
         box.setMessage("Konfigurationsdialog wird in zukünftiger Version implementiert.\n\n" +
-                      "Aktuelle Konfiguration:\n" +
+                      "=== ANWENDUNGSVERSION ===\n" +
+                      "Version: " + VERSION + "\n" +
+                      "Build-Datum: " + BUILD_DATE + "\n\n" +
+                      "=== AKTUELLE KONFIGURATION ===\n" +
                       "Basis-Pfad: " + monitor.getConfig().getBasePath() + "\n" +
                       "Favoriten-Datei: " + monitor.getConfig().getFavoritesFile() + "\n" +
                       "Download-Verzeichnis: " + monitor.getConfig().getDownloadDir() + "\n" +
                       "Tick-Verzeichnis: " + monitor.getConfig().getTickDir() + "\n" +
                       "Intervall: " + monitor.getConfig().getIntervalMinutes() + " Minuten");
-        box.setText("Konfiguration");
+        box.setText("Konfiguration - MQL5 Real Monitor v" + VERSION);
         box.open();
     }
     
     /**
-     * Repariert fehlerhafte Tick-Dateien
+     * AKTUALISIERT: Konvertiert Tick-Dateien vom alten 4-Spalten-Format ins neue 5-Spalten-Format
      */
     private void repairTickFiles() {
         MessageBox confirmBox = new MessageBox(shell, SWT.ICON_QUESTION | SWT.YES | SWT.NO);
         confirmBox.setText("Tick-Dateien reparieren");
-        confirmBox.setMessage("Diese Funktion repariert Tick-Dateien mit fehlerhaftem Format.\n" +
-                             "Dateien mit Format '53745,30,0,00' werden zu '53745.30,0.00' korrigiert.\n\n" +
+        confirmBox.setMessage("Diese Funktion konvertiert alte Tickdaten ins neue Format.\n\n" +
+                             "Format ALT (4 Spalten):  Datum,Zeit,Equity,FloatingProfit\n" +
+                             "Format NEU (5 Spalten):  Datum,Zeit,Equity,FloatingProfit,Profit\n\n" +
+                             "Die Equity wird als Profit-Wert übernommen.\n\n" +
                              "Es wird automatisch ein Backup erstellt.\n\n" +
                              "Möchten Sie fortfahren?");
         
         if (confirmBox.open() == SWT.YES) {
             try {
-                updateStatus("Repariere Tick-Dateien...");
+                updateStatus("Konvertiere Tick-Dateien ins neue Format...");
                 
-                // Reparatur in separatem Thread ausführen
+                // Konvertierung in separatem Thread ausführen
                 new Thread(() -> {
                     try {
                         com.mql.realmonitor.tickdata.TickDataWriter writer = 
                             new com.mql.realmonitor.tickdata.TickDataWriter(monitor.getConfig());
                         
-                        Map<String, Boolean> results = writer.repairAllTickFiles();
+                        Map<String, Boolean> results = writer.convertAllTickFilesToNewFormat();
                         
-                        long successCount = results.values().stream().filter(v -> v).count();
-                        long failedCount = results.size() - successCount;
+                        long successCount = results.values().stream().filter(v -> v != null && v).count();
+                        long skippedCount = results.values().stream().filter(v -> v == null).count();
+                        long failedCount = results.values().stream().filter(v -> v != null && !v).count();
                         
-                        String message = String.format("Reparatur abgeschlossen!\n\n" +
+                        String message = String.format("Format-Konvertierung abgeschlossen!\n\n" +
                                                      "Gesamt: %d Dateien\n" +
-                                                     "Erfolgreich: %d\n" +
-                                                     "Fehlgeschlagen: %d",
-                                                     results.size(), successCount, failedCount);
+                                                     "Konvertiert: %d\n" +
+                                                     "Bereits neues Format: %d\n" +
+                                                     "Fehlgeschlagen: %d\n\n" +
+                                                     "Alte Dateien wurden als Backup gespeichert.",
+                                                     results.size(), successCount, skippedCount, failedCount);
                         
                         display.asyncExec(() -> {
-                            updateStatus("Tick-Dateien repariert");
-                            showInfo("Reparatur abgeschlossen", message);
+                            updateStatus("Format-Konvertierung abgeschlossen");
+                            showInfo("Konvertierung abgeschlossen", message);
                         });
                         
                     } catch (Exception e) {
-                        LOGGER.log(Level.SEVERE, "Fehler bei der Reparatur", e);
+                        LOGGER.log(Level.SEVERE, "Fehler bei der Format-Konvertierung", e);
                         display.asyncExec(() -> {
-                            updateStatus("Reparatur fehlgeschlagen");
-                            showError("Reparatur fehlgeschlagen", 
-                                     "Fehler bei der Reparatur der Tick-Dateien:\n" + e.getMessage());
+                            updateStatus("Format-Konvertierung fehlgeschlagen");
+                            showError("Konvertierung fehlgeschlagen", 
+                                     "Fehler bei der Format-Konvertierung der Tick-Dateien:\n" + e.getMessage());
                         });
                     }
                 }).start();
                 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Fehler beim Starten der Reparatur", e);
-                showError("Fehler", "Konnte Reparatur nicht starten: " + e.getMessage());
+                LOGGER.log(Level.SEVERE, "Fehler beim Starten der Format-Konvertierung", e);
+                showError("Fehler", "Konnte Format-Konvertierung nicht starten: " + e.getMessage());
             }
         }
     }
@@ -740,8 +756,9 @@ public class MqlRealMonitorGUI {
     public void open() {
         shell.open();
         
+        LOGGER.info("=== " + getVersionInfo() + " ===");
         LOGGER.info("MqlRealMonitor GUI geöffnet");
-        updateStatus("MqlRealMonitor bereit - Daten geladen");
+        updateStatus("MqlRealMonitor bereit - Daten geladen (v" + VERSION + ")");
         
         // Event-Loop
         while (!shell.isDisposed()) {
@@ -850,5 +867,35 @@ public class MqlRealMonitorGUI {
      */
     public Color getFavoriteClass4To10Color() {
         return favoriteClass4To10Color;
+    }
+    
+    // NEU: Version Information Getter
+    
+    /**
+     * Gibt die aktuelle Anwendungsversion zurück
+     */
+    public static String getVersion() {
+        return VERSION;
+    }
+    
+    /**
+     * Gibt das Build-Datum zurück
+     */
+    public static String getBuildDate() {
+        return BUILD_DATE;
+    }
+    
+    /**
+     * Gibt den vollständigen Anwendungstitel mit Version zurück
+     */
+    public static String getFullTitle() {
+        return APPLICATION_TITLE + " v" + VERSION;
+    }
+    
+    /**
+     * Gibt eine vollständige Versions-Information zurück
+     */
+    public static String getVersionInfo() {
+        return "MQL5 Real Monitor Version " + VERSION + " (Build: " + BUILD_DATE + ")";
     }
 }
