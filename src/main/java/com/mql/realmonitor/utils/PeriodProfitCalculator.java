@@ -100,6 +100,12 @@ public class PeriodProfitCalculator {
         List<TickData> ticks = dataSet.getTicks();
         LOGGER.info("PROFIT DEBUG: " + ticks.size() + " Ticks geladen für Signal " + signalId);
         
+        // Mindestens 2 Ticks erforderlich für sinnvolle Profit-Berechnung
+        if (ticks.size() < 2) {
+            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Nur " + ticks.size() + " Tick(s) verfügbar, brauche mindestens 2 für Profit-Berechnung");
+            return new ProfitResult(0.0, 0.0, false, false, "Nicht genügend Daten für Profit-Berechnung");
+        }
+        
         // Aktuelle Equity (letzter Tick)
         double currentEquity = dataSet.getLatestTick().getEquity();
         LocalDateTime now = LocalDateTime.now();
@@ -112,65 +118,48 @@ public class PeriodProfitCalculator {
                    ", Wochenstart: " + weekStart + ", Monatsstart: " + monthStart + 
                    ", Aktuelle Equity: " + currentEquity);
         
-        // ERWEITERT: Zeige erste und letzte Ticks für Debugging
-        if (ticks.size() > 0) {
-            TickData firstTick = ticks.get(0);
-            TickData lastTick = ticks.get(ticks.size() - 1);
-            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Erster Tick: " + firstTick.getTimestamp() + 
-                       " (Equity: " + firstTick.getEquity() + "), Letzter Tick: " + lastTick.getTimestamp() + 
-                       " (Equity: " + lastTick.getEquity() + ")");
-        }
+        // Zeige erste und letzte Ticks für Debugging
+        TickData firstTick = ticks.get(0);
+        TickData lastTick = ticks.get(ticks.size() - 1);
+        LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Erster Tick: " + firstTick.getTimestamp() + 
+                   " (Equity: " + firstTick.getEquity() + "), Letzter Tick: " + lastTick.getTimestamp() + 
+                   " (Equity: " + lastTick.getEquity() + ")");
         
-        // Equity-Werte zu den Referenzzeitpunkten finden
-        // Suche erste verfügbare Equity AM ODER NACH dem Zeitpunkt (korrekt für "seit Zeitpunkt")
-        Double weekStartEquity = findEquityAtOrAfter(ticks, weekStart);
-        Double monthStartEquity = findEquityAtOrAfter(ticks, monthStart);
-        
-        LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Gefundene Equity-Werte: Wochenstart=" + 
-                   weekStartEquity + " (seit " + weekStart.toLocalDate() + "), Monatsstart=" + monthStartEquity + " (seit " + monthStart.toLocalDate() + ")");
-        
-        // FALLBACK: Wenn keine historischen Daten vorhanden sind, verwende den ersten verfügbaren Tick
-        if (weekStartEquity == null && ticks.size() > 1) {
-            weekStartEquity = ticks.get(0).getEquity();
-            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - FALLBACK Wochenstart: Verwende ersten Tick mit Equity " + weekStartEquity);
-        }
-        
-        if (monthStartEquity == null && ticks.size() > 1) {
-            monthStartEquity = ticks.get(0).getEquity();
-            LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - FALLBACK Monatsstart: Verwende ersten Tick mit Equity " + monthStartEquity);
-        }
+        // VERBESSERTE EQUITY-SUCHE: Verwende intelligente Fallback-Strategien
+        EquitySearchResult weekEquityResult = findBestEquityForReference(ticks, weekStart, "Wochenstart", signalId);
+        EquitySearchResult monthEquityResult = findBestEquityForReference(ticks, monthStart, "Monatsstart", signalId);
         
         // Profit-Berechnungen
-        boolean hasWeeklyData = (weekStartEquity != null && weekStartEquity > 0);
-        boolean hasMonthlyData = (monthStartEquity != null && monthStartEquity > 0);
+        boolean hasWeeklyData = weekEquityResult.hasValidData();
+        boolean hasMonthlyData = monthEquityResult.hasValidData();
         
         double weeklyProfit = 0.0;
         double monthlyProfit = 0.0;
         
         if (hasWeeklyData) {
+            double weekStartEquity = weekEquityResult.getEquity();
             weeklyProfit = ((currentEquity - weekStartEquity) / weekStartEquity) * 100.0;
             LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Wochenprofit berechnet: (" + currentEquity + " - " + 
                        weekStartEquity + ") / " + weekStartEquity + " * 100 = " + String.format("%.4f%%", weeklyProfit));
         } else {
-            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine Wochendaten verfügbar");
+            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine gültigen Wochendaten verfügbar");
         }
         
         if (hasMonthlyData) {
+            double monthStartEquity = monthEquityResult.getEquity();
             monthlyProfit = ((currentEquity - monthStartEquity) / monthStartEquity) * 100.0;
             LOGGER.info("PROFIT DEBUG: Signal " + signalId + " - Monatsprofit berechnet: (" + currentEquity + " - " + 
                        monthStartEquity + ") / " + monthStartEquity + " * 100 = " + String.format("%.4f%%", monthlyProfit));
         } else {
-            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine Monatsdaten verfügbar");
+            LOGGER.warning("PROFIT DEBUG: Signal " + signalId + " - Keine gültigen Monatsdaten verfügbar");
         }
         
         // Diagnostik-Informationen
         StringBuilder diagnostic = new StringBuilder();
         diagnostic.append("Signal: ").append(signalId).append(", ");
         diagnostic.append("Current Equity: ").append(String.format("%.2f", currentEquity)).append(", ");
-        diagnostic.append("Week Start (").append(weekStart.toLocalDate()).append("): ");
-        diagnostic.append(weekStartEquity != null ? String.format("%.2f", weekStartEquity) : "N/A").append(", ");
-        diagnostic.append("Month Start (").append(monthStart.toLocalDate()).append("): ");
-        diagnostic.append(monthStartEquity != null ? String.format("%.2f", monthStartEquity) : "N/A");
+        diagnostic.append("Week: ").append(weekEquityResult.getDiagnosticInfo()).append(", ");
+        diagnostic.append("Month: ").append(monthEquityResult.getDiagnosticInfo());
         
         LOGGER.info("PROFIT DEBUG: Ergebnis für " + signalId + ": WeeklyProfit=" + String.format("%.4f%%", weeklyProfit) + 
                    ", MonthlyProfit=" + String.format("%.4f%%", monthlyProfit));
@@ -179,8 +168,100 @@ public class PeriodProfitCalculator {
     }
     
     /**
+     * Hilfsobjekt für Equity-Suchergebnisse
+     */
+    private static class EquitySearchResult {
+        private final Double equity;
+        private final LocalDateTime timestamp;
+        private final String strategy;
+        private final boolean hasData;
+        
+        public EquitySearchResult(Double equity, LocalDateTime timestamp, String strategy) {
+            this.equity = equity;
+            this.timestamp = timestamp;
+            this.strategy = strategy;
+            this.hasData = (equity != null && equity > 0);
+        }
+        
+        public static EquitySearchResult noData(String reason) {
+            return new EquitySearchResult(null, null, reason);
+        }
+        
+        public boolean hasValidData() { return hasData; }
+        public double getEquity() { return equity != null ? equity : 0.0; }
+        public LocalDateTime getTimestamp() { return timestamp; }
+        
+        public String getDiagnosticInfo() {
+            if (!hasData) {
+                return strategy + " (keine Daten)";
+            }
+            return String.format("%s=%.2f am %s (%s)", 
+                               strategy.split(" ")[0], equity, 
+                               timestamp != null ? timestamp.toLocalDate() : "unknown", strategy);
+        }
+    }
+    
+    /**
+     * VERBESSERTE METHODE: Findet die beste verfügbare Equity für einen Referenzzeitpunkt
+     * 
+     * Strategie:
+     * 1. Suche exakt am Referenzzeitpunkt
+     * 2. Suche den nächsten Tick nach dem Referenzzeitpunkt (für "seit diesem Zeitpunkt")
+     * 3. FALLBACK: Suche den letzten verfügbaren Tick VOR dem Referenzzeitpunkt
+     * 4. Als letzte Option: Verwende ersten Tick (nur wenn alle anderen fehlschlagen)
+     */
+    private static EquitySearchResult findBestEquityForReference(List<TickData> ticks, LocalDateTime referenceTime, String purpose, String signalId) {
+        if (ticks == null || ticks.isEmpty()) {
+            LOGGER.warning("EQUITY DEBUG: Keine Ticks verfügbar für " + purpose + " von Signal " + signalId);
+            return EquitySearchResult.noData("keine Ticks");
+        }
+        
+        LOGGER.info("EQUITY DEBUG: Suche " + purpose + " für " + referenceTime + " in " + ticks.size() + " Ticks (Signal " + signalId + ")");
+        
+        LocalDateTime firstTickTime = ticks.get(0).getTimestamp();
+        LocalDateTime lastTickTime = ticks.get(ticks.size() - 1).getTimestamp();
+        LOGGER.info("EQUITY DEBUG: Verfügbarer Zeitraum: " + firstTickTime + " bis " + lastTickTime);
+        
+        // Strategie 1: Suche Tick am oder nach dem Referenzzeitpunkt (bevorzugt)
+        for (TickData tick : ticks) {
+            if (!tick.getTimestamp().isBefore(referenceTime)) {
+                LOGGER.info("EQUITY DEBUG: " + purpose + " - Strategie 1 (ab Referenzzeit): " + tick.getEquity() + 
+                           " am " + tick.getTimestamp() + " (Signal " + signalId + ")");
+                return new EquitySearchResult(tick.getEquity(), tick.getTimestamp(), 
+                                            "Strategie 1 (ab " + referenceTime.toLocalDate() + ")");
+            }
+        }
+        
+        // Strategie 2: FALLBACK - Suche letzten verfügbaren Tick VOR dem Referenzzeitpunkt
+        LOGGER.info("EQUITY DEBUG: " + purpose + " - Kein Tick ab " + referenceTime + " gefunden, suche letzten Tick davor (Signal " + signalId + ")");
+        
+        TickData lastTickBefore = null;
+        for (TickData tick : ticks) {
+            if (tick.getTimestamp().isBefore(referenceTime)) {
+                lastTickBefore = tick;  // Überschreibe mit jedem späteren Tick vor der Referenzzeit
+            } else {
+                break; // Wir haben den Referenzzeitpunkt überschritten
+            }
+        }
+        
+        if (lastTickBefore != null) {
+            LOGGER.info("EQUITY DEBUG: " + purpose + " - Strategie 2 (letzter vor Referenzzeit): " + lastTickBefore.getEquity() + 
+                       " am " + lastTickBefore.getTimestamp() + " (Signal " + signalId + ")");
+            return new EquitySearchResult(lastTickBefore.getEquity(), lastTickBefore.getTimestamp(), 
+                                        "Strategie 2 (letzter vor " + referenceTime.toLocalDate() + ")");
+        }
+        
+        // Strategie 3: Als absolute letzte Option - verwende ersten verfügbaren Tick
+        // (nur wenn alle Ticks nach dem Referenzzeitpunkt liegen)
+        LOGGER.warning("EQUITY DEBUG: " + purpose + " - Alle Ticks liegen nach " + referenceTime + 
+                      ", verwende ersten verfügbaren als Notlösung (Signal " + signalId + ")");
+        TickData firstTick = ticks.get(0);
+        return new EquitySearchResult(firstTick.getEquity(), firstTick.getTimestamp(), 
+                                    "Strategie 3 (Notlösung - erster Tick)");
+    }
+    
+    /**
      * Ermittelt den letzten Sonntag (Start der aktuellen Woche)
-     * KORRIGIERT: Richtige Datums-Berechnung
      * 
      * @param referenceDate Das Referenzdatum
      * @return LocalDateTime des letzten Sonntags um 00:00:00
@@ -220,78 +301,12 @@ public class PeriodProfitCalculator {
     }
     
     /**
-     * Findet die Equity zum angegebenen Zeitpunkt oder danach
-     * ERWEITERT: Bessere Debug-Informationen und Fallback-Strategien
-     * 
-     * @param ticks Liste der Tick-Daten (sollte chronologisch sortiert sein)
-     * @param targetTime Der Zielzeitpunkt
-     * @return Die Equity zum oder nach dem Zielzeitpunkt, oder null wenn nicht gefunden
+     * VERALTETE METHODE - wird durch findBestEquityForReference ersetzt
+     * Wird für Kompatibilität beibehalten, aber nicht mehr verwendet
      */
+    @Deprecated
     private static Double findEquityAtOrAfter(List<TickData> ticks, LocalDateTime targetTime) {
-        if (ticks == null || ticks.isEmpty()) {
-            LOGGER.warning("EQUITY DEBUG: Keine Ticks verfügbar für Suche nach " + targetTime);
-            return null;
-        }
-        
-        LOGGER.info("EQUITY DEBUG: Suche erste Equity AM ODER NACH " + targetTime + " in " + ticks.size() + " Ticks");
-        
-        // Zeige Zeitraum der verfügbaren Daten
-        LocalDateTime firstTickTime = ticks.get(0).getTimestamp();
-        LocalDateTime lastTickTime = ticks.get(ticks.size() - 1).getTimestamp();
-        
-        LOGGER.info("EQUITY DEBUG: Verfügbarer Zeitraum: " + firstTickTime + " bis " + lastTickTime);
-        
-        // Prüfe ob der Zielzeitpunkt vor allen verfügbaren Daten liegt
-        if (targetTime.isBefore(firstTickTime)) {
-            LOGGER.info("EQUITY DEBUG: Zielzeit " + targetTime + " liegt vor erstem Tick " + firstTickTime + 
-                       " - verwende ersten Tick mit Equity " + ticks.get(0).getEquity());
-            return ticks.get(0).getEquity();
-        }
-        
-        // Suche den ersten Tick der gleich oder nach dem Zielzeitpunkt liegt
-        for (int i = 0; i < ticks.size(); i++) {
-            TickData tick = ticks.get(i);
-            if (!tick.getTimestamp().isBefore(targetTime)) {
-                LOGGER.info("EQUITY DEBUG: Equity gefunden für " + targetTime + ": " + tick.getEquity() + 
-                           " am " + tick.getTimestamp() + " (Index " + i + ") - SEIT diesem Zeitpunkt");
-                return tick.getEquity();
-            }
-        }
-        
-        // Wenn kein Tick nach dem Zielzeitpunkt gefunden wurde,
-        // nehme den letzten verfügbaren Tick (falls alle Ticks vor dem Zielzeitpunkt liegen)
-        TickData lastTick = ticks.get(ticks.size() - 1);
-        LOGGER.info("EQUITY DEBUG: Kein Tick nach " + targetTime + " gefunden, verwende letzten verfügbaren: " + 
-                   lastTick.getEquity() + " am " + lastTick.getTimestamp() + " - alle Daten sind VOR dem Zielzeitpunkt");
-        return lastTick.getEquity();
-    }
-    
-    /**
-     * Erweiterte Methode für Debugging - findet Equity zu einem exakten Zeitpunkt
-     * 
-     * @param ticks Liste der Tick-Daten
-     * @param targetTime Der exakte Zielzeitpunkt
-     * @param toleranceMinutes Toleranz in Minuten
-     * @return Die Equity innerhalb der Toleranz, oder null
-     */
-    private static Double findEquityAtExactTime(List<TickData> ticks, LocalDateTime targetTime, int toleranceMinutes) {
-        if (ticks == null || ticks.isEmpty()) {
-            return null;
-        }
-        
-        LocalDateTime earliestTime = targetTime.minusMinutes(toleranceMinutes);
-        LocalDateTime latestTime = targetTime.plusMinutes(toleranceMinutes);
-        
-        for (TickData tick : ticks) {
-            LocalDateTime tickTime = tick.getTimestamp();
-            if (!tickTime.isBefore(earliestTime) && !tickTime.isAfter(latestTime)) {
-                LOGGER.fine("Exakte Equity gefunden für " + targetTime + " (±" + toleranceMinutes + "min): " + 
-                           tick.getEquity() + " am " + tick.getTimestamp());
-                return tick.getEquity();
-            }
-        }
-        
-        return null;
+        return findBestEquityForReference(ticks, targetTime, "Legacy", "unknown").getEquity();
     }
     
     /**
