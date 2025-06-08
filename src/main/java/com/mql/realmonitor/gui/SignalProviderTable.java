@@ -29,6 +29,7 @@ import com.mql.realmonitor.data.TickDataLoader;
  * SORTIERUNG: Automatische Sortierung nach Favoritenklasse beim Start
  * NEU: Profit-Spalte zwischen Kontostand und Floating Profit hinzugefügt
  * NEU: WeeklyProfit und MonthlyProfit Spalten hinzugefügt
+ * NEU: Weekly und Monthly Profit Currency Spalten zwischen Gesamtwert und WeeklyProfit mit Tooltip
  * NEU: IdTranslationManager für Provider-Namen beim Start und bei Fehlern
  * KORRIGIERT: Total Value Drawdown für Konsistenz zwischen Chart und Tabelle
  */
@@ -36,34 +37,38 @@ public class SignalProviderTable {
     
     private static final Logger LOGGER = Logger.getLogger(SignalProviderTable.class.getName());
     
-    // Spalten-Definitionen (KORRIGIERT: Spalte heißt jetzt "Total Value Drawdown")
+    // Spalten-Definitionen (ERWEITERT: Weekly und Monthly Profit Currency hinzugefügt)
     private static final String[] COLUMN_TEXTS = {
         "Signal ID", 
-        "Favoritenklasse",     // NEU: Spalte 1
-        "Provider Name",       // war "Provider Name" 
-        "Status",              // war "Status"
-        "Kontostand",          // war "Kontostand"
-        "Profit",              // NEU: Spalte 5 (zwischen Kontostand und Floating Profit)
-        "Floating Profit",     // war "Floating Profit" (verschoben von 5 zu 6)
-        "Total Value Drawdown",// KORRIGIERT: war "Equity Drawdown" (verschoben von 6 zu 7)
-        "Gesamtwert",          // war "Gesamtwert" (verschoben von 7 zu 8)
-        "WeeklyProfit",        // NEU: Spalte 9 (verschoben von 8 zu 9)
-        "MonthlyProfit",       // NEU: Spalte 10 (verschoben von 9 zu 10)
-        "Währung",             // war "Währung" (verschoben von 10 zu 11)
-        "Letzte Aktualisierung", // war "Letzte Aktualisierung" (verschoben von 11 zu 12)
-        "Änderung"             // war "Änderung" (verschoben von 12 zu 13)
+        "Favoritenklasse",     // Spalte 1
+        "Provider Name",       // Spalte 2
+        "Status",              // Spalte 3
+        "Kontostand",          // Spalte 4
+        "Profit",              // Spalte 5 (zwischen Kontostand und Floating Profit)
+        "Floating Profit",     // Spalte 6
+        "Total Value Drawdown",// Spalte 7
+        "Gesamtwert",          // Spalte 8
+        "Weekly Profit (€/$)",   // Spalte 9 (Weekly Profit in Währung)
+        "Monthly Profit (€/$)",  // NEU: Spalte 10 (Monthly Profit in Währung)
+        "WeeklyProfit",        // Spalte 11 (verschoben von 10 zu 11)
+        "MonthlyProfit",       // Spalte 12 (verschoben von 11 zu 12)
+        "Währung",             // Spalte 13 (verschoben von 12 zu 13)
+        "Letzte Aktualisierung", // Spalte 14 (verschoben von 13 zu 14)
+        "Änderung"             // Spalte 15 (verschoben von 14 zu 15)
     };
     
     private static final int[] COLUMN_WIDTHS = {
         80,   // Signal ID
-        120,  // Favoritenklasse (NEU)
+        120,  // Favoritenklasse
         150,  // Provider Name
         100,  // Status
         120,  // Kontostand
-        100,  // Profit (NEU)
-        120,  // Floating Profit (verschoben)
-        120,  // Total Value Drawdown (ERWEITERT: breitere Spalte)
-        120,  // Gesamtwert (verschoben)
+        100,  // Profit
+        120,  // Floating Profit
+        120,  // Total Value Drawdown
+        120,  // Gesamtwert
+        120,  // Weekly Profit (Currency)
+        120,  // Monthly Profit (Currency) (NEU)
         100,  // WeeklyProfit (verschoben)
         100,  // MonthlyProfit (verschoben)
         70,   // Währung (verschoben)
@@ -94,7 +99,7 @@ public class SignalProviderTable {
     private Map<String, Double> peakTotalValueCache;
     
     public SignalProviderTable(Composite parent, MqlRealMonitorGUI parentGui) {
-        LOGGER.info("=== NEUE SIGNALPROVIDER TABLE MIT TOTAL VALUE DRAWDOWN WIRD GELADEN ===");
+        LOGGER.info("=== NEUE SIGNALPROVIDER TABLE MIT TOTAL VALUE DRAWDOWN UND WEEKLY/MONTHLY PROFIT CURRENCY WIRD GELADEN ===");
         this.parentGui = parentGui;
         this.signalIdToItem = new HashMap<>();
         this.lastSignalData = new HashMap<>();
@@ -129,7 +134,7 @@ public class SignalProviderTable {
         // Tabellenverhalten mit Kontextmenü konfigurieren
         contextMenu.setupTableBehavior(table);
         
-        LOGGER.info("SignalProviderTable (KORRIGIERT - Total Value Drawdown für Chart-Konsistenz) initialisiert mit " + COLUMN_TEXTS.length + " Spalten");
+        LOGGER.info("SignalProviderTable (ERWEITERT - Weekly/Monthly Profit Currency + Tooltip) initialisiert mit " + COLUMN_TEXTS.length + " Spalten");
     }
     
     /**
@@ -199,6 +204,7 @@ public class SignalProviderTable {
     
     /**
      * Erstellt die Tabellenspalten
+     * ERWEITERT: Jetzt mit Weekly und Monthly Profit Currency Spalten und Tooltip-Support
      */
     private void createColumns() {
         columns = new TableColumn[COLUMN_TEXTS.length];
@@ -208,6 +214,19 @@ public class SignalProviderTable {
             columns[i].setText(COLUMN_TEXTS[i]);
             columns[i].setWidth(COLUMN_WIDTHS[i]);
             columns[i].setResizable(true);
+            
+            // NEU: Tooltips für Profit Currency Spalten hinzufügen
+            if (i == ProviderTableHelper.COL_WEEKLY_PROFIT_CURRENCY) {
+                columns[i].setToolTipText("Wochengewinn in der jeweiligen Währung\n" +
+                                        "Berechnung: Aktuelle Performance - Performance vom Wochenstart\n" +
+                                        "Basiert auf Profit + FloatingProfit (unabhängig von Ein-/Auszahlungen)\n" +
+                                        "Hover über die Werte für detaillierte Berechnungsinfos");
+            } else if (i == ProviderTableHelper.COL_MONTHLY_PROFIT_CURRENCY) {
+                columns[i].setToolTipText("Monatsgewinn in der jeweiligen Währung\n" +
+                                        "Berechnung: Aktuelle Performance - Performance vom 1. des Monats\n" +
+                                        "Basiert auf Profit + FloatingProfit (unabhängig von Ein-/Auszahlungen)\n" +
+                                        "Hover über die Werte für detaillierte Berechnungsinfos");
+            }
             
             // Sortierung bei Klick auf Header
             final int columnIndex = i;
@@ -219,7 +238,7 @@ public class SignalProviderTable {
             });
         }
         
-        LOGGER.info("Tabellenspalten erstellt (KORRIGIERT - Total Value Drawdown): " + java.util.Arrays.toString(COLUMN_TEXTS));
+        LOGGER.info("Tabellenspalten erstellt (ERWEITERT - Weekly und Monthly Profit Currency + Tooltip): " + java.util.Arrays.toString(COLUMN_TEXTS));
     }
     
     /**
@@ -399,25 +418,50 @@ public class SignalProviderTable {
     }
     
     /**
-     * NEU: Berechnet WeeklyProfit und MonthlyProfit für eine Signal-ID
+     * NEU: Berechnet WeeklyProfit, MonthlyProfit und Currency-Werte für eine Signal-ID
+     * ERWEITERT: Jetzt mit Currency-Berechnungen
      * 
      * @param signalId Die Signal-ID
+     * @param currency Die Währung für Currency-Berechnungen
      * @return ProfitResult mit den berechneten Werten
      */
-    private PeriodProfitCalculator.ProfitResult calculateProfitsForSignal(String signalId) {
+    private PeriodProfitCalculator.ProfitResult calculateProfitsForSignal(String signalId, String currency) {
         try {
             // Tick-Datei-Pfad aus der Konfiguration ermitteln
             String tickFilePath = parentGui.getMonitor().getConfig().getTickFilePath(signalId);
             
-            // Profits berechnen
-            PeriodProfitCalculator.ProfitResult result = PeriodProfitCalculator.calculateProfits(tickFilePath, signalId);
+            // Profits berechnen (ERWEITERT: Mit Currency-Information)
+            PeriodProfitCalculator.ProfitResult result = PeriodProfitCalculator.calculateProfitsWithCurrency(tickFilePath, signalId, currency);
             
             LOGGER.fine("Profit-Berechnung für Signal " + signalId + ": " + result.toString());
             return result;
             
         } catch (Exception e) {
             LOGGER.warning("Fehler bei Profit-Berechnung für Signal " + signalId + ": " + e.getMessage());
-            return new PeriodProfitCalculator.ProfitResult(0.0, 0.0, false, false, "Fehler bei Berechnung: " + e.getMessage());
+            return new PeriodProfitCalculator.ProfitResult(0.0, 0.0, 0.0, 0.0, currency, false, false, "Fehler bei Berechnung: " + e.getMessage(), "", "");
+        }
+    }
+    
+    /**
+     * NEU: Setzt Tooltip-Daten für ein TableItem (für zukünftige Tooltip-Implementierung)
+     * VEREINFACHT: Speichert nur die Tooltip-Daten ohne Custom UI
+     * 
+     * @param item Das TableItem
+     * @param columnIndex Der Spalten-Index
+     * @param tooltipText Der Tooltip-Text
+     */
+    private void setItemTooltip(TableItem item, int columnIndex, String tooltipText) {
+        try {
+            // Speichere Tooltip-Daten für zukünftige Verwendung
+            if (columnIndex == ProviderTableHelper.COL_WEEKLY_PROFIT_CURRENCY && tooltipText != null && !tooltipText.trim().isEmpty()) {
+                item.setData("weeklyProfitTooltip", tooltipText);
+                LOGGER.fine("Weekly Tooltip-Daten gesetzt für Signal " + item.getText(ProviderTableHelper.COL_SIGNAL_ID) + ": " + tooltipText.length() + " Zeichen");
+            } else if (columnIndex == ProviderTableHelper.COL_MONTHLY_PROFIT_CURRENCY && tooltipText != null && !tooltipText.trim().isEmpty()) {
+                item.setData("monthlyProfitTooltip", tooltipText);
+                LOGGER.fine("Monthly Tooltip-Daten gesetzt für Signal " + item.getText(ProviderTableHelper.COL_SIGNAL_ID) + ": " + tooltipText.length() + " Zeichen");
+            }
+        } catch (Exception e) {
+            LOGGER.warning("Fehler beim Setzen der Tooltip-Daten: " + e.getMessage());
         }
     }
     
@@ -426,6 +470,7 @@ public class SignalProviderTable {
      * KORRIGIERT: Verwendet jetzt Total Value Drawdown für Konsistenz mit Chart
      * ERWEITERT: Setzt auch die Favoritenklasse, Zeilen-Hintergrundfarbe, neue Profit-Spalte und berechnet Profit-Werte
      * NEU: Speichert neue Provider-Namen in der ID-Translation
+     * NEU: Weekly Profit Currency Spalte mit Tooltip
      * 
      * @param signalData Die aktualisierten Signaldaten
      */
@@ -469,8 +514,8 @@ public class SignalProviderTable {
             saveProviderNameToTranslation(signalId, providerName);
         }
         
-        // NEU: Profit-Werte berechnen
-        PeriodProfitCalculator.ProfitResult profitResult = calculateProfitsForSignal(signalId);
+        // NEU: Profit-Werte berechnen (ERWEITERT: Mit Currency)
+        PeriodProfitCalculator.ProfitResult profitResult = calculateProfitsForSignal(signalId, signalData.getCurrency());
         
         // KORRIGIERT: Total Value Drawdown berechnen (KONSISTENT MIT CHART)
         double peakTotalValue = calculatePeakTotalValueFromTickData(signalId, signalData);
@@ -480,21 +525,31 @@ public class SignalProviderTable {
                    " (Peak: " + String.format("%.6f", peakTotalValue) + 
                    ", Current: " + String.format("%.6f", signalData.getTotalValue()) + ")");
         
-        // Tabellendaten setzen - KORRIGIERT: Verwende bevorzugten Provider-Namen und Total Value Drawdown
+        // Tabellendaten setzen - ERWEITERT: Weekly und Monthly Profit Currency Spalten
         item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
         item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);                     
-        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);  // ← KORRIGIERT: Bevorzugte Namen
+        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);  
         item.setText(ProviderTableHelper.COL_STATUS, "OK");
         item.setText(ProviderTableHelper.COL_EQUITY, signalData.getFormattedEquity());
         item.setText(ProviderTableHelper.COL_PROFIT, signalData.getFormattedProfit());
         item.setText(ProviderTableHelper.COL_FLOATING, signalData.getFormattedFloatingProfit());
-        item.setText(ProviderTableHelper.COL_TOTAL_VALUE_DRAWDOWN, totalValueDrawdown);  // ← KORRIGIERT: Total Value Drawdown!
+        item.setText(ProviderTableHelper.COL_TOTAL_VALUE_DRAWDOWN, totalValueDrawdown);  
         item.setText(ProviderTableHelper.COL_TOTAL, signalData.getFormattedTotalValue());
+        item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT_CURRENCY, profitResult.getFormattedWeeklyProfitCurrency());
+        item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT_CURRENCY, profitResult.getFormattedMonthlyProfitCurrency()); // NEU
         item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT, profitResult.getFormattedWeeklyProfit());
         item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT, profitResult.getFormattedMonthlyProfit());
         item.setText(ProviderTableHelper.COL_CURRENCY, signalData.getCurrency());
         item.setText(ProviderTableHelper.COL_LAST_UPDATE, signalData.getFormattedTimestamp());
         item.setText(ProviderTableHelper.COL_CHANGE, changeText);
+        
+        // NEU: Tooltips für Profit Currency Spalten setzen
+        if (profitResult.hasWeeklyData()) {
+            setItemTooltip(item, ProviderTableHelper.COL_WEEKLY_PROFIT_CURRENCY, profitResult.getWeeklyTooltip());
+        }
+        if (profitResult.hasMonthlyData()) {
+            setItemTooltip(item, ProviderTableHelper.COL_MONTHLY_PROFIT_CURRENCY, profitResult.getMonthlyTooltip());
+        }
         
         // Farben setzen über Helper
         item.setForeground(ProviderTableHelper.COL_PROFIT, tableHelper.getProfitColor(signalData.getProfit()));
@@ -506,12 +561,16 @@ public class SignalProviderTable {
         
         item.setForeground(ProviderTableHelper.COL_CHANGE, changeColor);
         
-        // Farben für Profit-Spalten setzen
+        // Farben für Profit-Spalten setzen (ERWEITERT: Weekly und Monthly Profit Currency)
         if (profitResult.hasWeeklyData()) {
+            item.setForeground(ProviderTableHelper.COL_WEEKLY_PROFIT_CURRENCY, 
+                              tableHelper.getProfitColor(profitResult.getWeeklyProfitCurrency()));
             item.setForeground(ProviderTableHelper.COL_WEEKLY_PROFIT, 
                               tableHelper.getProfitColor(profitResult.getWeeklyProfitPercent()));
         }
         if (profitResult.hasMonthlyData()) {
+            item.setForeground(ProviderTableHelper.COL_MONTHLY_PROFIT_CURRENCY, 
+                              tableHelper.getProfitColor(profitResult.getMonthlyProfitCurrency())); // NEU
             item.setForeground(ProviderTableHelper.COL_MONTHLY_PROFIT, 
                               tableHelper.getProfitColor(profitResult.getMonthlyProfitPercent()));
         }
@@ -529,9 +588,11 @@ public class SignalProviderTable {
         // Daten im Cache speichern
         lastSignalData.put(signalId, signalData);
         
-        LOGGER.fine("Provider-Daten aktualisiert (KORRIGIERT - Total Value Drawdown konsistent mit Chart): " + signalData.getSummary() + 
+        LOGGER.fine("Provider-Daten aktualisiert (ERWEITERT - Weekly/Monthly Profit Currency + Tooltip): " + signalData.getSummary() + 
                    " (Klasse: " + favoriteClass + ", Name: " + providerName + 
                    ", Total Value Drawdown: " + totalValueDrawdown +
+                   ", Weekly Currency: " + profitResult.getFormattedWeeklyProfitCurrency() +
+                   ", Monthly Currency: " + profitResult.getFormattedMonthlyProfitCurrency() +
                    ", WeeklyProfit: " + profitResult.getFormattedWeeklyProfit() + 
                    ", MonthlyProfit: " + profitResult.getFormattedMonthlyProfit() + ")");
     }
@@ -576,6 +637,7 @@ public class SignalProviderTable {
      * Wird beim Vorladen der Favoriten verwendet
      * ERWEITERT: Setzt auch die Favoritenklasse und Zeilen-Hintergrundfarbe, Profit-Spalten bleiben leer
      * NEU: Verwendet Provider-Namen aus ID-Translation statt "Lädt..."
+     * ERWEITERT: Weekly Profit Currency Spalte bleibt leer
      * 
      * @param signalId Die Signal-ID
      * @param initialStatus Der initiale Status
@@ -607,18 +669,20 @@ public class SignalProviderTable {
         // Neuen leeren Eintrag erstellen
         TableItem item = new TableItem(table, SWT.NONE);
         
-        // Nur Signal-ID, Favoritenklasse, Provider-Name und Status setzen, Rest bleibt leer (ERWEITERT: Total Value Drawdown Spalte)
+        // Nur Signal-ID, Favoritenklasse, Provider-Name und Status setzen, Rest bleibt leer (ERWEITERT: Weekly und Monthly Profit Currency)
         item.setText(ProviderTableHelper.COL_SIGNAL_ID, signalId);
         item.setText(ProviderTableHelper.COL_FAVORITE_CLASS, favoriteClass);                          
-        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);   // NEU: Aus ID-Translation
+        item.setText(ProviderTableHelper.COL_PROVIDER_NAME, providerName);   
         item.setText(ProviderTableHelper.COL_STATUS, initialStatus != null ? initialStatus : "Nicht geladen");
         item.setText(ProviderTableHelper.COL_EQUITY, "");
-        item.setText(ProviderTableHelper.COL_PROFIT, "");               // NEU: Leer lassen bis Daten verfügbar
+        item.setText(ProviderTableHelper.COL_PROFIT, "");               
         item.setText(ProviderTableHelper.COL_FLOATING, "");
-        item.setText(ProviderTableHelper.COL_TOTAL_VALUE_DRAWDOWN, "");      // KORRIGIERT: Total Value Drawdown
+        item.setText(ProviderTableHelper.COL_TOTAL_VALUE_DRAWDOWN, "");      
         item.setText(ProviderTableHelper.COL_TOTAL, "");
-        item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT, "");        // NEU: Leer lassen bis Daten verfügbar
-        item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT, "");       // NEU: Leer lassen bis Daten verfügbar
+        item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT_CURRENCY, "");   // Leer lassen bis Daten verfügbar
+        item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT_CURRENCY, "");  // NEU: Leer lassen bis Daten verfügbar
+        item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT, "");        
+        item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT, "");       
         item.setText(ProviderTableHelper.COL_CURRENCY, "");
         item.setText(ProviderTableHelper.COL_LAST_UPDATE, "");
         item.setText(ProviderTableHelper.COL_CHANGE, "");
@@ -640,7 +704,7 @@ public class SignalProviderTable {
         // In Map eintragen
         signalIdToItem.put(signalId, item);
         
-        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (KORRIGIERT - Total Value Drawdown): " + signalId + 
+        LOGGER.fine("Leerer Provider-Eintrag hinzugefügt (ERWEITERT - Weekly/Monthly Profit Currency): " + signalId + 
                    " (Klasse: " + favoriteClass + ", Name: " + providerName + ")");
     }
     
@@ -717,6 +781,7 @@ public class SignalProviderTable {
     /**
      * NEU: Aktualisiert die Profit-Werte für alle Provider
      * Nützlich für manuelles Refresh der Profit-Berechnungen
+     * ERWEITERT: Jetzt mit Weekly und Monthly Profit Currency
      */
     public void refreshProfitValues() {
         LOGGER.info("Aktualisiere Profit-Werte für alle Provider...");
@@ -726,19 +791,36 @@ public class SignalProviderTable {
             TableItem item = entry.getValue();
             
             if (item != null && !item.isDisposed()) {
-                // Profit-Werte neu berechnen
-                PeriodProfitCalculator.ProfitResult profitResult = calculateProfitsForSignal(signalId);
+                // Currency ermitteln
+                String currency = item.getText(ProviderTableHelper.COL_CURRENCY);
                 
-                // Spalten aktualisieren
+                // Profit-Werte neu berechnen (ERWEITERT: Mit Currency)
+                PeriodProfitCalculator.ProfitResult profitResult = calculateProfitsForSignal(signalId, currency);
+                
+                // Spalten aktualisieren (ERWEITERT: Weekly und Monthly Profit Currency)
+                item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT_CURRENCY, profitResult.getFormattedWeeklyProfitCurrency());
+                item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT_CURRENCY, profitResult.getFormattedMonthlyProfitCurrency()); // NEU
                 item.setText(ProviderTableHelper.COL_WEEKLY_PROFIT, profitResult.getFormattedWeeklyProfit());
                 item.setText(ProviderTableHelper.COL_MONTHLY_PROFIT, profitResult.getFormattedMonthlyProfit());
                 
-                // Farben aktualisieren
+                // Tooltips aktualisieren
                 if (profitResult.hasWeeklyData()) {
+                    setItemTooltip(item, ProviderTableHelper.COL_WEEKLY_PROFIT_CURRENCY, profitResult.getWeeklyTooltip());
+                }
+                if (profitResult.hasMonthlyData()) {
+                    setItemTooltip(item, ProviderTableHelper.COL_MONTHLY_PROFIT_CURRENCY, profitResult.getMonthlyTooltip());
+                }
+                
+                // Farben aktualisieren (ERWEITERT: Weekly und Monthly Profit Currency)
+                if (profitResult.hasWeeklyData()) {
+                    item.setForeground(ProviderTableHelper.COL_WEEKLY_PROFIT_CURRENCY, 
+                                      tableHelper.getProfitColor(profitResult.getWeeklyProfitCurrency()));
                     item.setForeground(ProviderTableHelper.COL_WEEKLY_PROFIT, 
                                       tableHelper.getProfitColor(profitResult.getWeeklyProfitPercent()));
                 }
                 if (profitResult.hasMonthlyData()) {
+                    item.setForeground(ProviderTableHelper.COL_MONTHLY_PROFIT_CURRENCY, 
+                                      tableHelper.getProfitColor(profitResult.getMonthlyProfitCurrency())); // NEU
                     item.setForeground(ProviderTableHelper.COL_MONTHLY_PROFIT, 
                                       tableHelper.getProfitColor(profitResult.getMonthlyProfitPercent()));
                 }
@@ -813,7 +895,7 @@ public class SignalProviderTable {
             favoritesReader.refreshCache();
         }
         
-        LOGGER.info("Alle Provider aus Tabelle entfernt (KORRIGIERT - Total Value Drawdown für Chart-Konsistenz)");
+        LOGGER.info("Alle Provider aus Tabelle entfernt (ERWEITERT - Weekly/Monthly Profit Currency + Tooltip)");
     }
     
     /**

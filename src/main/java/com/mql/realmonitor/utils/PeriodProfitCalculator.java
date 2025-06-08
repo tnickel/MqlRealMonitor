@@ -18,6 +18,8 @@ import com.mql.realmonitor.data.TickDataLoader.TickDataSet;
  * - Ignoriert Ein-/Auszahlungen (die nur Equity beeinflussen)
  * - Gesamt-Performance = Profit + FloatingProfit (echte Trading-Performance)
  * - Prozentuale Berechnung relativ zum initialen Kapital
+ * 
+ * NEU: Weekly Profit Currency Berechnung und detaillierte Tooltip-Informationen
  */
 public class PeriodProfitCalculator {
     
@@ -25,28 +27,49 @@ public class PeriodProfitCalculator {
     
     /**
      * Ergebnis-Klasse für Profit-Berechnungen
+     * ERWEITERT: Jetzt mit Currency-Werten und Tooltip-Details
      */
     public static class ProfitResult {
         private final double weeklyProfitPercent;
         private final double monthlyProfitPercent;
+        private final double weeklyProfitCurrency;    // NEU: Currency-Betrag
+        private final double monthlyProfitCurrency;   // NEU: Currency-Betrag
+        private final String currency;                // NEU: Währung
         private final boolean hasWeeklyData;
         private final boolean hasMonthlyData;
         private final String diagnosticInfo;
+        private final String weeklyTooltip;          // NEU: Tooltip für Weekly Profit
+        private final String monthlyTooltip;         // NEU: Tooltip für Monthly Profit
         
         public ProfitResult(double weeklyProfitPercent, double monthlyProfitPercent, 
-                           boolean hasWeeklyData, boolean hasMonthlyData, String diagnosticInfo) {
+                           double weeklyProfitCurrency, double monthlyProfitCurrency, String currency,
+                           boolean hasWeeklyData, boolean hasMonthlyData, String diagnosticInfo,
+                           String weeklyTooltip, String monthlyTooltip) {
             this.weeklyProfitPercent = weeklyProfitPercent;
             this.monthlyProfitPercent = monthlyProfitPercent;
+            this.weeklyProfitCurrency = weeklyProfitCurrency;
+            this.monthlyProfitCurrency = monthlyProfitCurrency;
+            this.currency = currency;
             this.hasWeeklyData = hasWeeklyData;
             this.hasMonthlyData = hasMonthlyData;
             this.diagnosticInfo = diagnosticInfo;
+            this.weeklyTooltip = weeklyTooltip;
+            this.monthlyTooltip = monthlyTooltip;
         }
         
+        // Bestehende Methoden
         public double getWeeklyProfitPercent() { return weeklyProfitPercent; }
         public double getMonthlyProfitPercent() { return monthlyProfitPercent; }
         public boolean hasWeeklyData() { return hasWeeklyData; }
         public boolean hasMonthlyData() { return hasMonthlyData; }
         public String getDiagnosticInfo() { return diagnosticInfo; }
+        
+        // NEU: Currency-Methoden
+        public double getWeeklyProfitCurrency() { return weeklyProfitCurrency; }
+        public double getMonthlyProfitCurrency() { return monthlyProfitCurrency; }
+        public String getCurrency() { return currency; }
+        public String getWeeklyTooltip() { return weeklyTooltip; }
+        public String getMonthlyTooltip() { return monthlyTooltip; }
         
         /**
          * Formatiert den Wochengewinn für die Anzeige
@@ -70,43 +93,80 @@ public class PeriodProfitCalculator {
             return String.format("%s%.2f%%", sign, monthlyProfitPercent);
         }
         
+        /**
+         * NEU: Formatiert den Wochengewinn in Währung für die Anzeige
+         */
+        public String getFormattedWeeklyProfitCurrency() {
+            if (!hasWeeklyData) {
+                return "N/A";
+            }
+            String sign = weeklyProfitCurrency >= 0 ? "+" : "";
+            return String.format("%s%.2f %s", sign, weeklyProfitCurrency, currency != null ? currency : "");
+        }
+        
+        /**
+         * NEU: Formatiert den Monatsgewinn in Währung für die Anzeige
+         */
+        public String getFormattedMonthlyProfitCurrency() {
+            if (!hasMonthlyData) {
+                return "N/A";
+            }
+            String sign = monthlyProfitCurrency >= 0 ? "+" : "";
+            return String.format("%s%.2f %s", sign, monthlyProfitCurrency, currency != null ? currency : "");
+        }
+        
         @Override
         public String toString() {
-            return String.format("ProfitResult{weekly=%s, monthly=%s}", 
-                               getFormattedWeeklyProfit(), getFormattedMonthlyProfit());
+            return String.format("ProfitResult{weekly=%s (%s), monthly=%s (%s)}", 
+                               getFormattedWeeklyProfit(), getFormattedWeeklyProfitCurrency(),
+                               getFormattedMonthlyProfit(), getFormattedMonthlyProfitCurrency());
         }
     }
     
     /**
      * Berechnet Wochen- und Monatsgewinne für einen Signal-Provider
      * PERFORMANCE-BASIERT: Verwendet Profit + FloatingProfit für Ein-/Auszahlungs-unabhängige Berechnung
+     * ERWEITERT: Jetzt mit Currency-Berechnungen und detaillierten Tooltip-Informationen
      * 
      * @param tickFilePath Pfad zur Tick-Datei
      * @param signalId Die Signal-ID
      * @return ProfitResult mit den berechneten Werten
      */
     public static ProfitResult calculateProfits(String tickFilePath, String signalId) {
+        return calculateProfitsWithCurrency(tickFilePath, signalId, null);
+    }
+    
+    /**
+     * NEU: Berechnet Wochen- und Monatsgewinne mit Currency-Information
+     * PERFORMANCE-BASIERT: Verwendet Profit + FloatingProfit für Ein-/Auszahlungs-unabhängige Berechnung
+     * 
+     * @param tickFilePath Pfad zur Tick-Datei
+     * @param signalId Die Signal-ID
+     * @param currency Die Währung für Currency-Berechnungen (optional)
+     * @return ProfitResult mit den berechneten Werten
+     */
+    public static ProfitResult calculateProfitsWithCurrency(String tickFilePath, String signalId, String currency) {
         if (tickFilePath == null || signalId == null) {
             LOGGER.warning("PERFORMANCE DEBUG: Ungültige Parameter für Profit-Berechnung: tickFilePath=" + tickFilePath + ", signalId=" + signalId);
-            return new ProfitResult(0.0, 0.0, false, false, "Ungültige Parameter");
+            return new ProfitResult(0.0, 0.0, 0.0, 0.0, currency, false, false, "Ungültige Parameter", "", "");
         }
         
-        LOGGER.info("PERFORMANCE DEBUG: Berechne Profits für Signal " + signalId + " - Tick-Datei: " + tickFilePath + " (PERFORMANCE-BASIERT)");
+        LOGGER.info("PERFORMANCE DEBUG: Berechne Profits für Signal " + signalId + " - Tick-Datei: " + tickFilePath + " (PERFORMANCE-BASIERT + CURRENCY)");
         
         // Tick-Daten laden
         TickDataSet dataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
         if (dataSet == null || dataSet.getTickCount() == 0) {
             LOGGER.warning("PERFORMANCE DEBUG: Keine Tick-Daten verfügbar für Signal " + signalId + " - Datei: " + tickFilePath);
-            return new ProfitResult(0.0, 0.0, false, false, "Keine Tick-Daten verfügbar: " + tickFilePath);
+            return new ProfitResult(0.0, 0.0, 0.0, 0.0, currency, false, false, "Keine Tick-Daten verfügbar: " + tickFilePath, "", "");
         }
         
         List<TickData> ticks = dataSet.getTicks();
-        LOGGER.info("PERFORMANCE DEBUG: " + ticks.size() + " Ticks geladen für Signal " + signalId + " (PERFORMANCE-BASIERT)");
+        LOGGER.info("PERFORMANCE DEBUG: " + ticks.size() + " Ticks geladen für Signal " + signalId + " (PERFORMANCE-BASIERT + CURRENCY)");
         
         // Mindestens 2 Ticks erforderlich für sinnvolle Profit-Berechnung
         if (ticks.size() < 2) {
             LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Nur " + ticks.size() + " Tick(s) verfügbar, brauche mindestens 2 für Profit-Berechnung");
-            return new ProfitResult(0.0, 0.0, false, false, "Nicht genügend Daten für Profit-Berechnung");
+            return new ProfitResult(0.0, 0.0, 0.0, 0.0, currency, false, false, "Nicht genügend Daten für Profit-Berechnung", "", "");
         }
         
         // PERFORMANCE-BASIERT: Aktuelle Gesamt-Performance (Profit + FloatingProfit)
@@ -126,7 +186,7 @@ public class PeriodProfitCalculator {
                    ", Wochenstart: " + weekStart + ", Monatsstart: " + monthStart + 
                    ", Aktuelle Performance: " + currentPerformance + 
                    " (Profit: " + latestTick.getProfit() + " + Floating: " + latestTick.getFloatingProfit() + ")" +
-                   ", Initiale Equity: " + initialEquity + " [PERFORMANCE-BASIERT]");
+                   ", Initiale Equity: " + initialEquity + " [PERFORMANCE-BASIERT + CURRENCY]");
         
         // Zeige erste und letzte Ticks für Debugging
         TickData firstTick = ticks.get(0);
@@ -134,7 +194,7 @@ public class PeriodProfitCalculator {
         LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Erster Tick: " + firstTick.getTimestamp() + 
                    " (Performance: " + (firstTick.getProfit() + firstTick.getFloatingProfit()) + ")" +
                    ", Letzter Tick: " + lastTick.getTimestamp() + 
-                   " (Performance: " + (lastTick.getProfit() + lastTick.getFloatingProfit()) + ") [PERFORMANCE-BASIERT]");
+                   " (Performance: " + (lastTick.getProfit() + lastTick.getFloatingProfit()) + ") [PERFORMANCE-BASIERT + CURRENCY]");
         
         // PERFORMANCE-BASIERT: Suche Performance für Referenzzeitpunkte
         PerformanceSearchResult weekPerformanceResult = findBestPerformanceForReference(ticks, weekStart, "Wochenstart", signalId);
@@ -146,6 +206,12 @@ public class PeriodProfitCalculator {
         
         double weeklyProfit = 0.0;
         double monthlyProfit = 0.0;
+        double weeklyProfitCurrency = 0.0;    // NEU
+        double monthlyProfitCurrency = 0.0;   // NEU
+        
+        // NEU: Tooltip-Informationen aufbauen
+        String weeklyTooltip = "";
+        String monthlyTooltip = "";
         
         if (hasWeeklyData) {
             double weekStartPerformance = weekPerformanceResult.getPerformance();
@@ -153,11 +219,30 @@ public class PeriodProfitCalculator {
             double performanceChange = currentPerformance - weekStartPerformance;
             weeklyProfit = (performanceChange / initialEquity) * 100.0;
             
+            // NEU: Currency-Betrag berechnen
+            weeklyProfitCurrency = performanceChange;
+            
             LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Wochenprofit berechnet: " +
                        "(" + currentPerformance + " - " + weekStartPerformance + ") / " + initialEquity + " * 100 = " + 
-                       String.format("%.4f%%", weeklyProfit) + " [PERFORMANCE-BASIERT]");
+                       String.format("%.4f%%", weeklyProfit) + ", Currency: " + String.format("%.2f", weeklyProfitCurrency) + " [PERFORMANCE-BASIERT + CURRENCY]");
+            
+            // NEU: Tooltip für Wochengewinn erstellen
+            weeklyTooltip = String.format("Weekly Profit Berechnung:\n\n" +
+                                        "Aktuelle Performance: %.2f %s\n" +
+                                        "Performance am %s: %.2f %s\n" +
+                                        "Differenz: %.2f %s\n\n" +
+                                        "Prozentual (%.2f / %.2f * 100): %.2f%%\n\n" +
+                                        "Basiert auf Performance (Profit + FloatingProfit)\n" +
+                                        "- unabhängig von Ein-/Auszahlungen",
+                                        currentPerformance, currency != null ? currency : "",
+                                        weekStart.toLocalDate(), weekStartPerformance, currency != null ? currency : "",
+                                        weeklyProfitCurrency, currency != null ? currency : "",
+                                        weeklyProfitCurrency, initialEquity, weeklyProfit);
         } else {
-            LOGGER.warning("PERFORMANCE DEBUG: Signal " + signalId + " - Keine gültigen Wochendaten verfügbar (PERFORMANCE-BASIERT)");
+            LOGGER.warning("PERFORMANCE DEBUG: Signal " + signalId + " - Keine gültigen Wochendaten verfügbar (PERFORMANCE-BASIERT + CURRENCY)");
+            weeklyTooltip = "Keine Daten für Wochengewinn verfügbar\n\n" +
+                          "Benötigt mindestens einen Tick seit Wochenstart\n" +
+                          "oder historische Daten vor dem Wochenstart";
         }
         
         if (hasMonthlyData) {
@@ -166,11 +251,30 @@ public class PeriodProfitCalculator {
             double performanceChange = currentPerformance - monthStartPerformance;
             monthlyProfit = (performanceChange / initialEquity) * 100.0;
             
+            // NEU: Currency-Betrag berechnen
+            monthlyProfitCurrency = performanceChange;
+            
             LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Monatsprofit berechnet: " +
                        "(" + currentPerformance + " - " + monthStartPerformance + ") / " + initialEquity + " * 100 = " + 
-                       String.format("%.4f%%", monthlyProfit) + " [PERFORMANCE-BASIERT]");
+                       String.format("%.4f%%", monthlyProfit) + ", Currency: " + String.format("%.2f", monthlyProfitCurrency) + " [PERFORMANCE-BASIERT + CURRENCY]");
+            
+            // NEU: Tooltip für Monatsgewinn erstellen
+            monthlyTooltip = String.format("Monthly Profit Berechnung:\n\n" +
+                                         "Aktuelle Performance: %.2f %s\n" +
+                                         "Performance am %s: %.2f %s\n" +
+                                         "Differenz: %.2f %s\n\n" +
+                                         "Prozentual (%.2f / %.2f * 100): %.2f%%\n\n" +
+                                         "Basiert auf Performance (Profit + FloatingProfit)\n" +
+                                         "- unabhängig von Ein-/Auszahlungen",
+                                         currentPerformance, currency != null ? currency : "",
+                                         monthStart.toLocalDate(), monthStartPerformance, currency != null ? currency : "",
+                                         monthlyProfitCurrency, currency != null ? currency : "",
+                                         monthlyProfitCurrency, initialEquity, monthlyProfit);
         } else {
-            LOGGER.warning("PERFORMANCE DEBUG: Signal " + signalId + " - Keine gültigen Monatsdaten verfügbar (PERFORMANCE-BASIERT)");
+            LOGGER.warning("PERFORMANCE DEBUG: Signal " + signalId + " - Keine gültigen Monatsdaten verfügbar (PERFORMANCE-BASIERT + CURRENCY)");
+            monthlyTooltip = "Keine Daten für Monatsgewinn verfügbar\n\n" +
+                           "Benötigt mindestens einen Tick seit Monatsstart\n" +
+                           "oder historische Daten vor dem Monatsstart";
         }
         
         // Diagnostik-Informationen
@@ -179,12 +283,16 @@ public class PeriodProfitCalculator {
         diagnostic.append("Current Performance: ").append(String.format("%.2f", currentPerformance)).append(", ");
         diagnostic.append("Initial Equity: ").append(String.format("%.2f", initialEquity)).append(", ");
         diagnostic.append("Week: ").append(weekPerformanceResult.getDiagnosticInfo()).append(", ");
-        diagnostic.append("Month: ").append(monthPerformanceResult.getDiagnosticInfo()).append(" [PERFORMANCE-BASIERT]");
+        diagnostic.append("Month: ").append(monthPerformanceResult.getDiagnosticInfo()).append(" [PERFORMANCE-BASIERT + CURRENCY]");
         
         LOGGER.info("PERFORMANCE DEBUG: Ergebnis für " + signalId + ": WeeklyProfit=" + String.format("%.4f%%", weeklyProfit) + 
-                   ", MonthlyProfit=" + String.format("%.4f%%", monthlyProfit) + " [PERFORMANCE-BASIERT]");
+                   " (" + String.format("%.2f", weeklyProfitCurrency) + " " + (currency != null ? currency : "") + ")" +
+                   ", MonthlyProfit=" + String.format("%.4f%%", monthlyProfit) + 
+                   " (" + String.format("%.2f", monthlyProfitCurrency) + " " + (currency != null ? currency : "") + ")" +
+                   " [PERFORMANCE-BASIERT + CURRENCY]");
         
-        return new ProfitResult(weeklyProfit, monthlyProfit, hasWeeklyData, hasMonthlyData, diagnostic.toString());
+        return new ProfitResult(weeklyProfit, monthlyProfit, weeklyProfitCurrency, monthlyProfitCurrency, currency,
+                               hasWeeklyData, hasMonthlyData, diagnostic.toString(), weeklyTooltip, monthlyTooltip);
     }
     
     /**
@@ -341,6 +449,7 @@ public class PeriodProfitCalculator {
     /**
      * Erstellt eine detaillierte Diagnose für Debugging
      * PERFORMANCE-BASIERT: Zeigt Profit + FloatingProfit Werte
+     * ERWEITERT: Jetzt mit Currency-Informationen
      * 
      * @param tickFilePath Pfad zur Tick-Datei
      * @param signalId Die Signal-ID
@@ -348,7 +457,7 @@ public class PeriodProfitCalculator {
      */
     public static String createDetailedDiagnostic(String tickFilePath, String signalId) {
         StringBuilder diag = new StringBuilder();
-        diag.append("=== PERIOD PROFIT DIAGNOSTIC (PERFORMANCE-BASIERT) ===\n");
+        diag.append("=== PERIOD PROFIT DIAGNOSTIC (PERFORMANCE-BASIERT + CURRENCY) ===\n");
         diag.append("Signal ID: ").append(signalId).append("\n");
         diag.append("Tick File: ").append(tickFilePath).append("\n");
         
@@ -378,6 +487,8 @@ public class PeriodProfitCalculator {
         ProfitResult result = calculateProfits(tickFilePath, signalId);
         diag.append("Calculation Result: ").append(result.toString()).append("\n");
         diag.append("Diagnostic Info: ").append(result.getDiagnosticInfo()).append("\n");
+        diag.append("Weekly Tooltip: ").append(result.getWeeklyTooltip().replace("\n", " ")).append("\n");
+        diag.append("Monthly Tooltip: ").append(result.getMonthlyTooltip().replace("\n", " ")).append("\n");
         
         return diag.toString();
     }
