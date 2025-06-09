@@ -17,13 +17,177 @@ import com.mql.realmonitor.data.TickDataLoader.TickDataSet;
  * PERFORMANCE-BASIERT: Verwendet Profit + FloatingProfit für stabile Berechnungen
  * - Ignoriert Ein-/Auszahlungen (die nur Equity beeinflussen)
  * - Gesamt-Performance = Profit + FloatingProfit (echte Trading-Performance)
- * - Prozentuale Berechnung relativ zum initialen Kapital
+ * - Prozentuale Berechnung relativ zum bereinigten Kapital
  * 
- * NEU: Weekly Profit Currency Berechnung und detaillierte Tooltip-Informationen
+ * NEU: Ein-/Auszahlungserkennung für bereinigte Gewinn-Prozente
+ * - Drawdown % → verwendet echte Equity (bleibt in SignalData)
+ * - Gewinn % → verwendet bereinigte Equity (ohne Ein-/Auszahlungen)
  */
 public class PeriodProfitCalculator {
     
     private static final Logger LOGGER = Logger.getLogger(PeriodProfitCalculator.class.getName());
+    
+    /**
+     * Ein-/Auszahlungserkennung für bereinigte Gewinn-Prozent-Berechnungen
+     * KONZEPT:
+     * - Drawdown % → verwendet echte Equity (mit Ein-/Auszahlungen) - bleibt in SignalData
+     * - Gewinn % → verwendet bereinigte Equity (ohne Ein-/Auszahlungen)
+     */
+    public static class DepositWithdrawalDetector {
+        
+        private static final Logger LOGGER = Logger.getLogger(DepositWithdrawalDetector.class.getName());
+        
+        // Schwellwerte für Ein-/Auszahlungserkennung
+        private static final double MINIMUM_AMOUNT_THRESHOLD = 100.0;     // Mindest-Betrag
+        private static final double PERCENTAGE_THRESHOLD = 0.03;          // 3% Equity-Sprung
+        private static final double TIME_THRESHOLD_MINUTES = 30.0;        // Max 30 Minuten zwischen Ticks
+        
+        /**
+         * Erkennt Ein-/Auszahlungen zwischen zwei aufeinanderfolgenden Ticks
+         * 
+         * Logik: Wenn Equity-Änderung deutlich von Performance-Änderung abweicht
+         */
+        public static boolean isDepositOrWithdrawal(TickData previousTick, TickData currentTick) {
+            if (previousTick == null || currentTick == null) return false;
+            
+            // Zeitdifferenz prüfen (nur bei aufeinanderfolgenden Ticks sinnvoll)
+            long timeDiffMinutes = java.time.Duration.between(
+                previousTick.getTimestamp(), currentTick.getTimestamp()).toMinutes();
+            
+            if (timeDiffMinutes > TIME_THRESHOLD_MINUTES) {
+                // Bei großen Zeitabständen keine Ein-/Auszahlungserkennung
+                return false;
+            }
+            
+            // Berechne Änderungen
+            double equityChange = currentTick.getEquity() - previousTick.getEquity();
+            double profitChange = currentTick.getProfit() - previousTick.getProfit();
+            double floatingChange = currentTick.getFloatingProfit() - previousTick.getFloatingProfit();
+            double performanceChange = profitChange + floatingChange;
+            
+            // Unerwartete Equity-Änderung (potentielle Ein-/Auszahlung)
+            double unexpectedChange = equityChange - performanceChange;
+            
+            // Schwellwert-Prüfungen
+            boolean absoluteThreshold = Math.abs(unexpectedChange) > MINIMUM_AMOUNT_THRESHOLD;
+            boolean percentageThreshold = Math.abs(unexpectedChange / previousTick.getEquity()) > PERCENTAGE_THRESHOLD;
+            
+            boolean isDepositWithdrawal = absoluteThreshold && percentageThreshold;
+            
+            if (isDepositWithdrawal) {
+                String type = unexpectedChange > 0 ? "EINZAHLUNG" : "AUSZAHLUNG";
+                LOGGER.info("DEPOSIT/WITHDRAWAL DETECTED (" + type + "): " +
+                           "Equity: " + String.format("%.2f → %.2f (Δ %.2f)", 
+                                       previousTick.getEquity(), currentTick.getEquity(), equityChange) + 
+                           ", Performance: Δ " + String.format("%.2f", performanceChange) + 
+                           ", Unexpected: " + String.format("%.2f", unexpectedChange) + 
+                           " (Timestamp: " + currentTick.getTimestamp() + ")");
+            }
+            
+            return isDepositWithdrawal;
+        }
+        
+        /**
+         * Berechnet bereinigte Equity-Basis für Gewinn-Prozent-Berechnungen
+         * 
+         * Entfernt Ein-/Auszahlungseffekte aus der Equity-Entwicklung
+         */
+        public static double calculateCleanEquityBasis(List<TickData> allTicks, TickData referenceTick) {
+            if (allTicks == null || allTicks.isEmpty() || referenceTick == null) {
+                return 0.0;
+            }
+            
+            // Finde Referenz-Tick in der Liste
+            int referenceIndex = findTickIndex(allTicks, referenceTick);
+            if (referenceIndex == -1) {
+                // Referenz-Tick nicht gefunden, verwende echte Equity
+                LOGGER.warning("CLEAN EQUITY: Referenz-Tick nicht gefunden, verwende echte Equity: " + 
+                              referenceTick.getEquity());
+                return referenceTick.getEquity();
+            }
+            
+            // Starte mit der Equity vom Referenz-Tick
+            double cleanEquity = referenceTick.getEquity();
+            double totalDepositsAfterReference = 0.0;
+            
+            LOGGER.info("CLEAN EQUITY BASIS: Start mit Referenz-Equity: " + cleanEquity + 
+                       " (Referenz-Index: " + referenceIndex + ")");
+            
+            // Analysiere alle Ticks nach dem Referenz-Tick für Ein-/Auszahlungen
+            for (int i = referenceIndex + 1; i < allTicks.size(); i++) {
+                TickData prevTick = allTicks.get(i - 1);
+                TickData currTick = allTicks.get(i);
+                
+                if (isDepositOrWithdrawal(prevTick, currTick)) {
+                    double equityChange = currTick.getEquity() - prevTick.getEquity();
+                    double profitChange = currTick.getProfit() - prevTick.getProfit();
+                    double floatingChange = currTick.getFloatingProfit() - prevTick.getFloatingProfit();
+                    double performanceChange = profitChange + floatingChange;
+                    
+                    // Der Ein-/Auszahlungsbetrag
+                    double depositAmount = equityChange - performanceChange;
+                    totalDepositsAfterReference += depositAmount;
+                    
+                    LOGGER.info("CLEAN EQUITY ADJUSTMENT: " + 
+                               (depositAmount > 0 ? "Einzahlung" : "Auszahlung") + " von " + 
+                               String.format("%.2f", Math.abs(depositAmount)) + 
+                               " bei Tick " + i + " (" + currTick.getTimestamp() + ")");
+                }
+            }
+            
+            // Bereinigte Equity = Original Equity am Referenzpunkt
+            // (Ein-/Auszahlungen NACH dem Referenzpunkt beeinflussen die Basis nicht)
+            double finalCleanEquity = cleanEquity;
+            
+            LOGGER.info("CLEAN EQUITY BERECHNUNG: " +
+                       "Referenz-Equity: " + cleanEquity + 
+                       ", Deposits nach Referenz: " + String.format("%.2f", totalDepositsAfterReference) + 
+                       ", Finale bereinigte Equity-Basis: " + finalCleanEquity);
+            
+            return finalCleanEquity;
+        }
+        
+        /**
+         * Hilfsmethode: Findet Index eines Ticks in der Liste
+         */
+        private static int findTickIndex(List<TickData> ticks, TickData targetTick) {
+            for (int i = 0; i < ticks.size(); i++) {
+                if (ticks.get(i).getTimestamp().equals(targetTick.getTimestamp())) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        
+        /**
+         * Berechnet bereinigte Gewinn-Prozente mit Ein-/Auszahlungskorrektur
+         * 
+         * WICHTIG: Verwendet bereinigte Equity-Basis statt echter Equity
+         */
+        public static double calculateCleanPercentage(double performanceChange, 
+                                                     List<TickData> allTicks, 
+                                                     TickData referenceTick) {
+            
+            // Berechne bereinigte Equity-Basis zum Referenzzeitpunkt
+            double cleanEquityBasis = calculateCleanEquityBasis(allTicks, referenceTick);
+            
+            // Fallback: Wenn bereinigte Equity zu klein oder ungültig
+            if (cleanEquityBasis <= 0) {
+                cleanEquityBasis = referenceTick.getEquity();
+                LOGGER.warning("CLEAN PERCENTAGE: Fallback zu echter Equity: " + cleanEquityBasis);
+            }
+            
+            // Berechne Prozent basierend auf bereinigter Equity
+            double percentage = (performanceChange / cleanEquityBasis) * 100.0;
+            
+            LOGGER.info("CLEAN PERCENTAGE CALCULATION: " +
+                       "Performance Change: " + String.format("%.2f", performanceChange) + 
+                       ", Clean Equity Basis: " + String.format("%.2f", cleanEquityBasis) + 
+                       ", Result: " + String.format("%.2f%%", percentage));
+            
+            return percentage;
+        }
+    }
     
     /**
      * Ergebnis-Klasse für Profit-Berechnungen
@@ -137,8 +301,9 @@ public class PeriodProfitCalculator {
     }
     
     /**
-     * NEU: Berechnet Wochen- und Monatsgewinne mit Currency-Information
+     * ALTE VERSION: Berechnet Wochen- und Monatsgewinne mit Currency-Information
      * PERFORMANCE-BASIERT: Verwendet Profit + FloatingProfit für Ein-/Auszahlungs-unabhängige Berechnung
+     * OHNE Ein-/Auszahlungskorrektur (für Rückwärtskompatibilität)
      * 
      * @param tickFilePath Pfad zur Tick-Datei
      * @param signalId Die Signal-ID
@@ -146,26 +311,41 @@ public class PeriodProfitCalculator {
      * @return ProfitResult mit den berechneten Werten
      */
     public static ProfitResult calculateProfitsWithCurrency(String tickFilePath, String signalId, String currency) {
+        // Für Rückwärtskompatibilität: Verwende die neue bereinigte Methode
+        return calculateProfitsWithCleanPercentages(tickFilePath, signalId, currency);
+    }
+    
+    /**
+     * NEUE HAUPTMETHODE: Berechnet Wochen- und Monatsgewinne mit Ein-/Auszahlungskorrektur
+     * PERFORMANCE-BASIERT: Verwendet Profit + FloatingProfit für Ein-/Auszahlungs-unabhängige Berechnung
+     * MIT Ein-/Auszahlungserkennung für bereinigte Gewinn-Prozente
+     * 
+     * @param tickFilePath Pfad zur Tick-Datei
+     * @param signalId Die Signal-ID
+     * @param currency Die Währung für Currency-Berechnungen (optional)
+     * @return ProfitResult mit den berechneten Werten
+     */
+    public static ProfitResult calculateProfitsWithCleanPercentages(String tickFilePath, String signalId, String currency) {
         if (tickFilePath == null || signalId == null) {
-            LOGGER.warning("PERFORMANCE DEBUG: Ungültige Parameter für Profit-Berechnung: tickFilePath=" + tickFilePath + ", signalId=" + signalId);
+            LOGGER.warning("CLEAN PROFITS: Ungültige Parameter für Profit-Berechnung: tickFilePath=" + tickFilePath + ", signalId=" + signalId);
             return new ProfitResult(0.0, 0.0, 0.0, 0.0, currency, false, false, "Ungültige Parameter", "", "");
         }
         
-        LOGGER.info("PERFORMANCE DEBUG: Berechne Profits für Signal " + signalId + " - Tick-Datei: " + tickFilePath + " (PERFORMANCE-BASIERT + CURRENCY)");
+        LOGGER.info("CLEAN PROFITS: Berechne Profits mit Ein-/Auszahlungskorrektur für Signal " + signalId + " - Tick-Datei: " + tickFilePath);
         
         // Tick-Daten laden
         TickDataSet dataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
         if (dataSet == null || dataSet.getTickCount() == 0) {
-            LOGGER.warning("PERFORMANCE DEBUG: Keine Tick-Daten verfügbar für Signal " + signalId + " - Datei: " + tickFilePath);
+            LOGGER.warning("CLEAN PROFITS: Keine Tick-Daten verfügbar für Signal " + signalId + " - Datei: " + tickFilePath);
             return new ProfitResult(0.0, 0.0, 0.0, 0.0, currency, false, false, "Keine Tick-Daten verfügbar: " + tickFilePath, "", "");
         }
         
         List<TickData> ticks = dataSet.getTicks();
-        LOGGER.info("PERFORMANCE DEBUG: " + ticks.size() + " Ticks geladen für Signal " + signalId + " (PERFORMANCE-BASIERT + CURRENCY)");
+        LOGGER.info("CLEAN PROFITS: " + ticks.size() + " Ticks geladen für Signal " + signalId);
         
         // Mindestens 2 Ticks erforderlich für sinnvolle Profit-Berechnung
         if (ticks.size() < 2) {
-            LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Nur " + ticks.size() + " Tick(s) verfügbar, brauche mindestens 2 für Profit-Berechnung");
+            LOGGER.info("CLEAN PROFITS: Signal " + signalId + " - Nur " + ticks.size() + " Tick(s) verfügbar, brauche mindestens 2 für Profit-Berechnung");
             return new ProfitResult(0.0, 0.0, 0.0, 0.0, currency, false, false, "Nicht genügend Daten für Profit-Berechnung", "", "");
         }
         
@@ -173,7 +353,7 @@ public class PeriodProfitCalculator {
         TickData latestTick = dataSet.getLatestTick();
         double currentPerformance = latestTick.getProfit() + latestTick.getFloatingProfit();
         
-        // Initiale Equity als Basis für prozentuale Berechnungen (vom ersten Tick)
+        // Initiale Equity als Fallback-Basis für prozentuale Berechnungen (vom ersten Tick)
         double initialEquity = dataSet.getFirstTick().getEquity();
         
         LocalDateTime now = LocalDateTime.now();
@@ -182,19 +362,19 @@ public class PeriodProfitCalculator {
         LocalDateTime weekStart = getLastSunday(now);
         LocalDateTime monthStart = getFirstOfCurrentMonth(now);
         
-        LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Aktuell: " + now + 
+        LOGGER.info("CLEAN PROFITS: Signal " + signalId + " - Aktuell: " + now + 
                    ", Wochenstart: " + weekStart + ", Monatsstart: " + monthStart + 
                    ", Aktuelle Performance: " + currentPerformance + 
                    " (Profit: " + latestTick.getProfit() + " + Floating: " + latestTick.getFloatingProfit() + ")" +
-                   ", Initiale Equity: " + initialEquity + " [PERFORMANCE-BASIERT + CURRENCY]");
+                   ", Initiale Equity: " + initialEquity);
         
         // Zeige erste und letzte Ticks für Debugging
         TickData firstTick = ticks.get(0);
         TickData lastTick = ticks.get(ticks.size() - 1);
-        LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Erster Tick: " + firstTick.getTimestamp() + 
+        LOGGER.info("CLEAN PROFITS: Signal " + signalId + " - Erster Tick: " + firstTick.getTimestamp() + 
                    " (Performance: " + (firstTick.getProfit() + firstTick.getFloatingProfit()) + ")" +
                    ", Letzter Tick: " + lastTick.getTimestamp() + 
-                   " (Performance: " + (lastTick.getProfit() + lastTick.getFloatingProfit()) + ") [PERFORMANCE-BASIERT + CURRENCY]");
+                   " (Performance: " + (lastTick.getProfit() + lastTick.getFloatingProfit()) + ")");
         
         // PERFORMANCE-BASIERT: Suche Performance für Referenzzeitpunkte
         PerformanceSearchResult weekPerformanceResult = findBestPerformanceForReference(ticks, weekStart, "Wochenstart", signalId);
@@ -213,65 +393,95 @@ public class PeriodProfitCalculator {
         String weeklyTooltip = "";
         String monthlyTooltip = "";
         
+        // WOCHENGEWINN mit bereinigter Equity-Basis
         if (hasWeeklyData) {
             double weekStartPerformance = weekPerformanceResult.getPerformance();
-            // Performance-Änderung relativ zur initialen Equity
             double performanceChange = currentPerformance - weekStartPerformance;
-            weeklyProfit = (performanceChange / initialEquity) * 100.0;
-            
-            // NEU: Currency-Betrag berechnen
             weeklyProfitCurrency = performanceChange;
             
-            LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Wochenprofit berechnet: " +
-                       "(" + currentPerformance + " - " + weekStartPerformance + ") / " + initialEquity + " * 100 = " + 
-                       String.format("%.4f%%", weeklyProfit) + ", Currency: " + String.format("%.2f", weeklyProfitCurrency) + " [PERFORMANCE-BASIERT + CURRENCY]");
+            // Finde Referenz-Tick für Wochenstart
+            TickData weekReferenceTick = findTickForPerformanceResult(ticks, weekPerformanceResult);
             
-            // NEU: Tooltip für Wochengewinn erstellen
-            weeklyTooltip = String.format("Weekly Profit Berechnung:\n\n" +
-                                        "Aktuelle Performance: %.2f %s\n" +
-                                        "Performance am %s: %.2f %s\n" +
-                                        "Differenz: %.2f %s\n\n" +
-                                        "Prozentual (%.2f / %.2f * 100): %.2f%%\n\n" +
-                                        "Basiert auf Performance (Profit + FloatingProfit)\n" +
-                                        "- unabhängig von Ein-/Auszahlungen",
-                                        currentPerformance, currency != null ? currency : "",
-                                        weekStart.toLocalDate(), weekStartPerformance, currency != null ? currency : "",
-                                        weeklyProfitCurrency, currency != null ? currency : "",
-                                        weeklyProfitCurrency, initialEquity, weeklyProfit);
+            if (weekReferenceTick != null) {
+                // NEUE BERECHNUNG: Mit Ein-/Auszahlungskorrektur
+                weeklyProfit = DepositWithdrawalDetector.calculateCleanPercentage(
+                    performanceChange, ticks, weekReferenceTick);
+                
+                double cleanEquity = DepositWithdrawalDetector.calculateCleanEquityBasis(ticks, weekReferenceTick);
+                
+                weeklyTooltip = String.format("Weekly Profit (BEREINIGT):\n\n" +
+                                            "Aktuelle Performance: %.2f %s\n" +
+                                            "Performance am %s: %.2f %s\n" +
+                                            "Differenz: %.2f %s\n\n" +
+                                            "Bereinigte Equity-Basis: %.2f %s\n" +
+                                            "Prozentual: %.2f%%\n\n" +
+                                            "Ein-/Auszahlungen werden erkannt und bereinigt",
+                                            currentPerformance, currency != null ? currency : "",
+                                            weekStart.toLocalDate(), weekStartPerformance, currency != null ? currency : "",
+                                            weeklyProfitCurrency, currency != null ? currency : "",
+                                            cleanEquity, currency != null ? currency : "",
+                                            weeklyProfit);
+            } else {
+                // Fallback: Ursprüngliche Berechnung mit initialer Equity
+                weeklyProfit = (performanceChange / initialEquity) * 100.0;
+                weeklyTooltip = "Weekly Profit (Fallback): Bereinigte Berechnung nicht möglich, verwende initiale Equity als Basis";
+                
+                LOGGER.warning("CLEAN PROFITS: Wochengewinn Fallback für Signal " + signalId + 
+                              " - Verwende initiale Equity: " + initialEquity);
+            }
+            
+            LOGGER.info("CLEAN PROFITS: Wochengewinn berechnet für Signal " + signalId + ": " + 
+                       String.format("%.4f%%", weeklyProfit) + 
+                       " (Currency: " + String.format("%.2f", weeklyProfitCurrency) + " " + (currency != null ? currency : "") + ")");
         } else {
-            LOGGER.warning("PERFORMANCE DEBUG: Signal " + signalId + " - Keine gültigen Wochendaten verfügbar (PERFORMANCE-BASIERT + CURRENCY)");
+            LOGGER.warning("CLEAN PROFITS: Signal " + signalId + " - Keine gültigen Wochendaten verfügbar");
             weeklyTooltip = "Keine Daten für Wochengewinn verfügbar\n\n" +
                           "Benötigt mindestens einen Tick seit Wochenstart\n" +
                           "oder historische Daten vor dem Wochenstart";
         }
         
+        // MONATSGEWINN mit bereinigter Equity-Basis
         if (hasMonthlyData) {
             double monthStartPerformance = monthPerformanceResult.getPerformance();
-            // Performance-Änderung relativ zur initialen Equity
             double performanceChange = currentPerformance - monthStartPerformance;
-            monthlyProfit = (performanceChange / initialEquity) * 100.0;
-            
-            // NEU: Currency-Betrag berechnen
             monthlyProfitCurrency = performanceChange;
             
-            LOGGER.info("PERFORMANCE DEBUG: Signal " + signalId + " - Monatsprofit berechnet: " +
-                       "(" + currentPerformance + " - " + monthStartPerformance + ") / " + initialEquity + " * 100 = " + 
-                       String.format("%.4f%%", monthlyProfit) + ", Currency: " + String.format("%.2f", monthlyProfitCurrency) + " [PERFORMANCE-BASIERT + CURRENCY]");
+            // Finde Referenz-Tick für Monatsstart
+            TickData monthReferenceTick = findTickForPerformanceResult(ticks, monthPerformanceResult);
             
-            // NEU: Tooltip für Monatsgewinn erstellen
-            monthlyTooltip = String.format("Monthly Profit Berechnung:\n\n" +
-                                         "Aktuelle Performance: %.2f %s\n" +
-                                         "Performance am %s: %.2f %s\n" +
-                                         "Differenz: %.2f %s\n\n" +
-                                         "Prozentual (%.2f / %.2f * 100): %.2f%%\n\n" +
-                                         "Basiert auf Performance (Profit + FloatingProfit)\n" +
-                                         "- unabhängig von Ein-/Auszahlungen",
-                                         currentPerformance, currency != null ? currency : "",
-                                         monthStart.toLocalDate(), monthStartPerformance, currency != null ? currency : "",
-                                         monthlyProfitCurrency, currency != null ? currency : "",
-                                         monthlyProfitCurrency, initialEquity, monthlyProfit);
+            if (monthReferenceTick != null) {
+                // NEUE BERECHNUNG: Mit Ein-/Auszahlungskorrektur
+                monthlyProfit = DepositWithdrawalDetector.calculateCleanPercentage(
+                    performanceChange, ticks, monthReferenceTick);
+                
+                double cleanEquity = DepositWithdrawalDetector.calculateCleanEquityBasis(ticks, monthReferenceTick);
+                
+                monthlyTooltip = String.format("Monthly Profit (BEREINIGT):\n\n" +
+                                             "Aktuelle Performance: %.2f %s\n" +
+                                             "Performance am %s: %.2f %s\n" +
+                                             "Differenz: %.2f %s\n\n" +
+                                             "Bereinigte Equity-Basis: %.2f %s\n" +
+                                             "Prozentual: %.2f%%\n\n" +
+                                             "Ein-/Auszahlungen werden erkannt und bereinigt",
+                                             currentPerformance, currency != null ? currency : "",
+                                             monthStart.toLocalDate(), monthStartPerformance, currency != null ? currency : "",
+                                             monthlyProfitCurrency, currency != null ? currency : "",
+                                             cleanEquity, currency != null ? currency : "",
+                                             monthlyProfit);
+            } else {
+                // Fallback: Ursprüngliche Berechnung mit initialer Equity
+                monthlyProfit = (performanceChange / initialEquity) * 100.0;
+                monthlyTooltip = "Monthly Profit (Fallback): Bereinigte Berechnung nicht möglich, verwende initiale Equity als Basis";
+                
+                LOGGER.warning("CLEAN PROFITS: Monatsgewinn Fallback für Signal " + signalId + 
+                              " - Verwende initiale Equity: " + initialEquity);
+            }
+            
+            LOGGER.info("CLEAN PROFITS: Monatsgewinn berechnet für Signal " + signalId + ": " + 
+                       String.format("%.4f%%", monthlyProfit) + 
+                       " (Currency: " + String.format("%.2f", monthlyProfitCurrency) + " " + (currency != null ? currency : "") + ")");
         } else {
-            LOGGER.warning("PERFORMANCE DEBUG: Signal " + signalId + " - Keine gültigen Monatsdaten verfügbar (PERFORMANCE-BASIERT + CURRENCY)");
+            LOGGER.warning("CLEAN PROFITS: Signal " + signalId + " - Keine gültigen Monatsdaten verfügbar");
             monthlyTooltip = "Keine Daten für Monatsgewinn verfügbar\n\n" +
                            "Benötigt mindestens einen Tick seit Monatsstart\n" +
                            "oder historische Daten vor dem Monatsstart";
@@ -279,20 +489,35 @@ public class PeriodProfitCalculator {
         
         // Diagnostik-Informationen
         StringBuilder diagnostic = new StringBuilder();
-        diagnostic.append("Signal: ").append(signalId).append(", ");
+        diagnostic.append("Signal: ").append(signalId).append(" [CLEAN PERCENTAGES WITH DEPOSIT/WITHDRAWAL DETECTION], ");
         diagnostic.append("Current Performance: ").append(String.format("%.2f", currentPerformance)).append(", ");
         diagnostic.append("Initial Equity: ").append(String.format("%.2f", initialEquity)).append(", ");
         diagnostic.append("Week: ").append(weekPerformanceResult.getDiagnosticInfo()).append(", ");
-        diagnostic.append("Month: ").append(monthPerformanceResult.getDiagnosticInfo()).append(" [PERFORMANCE-BASIERT + CURRENCY]");
+        diagnostic.append("Month: ").append(monthPerformanceResult.getDiagnosticInfo());
         
-        LOGGER.info("PERFORMANCE DEBUG: Ergebnis für " + signalId + ": WeeklyProfit=" + String.format("%.4f%%", weeklyProfit) + 
+        LOGGER.info("CLEAN PROFITS: Ergebnis für " + signalId + ": WeeklyProfit=" + String.format("%.4f%%", weeklyProfit) + 
                    " (" + String.format("%.2f", weeklyProfitCurrency) + " " + (currency != null ? currency : "") + ")" +
                    ", MonthlyProfit=" + String.format("%.4f%%", monthlyProfit) + 
-                   " (" + String.format("%.2f", monthlyProfitCurrency) + " " + (currency != null ? currency : "") + ")" +
-                   " [PERFORMANCE-BASIERT + CURRENCY]");
+                   " (" + String.format("%.2f", monthlyProfitCurrency) + " " + (currency != null ? currency : "") + ")");
         
         return new ProfitResult(weeklyProfit, monthlyProfit, weeklyProfitCurrency, monthlyProfitCurrency, currency,
                                hasWeeklyData, hasMonthlyData, diagnostic.toString(), weeklyTooltip, monthlyTooltip);
+    }
+    
+    /**
+     * Hilfsmethode: Findet den TickData für ein PerformanceSearchResult
+     */
+    private static TickData findTickForPerformanceResult(List<TickData> ticks, PerformanceSearchResult result) {
+        if (result == null || !result.hasValidData() || result.getTimestamp() == null) {
+            return null;
+        }
+        
+        for (TickData tick : ticks) {
+            if (tick.getTimestamp().equals(result.getTimestamp())) {
+                return tick;
+            }
+        }
+        return null;
     }
     
     /**
@@ -449,7 +674,7 @@ public class PeriodProfitCalculator {
     /**
      * Erstellt eine detaillierte Diagnose für Debugging
      * PERFORMANCE-BASIERT: Zeigt Profit + FloatingProfit Werte
-     * ERWEITERT: Jetzt mit Currency-Informationen
+     * ERWEITERT: Jetzt mit Currency-Informationen und Ein-/Auszahlungsdiagnose
      * 
      * @param tickFilePath Pfad zur Tick-Datei
      * @param signalId Die Signal-ID
@@ -457,7 +682,7 @@ public class PeriodProfitCalculator {
      */
     public static String createDetailedDiagnostic(String tickFilePath, String signalId) {
         StringBuilder diag = new StringBuilder();
-        diag.append("=== PERIOD PROFIT DIAGNOSTIC (PERFORMANCE-BASIERT + CURRENCY) ===\n");
+        diag.append("=== PERIOD PROFIT DIAGNOSTIC (PERFORMANCE-BASIERT + CLEAN PERCENTAGES) ===\n");
         diag.append("Signal ID: ").append(signalId).append("\n");
         diag.append("Tick File: ").append(tickFilePath).append("\n");
         
@@ -479,12 +704,22 @@ public class PeriodProfitCalculator {
                 diag.append("Current Performance: ").append(lastTick.getProfit() + lastTick.getFloatingProfit())
                     .append(" (Profit: ").append(lastTick.getProfit())
                     .append(" + Floating: ").append(lastTick.getFloatingProfit()).append(") [PERFORMANCE-BASIERT]\n");
+                
+                // Ein-/Auszahlungsdiagnose
+                List<TickData> ticks = dataSet.getTicks();
+                int depositCount = 0;
+                for (int i = 1; i < ticks.size(); i++) {
+                    if (DepositWithdrawalDetector.isDepositOrWithdrawal(ticks.get(i-1), ticks.get(i))) {
+                        depositCount++;
+                    }
+                }
+                diag.append("Detected Deposits/Withdrawals: ").append(depositCount).append(" transactions\n");
             }
         } else {
             diag.append("No tick data available\n");
         }
         
-        ProfitResult result = calculateProfits(tickFilePath, signalId);
+        ProfitResult result = calculateProfitsWithCleanPercentages(tickFilePath, signalId, null);
         diag.append("Calculation Result: ").append(result.toString()).append("\n");
         diag.append("Diagnostic Info: ").append(result.getDiagnosticInfo()).append("\n");
         diag.append("Weekly Tooltip: ").append(result.getWeeklyTooltip().replace("\n", " ")).append("\n");
