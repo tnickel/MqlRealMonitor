@@ -24,9 +24,9 @@ import com.mql.realmonitor.data.TickDataLoader;
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * OPTIMIERT: TickChartWindowManager für asynchrones Laden optimiert
- * Reduziert die Zeit für initiales UI-Setup und verbessert Responsiveness
- * Koordiniert alle Komponenten: Chart-Panels, Toolbar, Layout, Daten-Loading
+ * ERWEITERT: TickChartWindowManager mit Scroll-Fix und automatischem Chart-Refresh
+ * NEU: Behebt Scroll-Probleme durch Timer-basiertes Auto-Refresh und Manual-Refresh-Button
+ * Koordiniert alle Komponenten: Chart-Panels, Toolbar, Layout, Daten-Loading, Scroll-Handling
  */
 public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCallbacks {
     
@@ -76,9 +76,16 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     private volatile boolean isWindowClosed = false;
     private volatile boolean isInitialSetupComplete = false;
     private int refreshCounter = 0;
+    private int timeScaleChangeCounter = 0;
+    
+    // NEU: Scroll-Handling Variablen
+    private Runnable scrollRefreshTimer = null;
+    private volatile boolean isScrolling = false;
+    private long lastScrollTime = 0;
+    private static final int SCROLL_REFRESH_DELAY = 500; // 500ms nach Scroll-Ende
     
     /**
-     * OPTIMIERT: Konstruktor - Erstellt nur minimales UI, lädt Daten asynchron
+     * KONSTRUKTOR: Erstellt nur minimales UI, lädt Daten asynchron
      */
     public TickChartWindowManager(Shell parent, MqlRealMonitorGUI parentGui, String signalId, 
                                  String providerName, SignalData signalData, String tickFilePath) {
@@ -89,7 +96,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         this.signalData = signalData;
         this.tickFilePath = tickFilePath;
         
-        LOGGER.info("=== OPTIMIZED CHART WINDOW MANAGER ERSTELLT ===");
+        LOGGER.info("=== ENHANCED CHART WINDOW MANAGER ERSTELLT (MIT SCROLL-FIX) ===");
         LOGGER.info("Signal: " + signalId + " (" + providerName + ")");
         
         // PHASE 1: Minimales Fenster sofort erstellen (schnell)
@@ -181,7 +188,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         LOGGER.info("Erstelle Info-Panel...");
         
         Group infoGroup = new Group(shell, SWT.NONE);
-        infoGroup.setText("Signal Information (OPTIMIZED - Async Loading)");
+        infoGroup.setText("Signal Information (ENHANCED - Scroll-Fix)");
         infoGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         infoGroup.setLayout(new GridLayout(2, false));
         
@@ -209,7 +216,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         LOGGER.info("Erstelle Zeitintervall-Panel...");
         
         Group timeScaleGroup = new Group(shell, SWT.NONE);
-        timeScaleGroup.setText("Zeitintervall (Optimized - Async Setup)");
+        timeScaleGroup.setText("Zeitintervall (Enhanced - Auto-Refresh nach Scroll)");
         timeScaleGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         timeScaleGroup.setLayout(new GridLayout(TimeScale.values().length, false));
         
@@ -243,13 +250,13 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     }
     
     /**
-     * OPTIMIZED: Erstellt scrollbaren Charts-Bereich asynchron
+     * ENHANCED: Erstellt scrollbaren Charts-Bereich mit Scroll-Handling
      */
     private void createScrollableChartsAreaAsync() {
-        LOGGER.info("Erstelle scrollbaren Charts-Bereich...");
+        LOGGER.info("Erstelle scrollbaren Charts-Bereich mit Scroll-Fix...");
         
         Group chartsGroup = new Group(shell, SWT.NONE);
-        chartsGroup.setText("Charts (Optimized - Loading...) - " + currentTimeScale.getLabel());
+        chartsGroup.setText("Charts (Enhanced - Auto-Refresh) - " + currentTimeScale.getLabel());
         chartsGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         chartsGroup.setLayout(new GridLayout(1, false));
         
@@ -259,6 +266,9 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         scrolledComposite.setExpandHorizontal(true);
         scrolledComposite.setExpandVertical(true);
         
+        // NEU: Scroll-Event-Handler hinzufügen
+        setupScrollHandling();
+        
         // Container für Charts erstellen
         chartsContainer = new Composite(scrolledComposite, SWT.NONE);
         chartsContainer.setLayout(new GridLayout(1, false));
@@ -266,7 +276,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         
         // Chart-Panels werden später erstellt wenn Daten verfügbar sind
         Label placeholderLabel = new Label(chartsContainer, SWT.CENTER);
-        placeholderLabel.setText("Charts werden geladen...\nBitte warten Sie einen Moment.");
+        placeholderLabel.setText("Charts werden geladen...\nBitte warten Sie einen Moment.\n\nScroll-Fix: Aktiviert");
         placeholderLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, true));
         
         // ScrolledComposite konfigurieren
@@ -274,11 +284,126 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         scrolledComposite.setMinSize(chartWidth, 200); // Minimale Höhe erstmal
         
         shell.layout();
-        LOGGER.info("Scrollbarer Charts-Bereich (Placeholder) erstellt");
+        LOGGER.info("Scrollbarer Charts-Bereich (Enhanced) erstellt");
     }
     
     /**
-     * OPTIMIZED: Erstellt die Toolbar asynchron
+     * NEU: Setup für Scroll-Event-Handling
+     */
+    private void setupScrollHandling() {
+        LOGGER.info("Setup Scroll-Event-Handling...");
+        
+        // Mouse Wheel Listener für Scroll-Detection
+        scrolledComposite.addListener(SWT.MouseWheel, event -> {
+            onScrollEvent("MouseWheel");
+        });
+        
+        // Scroll Bar Listener
+        if (scrolledComposite.getVerticalBar() != null) {
+            scrolledComposite.getVerticalBar().addListener(SWT.Selection, event -> {
+                onScrollEvent("VerticalScrollBar");
+            });
+        }
+        
+        if (scrolledComposite.getHorizontalBar() != null) {
+            scrolledComposite.getHorizontalBar().addListener(SWT.Selection, event -> {
+                onScrollEvent("HorizontalScrollBar");
+            });
+        }
+        
+        // Keyboard Scrolling (Arrow keys, Page Up/Down)
+        scrolledComposite.addListener(SWT.KeyDown, event -> {
+            switch (event.keyCode) {
+                case SWT.ARROW_UP:
+                case SWT.ARROW_DOWN:
+                case SWT.ARROW_LEFT:
+                case SWT.ARROW_RIGHT:
+                case SWT.PAGE_UP:
+                case SWT.PAGE_DOWN:
+                case SWT.HOME:
+                case SWT.END:
+                    onScrollEvent("Keyboard:" + event.keyCode);
+                    break;
+            }
+        });
+        
+        LOGGER.info("Scroll-Event-Handler eingerichtet");
+    }
+    
+    /**
+     * NEU: Behandelt Scroll-Events
+     */
+    private void onScrollEvent(String source) {
+        isScrolling = true;
+        lastScrollTime = System.currentTimeMillis();
+        
+        LOGGER.fine("Scroll-Event erkannt: " + source);
+        
+        // Timer für Auto-Refresh nach Scroll-Ende
+        scheduleScrollRefresh();
+    }
+    
+    /**
+     * NEU: Zeitgesteuertes Refresh nach Scroll-Ende
+     */
+    private void scheduleScrollRefresh() {
+        // Vorherigen Timer abbrechen
+        if (scrollRefreshTimer != null) {
+            display.timerExec(-1, scrollRefreshTimer); // Abbrechen
+        }
+        
+        // Neuen Timer erstellen
+        scrollRefreshTimer = () -> {
+            long timeSinceLastScroll = System.currentTimeMillis() - lastScrollTime;
+            
+            if (timeSinceLastScroll >= SCROLL_REFRESH_DELAY) {
+                // Scroll ist beendet - Auto-Refresh triggern
+                isScrolling = false;
+                
+                if (!isWindowClosed && !shell.isDisposed()) {
+                    LOGGER.info("Auto-Refresh nach Scroll-Ende ausgelöst");
+                    refreshChartsAfterScroll();
+                }
+            } else {
+                // Noch am Scrollen - Timer erneut setzen
+                scheduleScrollRefresh();
+            }
+        };
+        
+        display.timerExec(SCROLL_REFRESH_DELAY, scrollRefreshTimer);
+    }
+    
+    /**
+     * NEU: Refresht Charts nach Scroll-Ende (ohne Daten neu zu laden)
+     */
+    private void refreshChartsAfterScroll() {
+        try {
+            LOGGER.info("=== AUTO-REFRESH CHARTS NACH SCROLL ===");
+            
+            if (drawdownPanel != null && drawdownPanel.isReady()) {
+                drawdownPanel.getCanvas().redraw();
+                LOGGER.fine("Drawdown-Chart nach Scroll neu gezeichnet");
+            }
+            
+            if (profitPanel != null && profitPanel.isReady()) {
+                profitPanel.getCanvas().redraw();
+                LOGGER.fine("Profit-Chart nach Scroll neu gezeichnet");
+            }
+            
+            // Optional: Chart-Images neu rendern falls nötig
+            if (chartManager != null && imageRenderer != null) {
+                renderBothChartsToImages();
+            }
+            
+            LOGGER.info("Auto-Refresh nach Scroll erfolgreich abgeschlossen");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Auto-Refresh nach Scroll", e);
+        }
+    }
+    
+    /**
+     * Erstellt die Toolbar asynchron
      */
     private void createToolbarPanelAsync() {
         LOGGER.info("Erstelle Toolbar...");
@@ -292,7 +417,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     }
     
     /**
-     * OPTIMIZED: Erstellt Chart-Panels erst wenn Daten verfügbar sind
+     * Erstellt Chart-Panels erst wenn Daten verfügbar sind
      */
     private void createActualChartPanels() {
         LOGGER.info("Erstelle tatsächliche Chart-Panels...");
@@ -352,10 +477,11 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     }
     
     /**
-     * Wechselt das Zeitintervall
+     * Wechselt das Zeitintervall und erzwingt Chart-Neurendering
      */
     private void changeTimeScale(TimeScale newScale) {
         if (newScale == currentTimeScale) {
+            LOGGER.info("TimeScale bereits auf " + newScale.getLabel() + " - keine Änderung");
             return;
         }
         
@@ -371,23 +497,40 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
             }
         }
         
+        // TimeScale wechseln
+        TimeScale oldScale = currentTimeScale;
         currentTimeScale = newScale;
         
-        if (tickDataSet != null && isInitialSetupComplete) {
+        // TimeScale-Change-Counter erhöhen für Cache-Invalidierung
+        timeScaleChangeCounter++;
+        LOGGER.info("TimeScale-Wechsel #" + timeScaleChangeCounter);
+        
+        // Charts-Group Label aktualisieren
+        if (scrolledComposite != null && !scrolledComposite.isDisposed() && 
+            scrolledComposite.getParent() instanceof Group) {
+            Group chartsGroup = (Group) scrolledComposite.getParent();
+            chartsGroup.setText("Charts (Enhanced - Auto-Refresh) - " + currentTimeScale.getLabel());
+        }
+        
+        // Charts nur aktualisieren wenn Daten vorhanden sind
+        if (tickDataSet != null && isInitialSetupComplete && isDataLoaded) {
+            LOGGER.info("Triggere Chart-Update für neues TimeScale: " + currentTimeScale.getLabel());
             updateChartsWithCurrentData();
+        } else {
+            LOGGER.info("Charts können noch nicht aktualisiert werden - Daten fehlen oder Setup läuft noch");
         }
     }
     
     /**
-     * OPTIMIZED: Aktualisiert beide Chart-Panels - nur wenn alles bereit ist
+     * Aktualisiert beide Chart-Panels ohne refreshCounter zu erhöhen
      */
-    private void updateChartsWithCurrentData() {
+    public void updateChartsWithCurrentData() {
         if (!isInitialSetupComplete) {
             LOGGER.info("Initial Setup noch nicht abgeschlossen - Chart-Update wird verschoben");
             return;
         }
         
-        LOGGER.info("=== UPDATE BEIDE CHART-PANELS (OPTIMIZED) ===");
+        LOGGER.info("=== UPDATE BEIDE CHART-PANELS (ENHANCED) für TimeScale: " + currentTimeScale.getLabel() + " ===");
         
         if (tickDataSet == null) {
             LOGGER.warning("tickDataSet ist NULL - kann Charts nicht aktualisieren");
@@ -395,6 +538,8 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         }
         
         try {
+            LOGGER.info("Chart-Update für TimeScale: " + currentTimeScale.getLabel());
+            
             // Daten filtern
             filteredTicks = TickDataFilter.filterTicksForTimeScale(tickDataSet, currentTimeScale);
             
@@ -402,6 +547,8 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                 filteredTicks = tickDataSet.getTicks();
                 LOGGER.info("FALLBACK: Verwende alle verfügbaren Ticks");
             }
+            
+            LOGGER.info("TimeScale " + currentTimeScale.getLabel() + ": " + filteredTicks.size() + " gefilterte Ticks");
             
             // Chart-Panels erstellen falls noch nicht vorhanden
             if (drawdownPanel == null || profitPanel == null) {
@@ -419,9 +566,12 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                 profitPanel.setDataLoaded(true);
             }
             
+            // Chart-Images neu rendern nach Update!
+            renderBothChartsToImages();
+            
             updateInfoPanel();
             
-            LOGGER.info("Beide Chart-Panels erfolgreich aktualisiert (OPTIMIZED)");
+            LOGGER.info("Beide Chart-Panels erfolgreich aktualisiert (ENHANCED) für TimeScale: " + currentTimeScale.getLabel());
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "FEHLER beim Aktualisieren der Chart-Panels", e);
@@ -429,7 +579,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     }
     
     /**
-     * OPTIMIZED: Rendert beide Chart-Panels - nur wenn bereit
+     * Rendert beide Chart-Panels mit intelligentem Cache
      */
     private void renderBothChartsToImages() {
         if (chartManager == null || imageRenderer == null || !isInitialSetupComplete) {
@@ -437,13 +587,16 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         }
         
         try {
+            // Verwende timeScaleChangeCounter statt refreshCounter
             imageRenderer.renderBothChartsToImages(
                 chartManager.getDrawdownChart(),
                 chartManager.getProfitChart(),
                 chartWidth,
                 drawdownChartHeight,
                 profitChartHeight,
-                zoomFactor
+                zoomFactor,
+                currentTimeScale,
+                timeScaleChangeCounter
             );
             
             // Chart-Panels neu zeichnen
@@ -453,6 +606,9 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
             if (profitPanel != null && profitPanel.isReady()) {
                 profitPanel.getCanvas().redraw();
             }
+            
+            LOGGER.info("Charts gerendert mit TimeScale: " + currentTimeScale.getLabel() + 
+                       ", TimeScale-Change #" + timeScaleChangeCounter);
             
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Fehler beim Rendern der Chart-Images", e);
@@ -484,10 +640,10 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     }
     
     /**
-     * OPTIMIZED: Lädt Daten asynchron - besser strukturiert
+     * Lädt Daten asynchron
      */
     private void loadDataAsync() {
-        LOGGER.info("=== OPTIMIZED ASYNC DATEN-LOAD START ===");
+        LOGGER.info("=== ENHANCED ASYNC DATEN-LOAD START ===");
         
         updateInfoPanelLoading("Lade Tick-Daten...");
         
@@ -495,9 +651,8 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
             try {
                 LOGGER.info("Background-Thread: Lade Tick-Daten für " + signalId);
                 
-                // Daten-Loading mit Progress-Updates
                 updateLoadingProgress("Prüfe Tick-Datei...");
-                Thread.sleep(50); // Kurze Pause für UI-Update
+                Thread.sleep(50);
                 
                 updateLoadingProgress("Lade Tick-Daten...");
                 tickDataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
@@ -512,7 +667,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                 }
                 
                 isDataLoaded = true;
-                LOGGER.info("ERFOLG: Tick-Daten geladen: " + tickDataSet.getTickCount() + " Ticks (OPTIMIZED)");
+                LOGGER.info("ERFOLG: Tick-Daten geladen: " + tickDataSet.getTickCount() + " Ticks (ENHANCED)");
                 
                 updateLoadingProgress("Bereite Charts vor...");
                 Thread.sleep(100);
@@ -524,7 +679,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                 });
                 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "FATALER FEHLER beim optimierten Laden der Tick-Daten", e);
+                LOGGER.log(Level.SEVERE, "FATALER FEHLER beim enhanced Laden der Tick-Daten", e);
                 
                 display.asyncExec(() -> {
                     if (!isWindowClosed && !shell.isDisposed()) {
@@ -532,7 +687,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                     }
                 });
             }
-        }, "OptimizedTickDataLoader-" + signalId).start();
+        }, "EnhancedTickDataLoader-" + signalId).start();
     }
     
     /**
@@ -550,13 +705,14 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
      * Zeigt initialen Info-Text
      */
     private void updateInfoPanelInitial() {
-        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Setup läuft... [OPTIMIZED]";
+        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Setup läuft... [ENHANCED]";
         infoLabel.setText(info);
         
         if (detailsText != null) {
-            detailsText.setText("=== OPTIMIZED CHART WINDOW (ASYNC LOADING) ===\n" +
+            detailsText.setText("=== ENHANCED CHART WINDOW (SCROLL-FIX) ===\n" +
                                "Chart-Panels: Werden nach Daten-Load erstellt\n" +
-                               "Toolbar: Async erstellt\n" +
+                               "Toolbar: Async erstellt mit Chart-Refresh-Button\n" +
+                               "Scroll-Handling: Timer-basiertes Auto-Refresh aktiviert\n" +
                                "Manager: Optimiert für bessere Responsiveness\n" +
                                "Tick-Datei: " + tickFilePath + "\n" +
                                "Setup-Phase läuft...");
@@ -572,12 +728,14 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                 infoLabel.setText("Signal: " + signalId + " - " + status);
                 
                 if (detailsText != null && !detailsText.isDisposed()) {
-                    detailsText.setText("=== OPTIMIZED ASYNC LOADING ===\n" +
+                    detailsText.setText("=== ENHANCED ASYNC LOADING (SCROLL-FIX) ===\n" +
                                        "Status: " + status + "\n" +
                                        "Signal: " + signalId + "\n" +
                                        "Provider: " + providerName + "\n" +
                                        "Setup complete: " + isInitialSetupComplete + "\n" +
                                        "Data loaded: " + isDataLoaded + "\n" +
+                                       "Scroll-Handler: Aktiv\n" +
+                                       "Auto-Refresh: Nach " + SCROLL_REFRESH_DELAY + "ms\n" +
                                        "Tick-Datei: " + tickFilePath + "\n");
                 }
             }
@@ -594,29 +752,36 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         info.append("Zeitintervall: ").append(currentTimeScale.getLabel()).append("   ");
         info.append("Refresh: #").append(refreshCounter);
         
+        if (isScrolling) {
+            info.append("   [SCROLLING...]");
+        }
+        
         infoLabel.setText(info.toString());
         
         if (detailsText != null && !detailsText.isDisposed()) {
             StringBuilder details = new StringBuilder();
-            details.append("=== OPTIMIZED CHART WINDOW - ASYNC LOADED ===\n");
+            details.append("=== ENHANCED CHART WINDOW (SCROLL-FIX AKTIV) ===\n");
             details.append("Drawdown-Panel: ").append(drawdownPanel != null && drawdownPanel.isReady() ? "OK" : "LOADING").append("\n");
             details.append("Profit-Panel: ").append(profitPanel != null && profitPanel.isReady() ? "OK" : "LOADING").append("\n");
             details.append("Toolbar: ").append(toolbar != null && !toolbar.isDisposed() ? "OK" : "LOADING").append("\n");
             details.append("ChartManager: ").append(chartManager != null ? "OK" : "NULL").append("\n");
             details.append("ImageRenderer: ").append(imageRenderer != null ? "OK" : "NULL").append("\n");
             details.append("Setup Complete: ").append(isInitialSetupComplete).append("\n");
+            details.append("Scroll-Status: ").append(isScrolling ? "SCROLLING" : "IDLE").append("\n");
+            details.append("Auto-Refresh-Delay: ").append(SCROLL_REFRESH_DELAY).append("ms\n");
             
             if (tickDataSet != null && filteredTicks != null) {
                 details.append("Tick-Daten: ").append(tickDataSet.getTickCount()).append(" gesamt, ").append(filteredTicks.size()).append(" gefiltert\n");
             }
             
             details.append("Zoom-Faktor: ").append(String.format("%.2f", zoomFactor)).append("\n");
+            details.append("TimeScale-Changes: ").append(timeScaleChangeCounter).append("\n");
             
             detailsText.setText(details.toString());
         }
         
         if (shell != null && !shell.isDisposed()) {
-            shell.setText("Charts - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [OPTIMIZED #" + refreshCounter + "]");
+            shell.setText("Charts - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [ENHANCED #" + refreshCounter + "]");
         }
     }
     
@@ -624,10 +789,10 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
      * Zeigt "Keine Daten"-Nachricht
      */
     private void showNoDataMessage() {
-        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten [OPTIMIZED]");
+        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten [ENHANCED]");
         
         if (detailsText != null && !detailsText.isDisposed()) {
-            detailsText.setText("Keine Tick-Daten verfügbar.\nDas Chart-System ist trotzdem funktional.");
+            detailsText.setText("Keine Tick-Daten verfügbar.\nDas Chart-System ist trotzdem funktional.\nScroll-Fix: Aktiv");
         }
         
         if (drawdownPanel != null) {
@@ -643,8 +808,8 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
      */
     private void showErrorMessage(String message) {
         MessageBox errorBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
-        errorBox.setText("Fehler im Optimized Chart Window");
-        errorBox.setMessage("OPTIMIZED CHART WINDOW:\n\n" + message);
+        errorBox.setText("Fehler im Enhanced Chart Window");
+        errorBox.setMessage("ENHANCED CHART WINDOW (SCROLL-FIX):\n\n" + message);
         errorBox.open();
     }
     
@@ -654,7 +819,12 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     private void closeWindow() {
         isWindowClosed = true;
         
-        LOGGER.info("=== SCHLIESSE OPTIMIZED CHART WINDOW ===");
+        // Scroll-Timer abbrechen
+        if (scrollRefreshTimer != null) {
+            display.timerExec(-1, scrollRefreshTimer);
+        }
+        
+        LOGGER.info("=== SCHLIESSE ENHANCED CHART WINDOW ===");
         
         if (imageRenderer != null) {
             imageRenderer.disposeImages();
@@ -670,15 +840,18 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
      */
     public void open() {
         shell.open();
-        LOGGER.info("Optimized ChartWindow geöffnet für Signal: " + signalId);
+        LOGGER.info("Enhanced ChartWindow geöffnet für Signal: " + signalId);
     }
     
     // ========== TOOLBAR CALLBACKS IMPLEMENTATION ==========
     
+    /**
+     * onRefresh erhöht nur refreshCounter für Info-Display
+     */
     @Override
     public void onRefresh() {
         refreshCounter++;
-        LOGGER.info("Optimized Refresh #" + refreshCounter + " angefordert");
+        LOGGER.info("Enhanced Refresh #" + refreshCounter + " angefordert");
         
         if (toolbar != null) {
             toolbar.setRefreshEnabled(false);
@@ -694,14 +867,61 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         display.timerExec(3000, () -> {
             if (!isWindowClosed && toolbar != null && !toolbar.isDisposed()) {
                 toolbar.setRefreshEnabled(true);
-                toolbar.setRefreshText("Aktualisieren");
+                toolbar.setRefreshText("🔄 Daten laden");
             }
         });
     }
     
+    /**
+     * NEU: Chart-only Refresh ohne Daten neu zu laden
+     */
+    @Override
+    public void onChartRefresh() {
+        LOGGER.info("Chart-Refresh angefordert (ohne Daten-Reload)");
+        
+        if (toolbar != null) {
+            toolbar.setChartRefreshEnabled(false);
+            toolbar.setChartRefreshText("⏳ Refreshing...");
+        }
+        
+        try {
+            // Nur Charts neu rendern, keine Daten laden
+            if (isDataLoaded && filteredTicks != null) {
+                renderBothChartsToImages();
+                
+                // Canvas neu zeichnen
+                if (drawdownPanel != null && drawdownPanel.isReady()) {
+                    drawdownPanel.getCanvas().redraw();
+                }
+                if (profitPanel != null && profitPanel.isReady()) {
+                    profitPanel.getCanvas().redraw();
+                }
+                
+                LOGGER.info("Chart-Refresh erfolgreich abgeschlossen");
+            } else {
+                LOGGER.warning("Chart-Refresh nicht möglich - keine Daten geladen");
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Chart-Refresh", e);
+        }
+        
+        // Button wieder aktivieren
+        display.timerExec(1000, () -> {
+            if (!isWindowClosed && toolbar != null && !toolbar.isDisposed()) {
+                toolbar.setChartRefreshEnabled(true);
+                toolbar.setChartRefreshText("📊 Charts");
+            }
+        });
+    }
+    
+    /**
+     * Zoom-Operationen invalidieren den Cache durch timeScaleChangeCounter
+     */
     @Override
     public void onZoomIn() {
         zoomFactor *= 1.2;
+        timeScaleChangeCounter++;
         renderBothChartsToImages();
         LOGGER.info("Zoom In: " + zoomFactor);
     }
@@ -709,6 +929,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     @Override
     public void onZoomOut() {
         zoomFactor /= 1.2;
+        timeScaleChangeCounter++;
         renderBothChartsToImages();
         LOGGER.info("Zoom Out: " + zoomFactor);
     }
@@ -716,6 +937,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     @Override
     public void onResetZoom() {
         zoomFactor = 1.0;
+        timeScaleChangeCounter++;
         renderBothChartsToImages();
         LOGGER.info("Zoom Reset");
     }

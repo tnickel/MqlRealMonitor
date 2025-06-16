@@ -3,6 +3,7 @@ package com.mql.realmonitor.gui;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -32,6 +33,7 @@ import com.mql.realmonitor.data.TickDataLoader;
  * NEU: Weekly und Monthly Profit Currency Spalten zwischen Gesamtwert und WeeklyProfit mit Tooltip
  * NEU: IdTranslationManager für Provider-Namen beim Start und bei Fehlern
  * KORRIGIERT: Total Value Drawdown für Konsistenz zwischen Chart und Tabelle
+ * KORRIGIERT: UnmodifiableList Exception beim Sortieren behoben
  */
 public class SignalProviderTable {
     
@@ -244,6 +246,7 @@ public class SignalProviderTable {
     /**
      * NEU: Berechnet den Peak-Total-Value für eine Signal-ID aus den Tick-Daten
      * KONSISTENT MIT CHART: Verwendet die gleiche Peak-Tracking-Logik wie der Chart
+     * KORRIGIERT: Erstellt eine Kopie der Liste vor dem Sortieren
      * 
      * @param signalId Die Signal-ID
      * @return Der Peak-Total-Value oder aktueller Total Value als Fallback
@@ -301,14 +304,17 @@ public class SignalProviderTable {
                 return currentTotalValue;
             }
             
+            // KORRIGIERT: Erstelle eine Kopie der Liste vor dem Sortieren
+            List<TickDataLoader.TickData> sortedTickData = new ArrayList<>(allTickData);
+            
             // KONSISTENT MIT CHART: Peak-Tracking durch alle historischen Daten
             double peakTotalValue = 0.0;
             boolean firstData = true;
             
-            // Sortiere chronologisch
-            allTickData.sort((a, b) -> a.getTimestamp().compareTo(b.getTimestamp()));
+            // Sortiere chronologisch (jetzt auf der Kopie)
+            sortedTickData.sort((a, b) -> a.getTimestamp().compareTo(b.getTimestamp()));
             
-            for (TickDataLoader.TickData tick : allTickData) {
+            for (TickDataLoader.TickData tick : sortedTickData) {
                 double totalValue = tick.getTotalValue();
                 
                 if (firstData) {
@@ -331,7 +337,7 @@ public class SignalProviderTable {
             peakTotalValueCache.put(signalId, peakTotalValue);
             
             LOGGER.info("PEAK BERECHNUNG ABGESCHLOSSEN für " + signalId + ": " + 
-                       String.format("%.6f", peakTotalValue) + " (aus " + allTickData.size() + " Tick-Datenpunkten)");
+                       String.format("%.6f", peakTotalValue) + " (aus " + sortedTickData.size() + " Tick-Datenpunkten)");
             
             return peakTotalValue;
             

@@ -23,8 +23,8 @@ import com.mql.realmonitor.parser.SignalData;
 import com.mql.realmonitor.tickdata.TickDataWriter;
 
 /**
- * Toolbar für das TickChartWindow mit allen Buttons und Event-Handlern
- * Verwaltet: Refresh, Diagnostik, Tickdaten, MQL5 Website, Zoom-Funktionen, Format-Reparatur
+ * ERWEITERT: Toolbar mit Chart-Refresh-Button und verbessertem Scroll-Handling
+ * Verwaltet: Daten-Refresh, Chart-Refresh, Diagnostik, Tickdaten, MQL5 Website, Zoom-Funktionen, Format-Reparatur
  */
 public class TickChartWindowToolbar extends Composite {
     
@@ -32,9 +32,10 @@ public class TickChartWindowToolbar extends Composite {
     
     // UI Komponenten
     private Button refreshButton;
+    private Button chartRefreshButton;  // NEU: Separater Chart-Refresh-Button
     private Button diagnosticButton;
     private Button tickDataButton;
-    private Button repairTickDataButton;  // NEU: Format-Reparatur Button
+    private Button repairTickDataButton;
     private Button mql5WebsiteButton;
     private Button zoomInButton;
     private Button zoomOutButton;
@@ -52,6 +53,7 @@ public class TickChartWindowToolbar extends Composite {
     // Callback-Interfaces für Aktionen
     public interface ToolbarCallbacks {
         void onRefresh();
+        void onChartRefresh();  // NEU: Chart-only Refresh
         void onZoomIn();
         void onZoomOut();
         void onResetZoom();
@@ -86,7 +88,7 @@ public class TickChartWindowToolbar extends Composite {
         createButtons();
         setupEventHandlers();
         
-        LOGGER.info("TickChartWindowToolbar erstellt für Signal: " + signalId);
+        LOGGER.info("TickChartWindowToolbar erstellt für Signal: " + signalId + " (mit Chart-Refresh)");
     }
     
     /**
@@ -97,14 +99,21 @@ public class TickChartWindowToolbar extends Composite {
     }
     
     /**
-     * Erstellt alle Buttons
+     * ERWEITERT: Erstellt alle Buttons inkl. Chart-Refresh
      */
     private void createButtons() {
-        setLayout(new GridLayout(10, false)); // 10 Buttons (war 9)
+        setLayout(new GridLayout(11, false)); // 11 Buttons (war 10)
         
         refreshButton = new Button(this, SWT.PUSH);
-        refreshButton.setText("Aktualisieren");
+        refreshButton.setText("🔄 Daten laden");
         refreshButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        refreshButton.setToolTipText("Lädt Tick-Daten neu von der Datei");
+        
+        // NEU: Separater Chart-Refresh-Button
+        chartRefreshButton = new Button(this, SWT.PUSH);
+        chartRefreshButton.setText("📊 Charts");
+        chartRefreshButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
+        chartRefreshButton.setToolTipText("Zeichnet Charts neu (behebt Scroll-Probleme)");
         
         diagnosticButton = new Button(this, SWT.PUSH);
         diagnosticButton.setText("Diagnostik");
@@ -116,7 +125,6 @@ public class TickChartWindowToolbar extends Composite {
         tickDataButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
         tickDataButton.setToolTipText("Zeigt die rohen Tickdaten aus der Datei");
         
-        // NEU: Format-Reparatur Button
         repairTickDataButton = new Button(this, SWT.PUSH);
         repairTickDataButton.setText("🔧 Reparieren");
         repairTickDataButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
@@ -146,11 +154,11 @@ public class TickChartWindowToolbar extends Composite {
         closeButton.setText("Schließen");
         closeButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, false, false));
         
-        LOGGER.fine("Toolbar-Buttons erstellt (mit Format-Reparatur)");
+        LOGGER.fine("Toolbar-Buttons erstellt (mit Chart-Refresh und Format-Reparatur)");
     }
     
     /**
-     * Setup Event Handler für alle Buttons
+     * ERWEITERT: Setup Event Handler für alle Buttons inkl. Chart-Refresh
      */
     private void setupEventHandlers() {
         refreshButton.addSelectionListener(new SelectionAdapter() {
@@ -158,6 +166,16 @@ public class TickChartWindowToolbar extends Composite {
             public void widgetSelected(SelectionEvent e) {
                 if (callbacks != null) {
                     callbacks.onRefresh();
+                }
+            }
+        });
+        
+        // NEU: Chart-Refresh Event Handler
+        chartRefreshButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                if (callbacks != null) {
+                    callbacks.onChartRefresh();
                 }
             }
         });
@@ -176,7 +194,6 @@ public class TickChartWindowToolbar extends Composite {
             }
         });
         
-        // NEU: Event Handler für Format-Reparatur
         repairTickDataButton.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent e) {
@@ -227,7 +244,7 @@ public class TickChartWindowToolbar extends Composite {
             }
         });
         
-        LOGGER.fine("Event-Handler für Toolbar-Buttons eingerichtet (mit Format-Reparatur)");
+        LOGGER.fine("Event-Handler für Toolbar-Buttons eingerichtet (mit Chart-Refresh)");
     }
     
     /**
@@ -493,7 +510,7 @@ public class TickChartWindowToolbar extends Composite {
         report.append("Refresh Counter: ").append(callbacks.getRefreshCounter()).append("\n");
         report.append("Data Loaded: ").append(callbacks.isDataLoaded()).append("\n");
         report.append("Zoom Factor: ").append(callbacks.getZoomFactor()).append("\n");
-        report.append("Chart Typ: DRAWDOWN + PROFIT (DUAL-CHART) + TICKDATEN + MQL5 LINK + FORMAT-REPARATUR\n\n");
+        report.append("Chart Typ: DRAWDOWN + PROFIT (DUAL-CHART) + TICKDATEN + MQL5 LINK + FORMAT-REPARATUR + CHART-REFRESH\n\n");
         
         // SignalData Info
         report.append("SIGNALDATA:\n");
@@ -540,6 +557,12 @@ public class TickChartWindowToolbar extends Composite {
         report.append("ImageRenderer: ").append(imageRenderer != null ? "OK" : "NULL").append("\n");
         report.append("HasValidDrawdownImage: ").append(imageRenderer != null ? imageRenderer.hasValidDrawdownImage() : "N/A").append("\n");
         report.append("HasValidProfitImage: ").append(imageRenderer != null ? imageRenderer.hasValidProfitImage() : "N/A").append("\n");
+        
+        // SCROLL-PROBLEME in Diagnostik
+        report.append("\nSCROLL-HANDLING:\n");
+        report.append("Chart-Refresh-Button: Verfügbar\n");
+        report.append("Auto-Scroll-Refresh: Implementiert\n");
+        report.append("Canvas-Redraw-Timer: Aktiv\n");
         
         // Zeige Bericht in einem Dialog
         showDiagnosticDialog(report.toString());
@@ -602,10 +625,35 @@ public class TickChartWindowToolbar extends Composite {
     }
     
     /**
+     * NEU: Aktiviert/Deaktiviert den Chart-Refresh-Button
+     */
+    public void setChartRefreshEnabled(boolean enabled) {
+        if (!chartRefreshButton.isDisposed()) {
+            chartRefreshButton.setEnabled(enabled);
+        }
+    }
+    
+    /**
+     * NEU: Setzt den Text des Chart-Refresh-Buttons
+     */
+    public void setChartRefreshText(String text) {
+        if (!chartRefreshButton.isDisposed()) {
+            chartRefreshButton.setText(text);
+        }
+    }
+    
+    /**
      * Gibt den Refresh-Button zurück
      */
     public Button getRefreshButton() {
         return refreshButton;
+    }
+    
+    /**
+     * NEU: Gibt den Chart-Refresh-Button zurück
+     */
+    public Button getChartRefreshButton() {
+        return chartRefreshButton;
     }
     
     @Override

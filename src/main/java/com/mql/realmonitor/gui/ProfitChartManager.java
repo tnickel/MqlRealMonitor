@@ -19,15 +19,15 @@ import org.jfree.data.time.TimeSeriesCollection;
 import com.mql.realmonitor.data.TickDataLoader;
 
 /**
- * KORRIGIERT: Behält Performance-Optimierungen aber stellt korrekte Chart-Darstellung wieder her
- * BEHEBT: 4-Minuten-Blocking durch Zero-Data-Detection UND korrekte Profit-Darstellung
- * WIEDERHERGESTELLT: Korrekte Y-Achsen-Kalibrierung und Shapes für bessere Sichtbarkeit
+ * KORRIGIERT: Profit-Chart-Manager für korrekte DIAGNOSE #2 Darstellung
+ * BEHEBT: Y-Achse Auto-Range und normale X-Achse wie in Original DIAGNOSE #2
+ * KORRIGIERT: Entfernt überkomplexe Achsen-Kalibrierung für normale Darstellung
  */
 public class ProfitChartManager {
     
     private static final Logger LOGGER = Logger.getLogger(ProfitChartManager.class.getName());
     
-    // PERFORMANCE: Konstanten für optimale Chart-Performance 
+    // PERFORMANCE: Konstanten für optimale Chart-Performance
     private static final double MIN_Y_RANGE = 1.0;  // Mindest-Y-Achsen-Spanne
     private static final double DEFAULT_Y_PADDING = 10.0;  // Standard-Y-Padding bei Null-Werten
     private static final int MAX_SERIES_ITEMS = 10000;  // Limit für TimeSeries-Performance
@@ -45,6 +45,9 @@ public class ProfitChartManager {
     // Profit-Berechnung
     private Double initialEquity = null;
     
+    // KRITISCH: Aktuelle TimeScale für X-Achsen-Kalibrierung
+    private TimeScale currentTimeScale = TimeScale.M15;  // Default
+    
     // DEBUG-COUNTER
     private int updateCounter = 0;
     
@@ -58,7 +61,7 @@ public class ProfitChartManager {
     }
     
     /**
-     * KORRIGIERT: Erstellt Chart mit Performance UND korrekter Darstellung
+     * KORRIGIERT: Erstellt Chart mit Performance UND korrekter DIAGNOSE #2 Darstellung
      */
     private void createProfitChart() {
         // PERFORMANCE: TimeSeries mit Performance-Optimierungen (aber korrekte Darstellung)
@@ -77,37 +80,37 @@ public class ProfitChartManager {
         profitChart = ChartFactory.createTimeSeriesChart(
             "Profit-Entwicklung - " + signalId + " (" + providerName + ") - DIAGNOSEMODUS",
             "Zeit",
-            "Profit (€/$/etc.)",
+            "Profit - DIAGNOSEMODUS",
             profitDataset,
             true,  // Legend
             true,  // Tooltips - REAKTIVIERT für bessere UX
             false  // URLs
         );
         
-        // KORRIGIERT: Chart-Konfiguration mit korrekter Darstellung
-        configureProfitChart();
+        // KORRIGIERT: Chart-Konfiguration mit DIAGNOSE #2 Darstellung
+        configureProfitChartForDiagnose2();
         
-        LOGGER.info("=== KORRIGIERTER PROFIT-CHART ERSTELLT für Signal: " + signalId + " ===");
+        LOGGER.info("=== KORRIGIERTER PROFIT-CHART ERSTELLT für Signal: " + signalId + " (DIAGNOSE #2 Style) ===");
     }
     
     /**
-     * KORRIGIERT: Konfiguriert Chart für Performance UND korrekte Darstellung
+     * KORRIGIERT: Konfiguriert Chart für DIAGNOSE #2 Darstellung (wie im Original Bild)
      */
-    private void configureProfitChart() {
+    private void configureProfitChartForDiagnose2() {
         XYPlot plot = profitChart.getXYPlot();
         XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer();
         
-        // KORRIGIERT: Shapes REAKTIVIERT für korrekte Darstellung (wie in Bild 2)
+        // KORRIGIERT: Shapes REAKTIVIERT für korrekte DIAGNOSE #2 Darstellung 
         renderer.setSeriesLinesVisible(0, true);  // Profit-Linie
         renderer.setSeriesShapesVisible(0, true); // Profit-Punkte REAKTIVIERT
         renderer.setSeriesLinesVisible(1, true);  // Profit+Open-Linie
         renderer.setSeriesShapesVisible(1, true); // Profit+Open-Punkte REAKTIVIERT
         
-        // KORREKTE Shape-Größe für bessere Sichtbarkeit (wie Original)
+        // KORREKTE Shape-Größe für bessere Sichtbarkeit (wie DIAGNOSE #2)
         renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-3, -3, 6, 6)); // Profit
         renderer.setSeriesShape(1, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Profit+Open (etwas größer)
         
-        // KORREKTE Farben (wie Original)
+        // KORREKTE Farben (wie DIAGNOSE #2)
         renderer.setSeriesPaint(0, new Color(0, 150, 0));   // Grün für Profit
         renderer.setSeriesPaint(1, new Color(255, 200, 0)); // Gelb für Profit + Open Equity
         renderer.setSeriesStroke(0, new BasicStroke(2.0f)); // KORRIGIERT: Ursprüngliche Stärke
@@ -115,7 +118,7 @@ public class ProfitChartManager {
         
         plot.setRenderer(renderer);
         
-        // Hintergrund-Farben (wie Original)
+        // Hintergrund-Farben (wie DIAGNOSE #2)
         profitChart.setBackgroundPaint(new Color(250, 250, 250));
         plot.setBackgroundPaint(Color.WHITE);
         plot.setDomainGridlinePaint(Color.LIGHT_GRAY);
@@ -125,23 +128,26 @@ public class ProfitChartManager {
         plot.setDomainGridlinesVisible(true);
         plot.setRangeGridlinesVisible(true);
         
-        // Achsen-Labels
+        // Achsen-Labels (wie DIAGNOSE #2)
         plot.getRangeAxis().setLabel("Profit - DIAGNOSEMODUS");
         plot.getDomainAxis().setLabel("Zeit");
         
-        // KRITISCH: Y-Achse für manuelle Kontrolle aber KORREKTER Auto-Range
-        plot.getRangeAxis().setAutoRange(false);  
+        // KRITISCH FIX: Y-Achse AUTO-RANGE aktivieren (wie DIAGNOSE #2)
+        plot.getRangeAxis().setAutoRange(true);  // KORRIGIERT: War false, jetzt true!
         plot.getRangeAxis().setLowerMargin(0.02); // KORRIGIERT: Ursprüngliche Margins
         plot.getRangeAxis().setUpperMargin(0.02);
+        
+        // KRITISCH FIX: X-Achse AUTO-RANGE aktivieren (wie DIAGNOSE #2)
+        plot.getDomainAxis().setAutoRange(true);  // KORRIGIERT: Automatische Zeitachse
     }
     
     /**
-     * KORRIGIERT: Chart-Update mit Performance-Schutz UND korrekter Darstellung
+     * KORRIGIERT: Chart-Update mit Performance-Schutz UND einfacher DIAGNOSE #2 Darstellung
      */
     public void updateProfitChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         updateCounter++;
         
-        LOGGER.info("=== KORRIGIERTER PROFIT CHART UPDATE #" + updateCounter + " GESTARTET für Signal: " + signalId + " ===");
+        LOGGER.info("=== KORRIGIERTER PROFIT CHART UPDATE #" + updateCounter + " GESTARTET für Signal: " + signalId + " (DIAGNOSE #2 Style) ===");
         LOGGER.info("Input-Daten: filteredTicks=" + (filteredTicks != null ? filteredTicks.size() : "NULL") + 
                    ", timeScale=" + (timeScale != null ? timeScale.getLabel() : "NULL"));
         
@@ -151,7 +157,9 @@ public class ProfitChartManager {
         }
         
         if (filteredTicks.isEmpty()) {
-            LOGGER.warning("WARNUNG: Keine gefilterten Ticks - Chart bleibt leer!");
+            LOGGER.warning("WARNUNG: Keine gefilterten Ticks - setze leeren Chart für TimeScale: " + 
+                          (timeScale != null ? timeScale.getLabel() : "NULL"));
+            setEmptyChart(timeScale);
             return;
         }
         
@@ -161,11 +169,19 @@ public class ProfitChartManager {
         }
         
         try {
-            LOGGER.info("Anzahl gefilterte Ticks: " + filteredTicks.size());
+            LOGGER.info("Anzahl gefilterte Ticks: " + filteredTicks.size() + " für TimeScale: " + 
+                       (timeScale != null ? timeScale.getLabel() : "NULL"));
             
-            // PERFORMANCE-CHECK: Erkenne Zero-Data-Pattern für Fast-Exit
-            if (isZeroDataPattern(filteredTicks)) {
-                LOGGER.warning("ZERO-DATA-PATTERN ERKANNT - verwende Fast-Rendering");
+            // KRITISCH: Aktuelle TimeScale speichern für Titel
+            if (timeScale != null) {
+                this.currentTimeScale = timeScale;
+                LOGGER.info("TimeScale aktualisiert auf: " + timeScale.getLabel());
+            }
+            
+            // KRITISCH: Zero-Data-Pattern-Check nur für extreme Fälle (99% Nullwerte)
+            if (isExtremeZeroDataPattern(filteredTicks)) {
+                LOGGER.warning("EXTREME ZERO-DATA-PATTERN ERKANNT - verwende Fast-Rendering für TimeScale: " + 
+                              (timeScale != null ? timeScale.getLabel() : "NULL"));
                 handleZeroDataPatternOptimized(filteredTicks, timeScale);
                 return;
             }
@@ -181,8 +197,8 @@ public class ProfitChartManager {
             LOGGER.info("Leere Profit-Chart-Serien...");
             clearProfitSeries();
             
-            // SCHRITT 2: KORREKTE Daten-Hinzufügung (wie Original)
-            LOGGER.info("=== BEGINNE PROFIT-DATEN-HINZUFÜGUNG (KORREKTE BERECHNUNG) ===");
+            // SCHRITT 2: KORREKTE Daten-Hinzufügung (wie DIAGNOSE #2)
+            LOGGER.info("=== BEGINNE PROFIT-DATEN-HINZUFÜGUNG (DIAGNOSE #2 BERECHNUNG) ===");
             int addedCount = 0;
             
             for (int i = 0; i < filteredTicks.size(); i++) {
@@ -193,7 +209,7 @@ public class ProfitChartManager {
                     Date javaDate = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
                     Second second = new Second(javaDate);
                     
-                    // KORREKTE Profit-Berechnung (wie Original)
+                    // KORREKTE Profit-Berechnung (wie DIAGNOSE #2)
                     double currentEquity = tick.getEquity();
                     double realizedProfit = currentEquity - initialEquity;
                     profitSeries.add(second, realizedProfit);
@@ -212,27 +228,29 @@ public class ProfitChartManager {
             
             LOGGER.info("HINZUGEFÜGTE PROFIT-DATENPUNKTE: " + addedCount + " von " + filteredTicks.size());
             
-            // Chart-Titel aktualisieren
-            updateChartTitle(timeScale, filteredTicks.size());
+            // Chart-Titel aktualisieren (DIAGNOSE #2 Style)
+            updateChartTitleForDiagnose2(timeScale, filteredTicks.size());
             
-            // KORREKTE Y-Achsen-Kalibrierung (wie Original aber mit Performance-Schutz)
-            adjustProfitChartYAxisRangeRobustCorrected(filteredTicks);
+            // KEINE komplexe Y-Achsen-Kalibrierung - verwende AUTO-RANGE (wie DIAGNOSE #2)
+            LOGGER.info("Y-Achse: Verwende AUTO-RANGE (wie DIAGNOSE #2)");
             
-            // KORRIGIERT: X-Achsen-Bereich (wie Original)
-            adjustProfitChartXAxisRange(filteredTicks);
+            // KEINE komplexe X-Achsen-Kalibrierung - verwende AUTO-RANGE (wie DIAGNOSE #2)
+            LOGGER.info("X-Achse: Verwende AUTO-RANGE (wie DIAGNOSE #2)");
             
-            LOGGER.info("=== KORRIGIERTER PROFIT CHART UPDATE #" + updateCounter + " ERFOLGREICH ABGESCHLOSSEN ===");
+            LOGGER.info("=== KORRIGIERTER PROFIT CHART UPDATE #" + updateCounter + " ERFOLGREICH ABGESCHLOSSEN (DIAGNOSE #2 Style) ===");
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "FATALER FEHLER im korrigierten Profit Chart Update #" + updateCounter + " für Signal " + signalId, e);
+            setEmptyChart(timeScale);
         }
     }
     
     /**
-     * PERFORMANCE: Erkenne Zero-Data-Pattern (aber korrekte Schwellenwerte)
+     * KORRIGIERT: Erkenne nur EXTREME Zero-Data-Pattern (99% Nullwerte)
+     * BEHEBT: TimeScale-Button-Problem durch zu aggressive Zero-Pattern-Erkennung
      */
-    private boolean isZeroDataPattern(List<TickDataLoader.TickData> filteredTicks) {
-        if (filteredTicks.size() < 3) return false; // Zu wenige Daten für Pattern-Erkennung
+    private boolean isExtremeZeroDataPattern(List<TickDataLoader.TickData> filteredTicks) {
+        if (filteredTicks.size() < 5) return false; // Zu wenige Daten für Pattern-Erkennung
         
         TickDataLoader.TickData firstTick = filteredTicks.get(0);
         double initialEquity = firstTick.getEquity();
@@ -242,19 +260,23 @@ public class ProfitChartManager {
             double realizedProfit = tick.getEquity() - initialEquity;
             double profitPlusOpen = realizedProfit + tick.getFloatingProfit();
             
-            // KORRIGIERT: Strengere Schwellenwerte für Zero-Detection
-            if (Math.abs(realizedProfit) < 0.01 && Math.abs(profitPlusOpen) < 0.01) {
+            // SEHR STRENGE Schwellenwerte - nur echte Nullwerte
+            if (Math.abs(realizedProfit) < 0.001 && Math.abs(profitPlusOpen) < 0.001) {
                 zeroCount++;
             }
         }
         
-        // KORRIGIERT: 95% statt 80% müssen Zero sein
-        boolean isZeroPattern = zeroCount > filteredTicks.size() * 0.95;
-        if (isZeroPattern) {
-            LOGGER.info("ZERO-PATTERN: " + zeroCount + "/" + filteredTicks.size() + " Null-Werte");
+        // EXTREM STRENG: 99% müssen Zero sein UND mindestens 10 Datenpunkte
+        boolean isExtremeZeroPattern = zeroCount > filteredTicks.size() * 0.99 && filteredTicks.size() >= 10;
+        
+        if (isExtremeZeroPattern) {
+            LOGGER.warning("EXTREME ZERO-PATTERN: " + zeroCount + "/" + filteredTicks.size() + " Null-Werte");
+        } else if (zeroCount > filteredTicks.size() * 0.8) {
+            LOGGER.info("Viele Null-Werte erkannt (" + zeroCount + "/" + filteredTicks.size() + 
+                       ") aber normal verarbeitet für TimeScale");
         }
         
-        return isZeroPattern;
+        return isExtremeZeroPattern;
     }
     
     /**
@@ -287,167 +309,55 @@ public class ProfitChartManager {
             LOGGER.log(Level.WARNING, "Fehler bei Zero-Data Fast-Rendering", e);
         }
         
-        // Y-Achsen-Bereich für Null-Werte
-        XYPlot plot = profitChart.getXYPlot();
-        plot.getRangeAxis().setRange(-DEFAULT_Y_PADDING, DEFAULT_Y_PADDING);
+        // KORRIGIERT: Chart-Titel mit TimeScale-Information (DIAGNOSE #2 Style)
+        String timeScaleInfo = (timeScale != null) ? timeScale.getLabel() : "Unbekannt";
+        profitChart.setTitle("Profit-Entwicklung - " + signalId + " (" + providerName + ") - " + 
+                            timeScaleInfo + " [DIAGNOSE #" + updateCounter + "] ZERO-DATA FAST");
         
-        // Chart-Titel
-        profitChart.setTitle("Profit-Entwicklung - " + signalId + " (" + providerName + ") - ZERO-DATA FAST");
-        
-        LOGGER.info("=== ZERO-DATA FAST-RENDERING BEENDET ===");
+        LOGGER.info("=== ZERO-DATA FAST-RENDERING BEENDET für TimeScale: " + timeScaleInfo + " ===");
     }
     
     /**
-     * KORRIGIERT: Y-Achsen-Kalibrierung wie Original aber mit Performance-Schutz
+     * Aktualisiert den Chart-Titel (DIAGNOSE #2 Style)
      */
-    private void adjustProfitChartYAxisRangeRobustCorrected(List<TickDataLoader.TickData> filteredTicks) {
-        if (profitChart == null || filteredTicks.isEmpty() || initialEquity == null) {
-            LOGGER.warning("Kann Profit Y-Achse nicht anpassen");
-            return;
-        }
-        
-        LOGGER.info("=== KORRIGIERTE PROFIT Y-ACHSEN KALIBRIERUNG START ===");
-        
-        XYPlot plot = profitChart.getXYPlot();
-        
-        // KORREKTE Datenbereich-Ermittlung
-        double minProfit = Double.MAX_VALUE;
-        double maxProfit = Double.MIN_VALUE;
-        double minProfitPlusOpen = Double.MAX_VALUE;
-        double maxProfitPlusOpen = Double.MIN_VALUE;
-        
-        for (TickDataLoader.TickData tick : filteredTicks) {
-            double realizedProfit = tick.getEquity() - initialEquity;
-            double profitPlusOpen = realizedProfit + tick.getFloatingProfit();
-            
-            if (realizedProfit < minProfit) minProfit = realizedProfit;
-            if (realizedProfit > maxProfit) maxProfit = realizedProfit;
-            if (profitPlusOpen < minProfitPlusOpen) minProfitPlusOpen = profitPlusOpen;
-            if (profitPlusOpen > maxProfitPlusOpen) maxProfitPlusOpen = profitPlusOpen;
-        }
-        
-        // Globale Min/Max-Werte
-        double globalMin = Math.min(minProfit, minProfitPlusOpen);
-        double globalMax = Math.max(maxProfit, maxProfitPlusOpen);
-        double dataRange = globalMax - globalMin;
-        
-        LOGGER.info("PROFIT-DATEN-ANALYSE:");
-        LOGGER.info("  Realized Profit-Bereich: " + String.format("%.6f bis %.6f", minProfit, maxProfit));
-        LOGGER.info("  Profit+Open-Bereich: " + String.format("%.6f bis %.6f", minProfitPlusOpen, maxProfitPlusOpen));
-        LOGGER.info("  Globaler Bereich: " + String.format("%.6f bis %.6f", globalMin, globalMax));
-        LOGGER.info("  Daten-Spanne: " + String.format("%.6f", dataRange));
-        
-        // KORRIGIERTE Padding-Berechnung (wie Original)
-        double lowerBound, upperBound;
-        
-        if (dataRange == 0) {
-            // PERFORMANCE-SCHUTZ: Identische Werte - sicherer Bereich
-            double centerValue = globalMin;
-            double minimalRange = Math.max(Math.abs(centerValue) * 0.001, 0.01);
-            
-            lowerBound = centerValue - minimalRange;
-            upperBound = centerValue + minimalRange;
-            
-        } else {
-            // KORREKTE Padding-Berechnung (wie Original)
-            double basePadding = dataRange * 0.15;  // 15% der Daten-Spanne
-            double relativePadding = Math.abs((globalMin + globalMax) / 2.0) * 0.005; // 0.5%
-            double finalPadding = Math.max(basePadding, relativePadding);
-            double minPadding = dataRange * 0.05; // Mindestens 5%
-            
-            if (finalPadding < minPadding) {
-                finalPadding = minPadding;
-            }
-            
-            lowerBound = globalMin - finalPadding;
-            upperBound = globalMax + finalPadding;
-        }
-        
-        // Y-Achsen-Bereich setzen
-        plot.getRangeAxis().setRange(lowerBound, upperBound);
-        
-        LOGGER.info("=== Y-ACHSEN-BEREICH FINAL GESETZT ===");
-        LOGGER.info("Bereich: " + String.format("%.6f bis %.6f", lowerBound, upperBound));
-        LOGGER.info("=== KORRIGIERTE PROFIT Y-ACHSEN KALIBRIERUNG ENDE ===");
-    }
-    
-    /**
-     * KORRIGIERT: X-Achsen-Kalibrierung (wie Original)
-     */
-    private void adjustProfitChartXAxisRange(List<TickDataLoader.TickData> filteredTicks) {
-        if (profitChart == null || filteredTicks.isEmpty()) {
-            return;
-        }
-        
-        XYPlot plot = profitChart.getXYPlot();
-        
-        // Zeitbereich der Daten ermitteln
-        java.time.LocalDateTime earliestTime = filteredTicks.get(0).getTimestamp();
-        java.time.LocalDateTime latestTime = filteredTicks.get(filteredTicks.size() - 1).getTimestamp();
-        
-        // Zeitspanne in Millisekunden
-        long timeSpanMillis = java.time.Duration.between(earliestTime, latestTime).toMillis();
-        
-        // Domain-Achse manuell kalibrieren
-        plot.getDomainAxis().setAutoRange(false);
-        
-        java.time.LocalDateTime displayStart, displayEnd;
-        
-        if (filteredTicks.size() == 1) {
-            displayStart = earliestTime.minusMinutes(30);
-            displayEnd = earliestTime.plusMinutes(30);
-        } else if (timeSpanMillis < 60000) { // <1 Minute
-            java.time.LocalDateTime centerTime = earliestTime.plus(java.time.Duration.ofMillis(timeSpanMillis / 2));
-            displayStart = centerTime.minusMinutes(5);
-            displayEnd = centerTime.plusMinutes(5);
-        } else if (timeSpanMillis < 600000) { // <10 Minuten
-            long paddingMillis = timeSpanMillis / 4;
-            displayStart = earliestTime.minus(java.time.Duration.ofMillis(paddingMillis));
-            displayEnd = latestTime.plus(java.time.Duration.ofMillis(paddingMillis));
-        } else {
-            // Normale Zeitspanne: 10% Padding
-            long paddingMillis = timeSpanMillis / 10;
-            displayStart = earliestTime.minus(java.time.Duration.ofMillis(paddingMillis));
-            displayEnd = latestTime.plus(java.time.Duration.ofMillis(paddingMillis));
-        }
-        
-        // LocalDateTime zu Date konvertieren
-        try {
-            java.util.Date startDate = java.util.Date.from(displayStart.atZone(java.time.ZoneId.systemDefault()).toInstant());
-            java.util.Date endDate = java.util.Date.from(displayEnd.atZone(java.time.ZoneId.systemDefault()).toInstant());
-            
-            if (plot.getDomainAxis() instanceof org.jfree.chart.axis.DateAxis) {
-                org.jfree.chart.axis.DateAxis dateAxis = (org.jfree.chart.axis.DateAxis) plot.getDomainAxis();
-                dateAxis.setMinimumDate(startDate);
-                dateAxis.setMaximumDate(endDate);
-            } else {
-                plot.getDomainAxis().setRange(startDate.getTime(), endDate.getTime());
-            }
-            
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "FEHLER beim Setzen des X-Achsen-Bereichs", e);
-            plot.getDomainAxis().setAutoRange(true);
-        }
-    }
-    
-    /**
-     * Leert die Profit-Chart-Serien
-     */
-    private void clearProfitSeries() {
-        if (profitSeries != null) profitSeries.clear();
-        if (profitPlusOpenSeries != null) profitPlusOpenSeries.clear();
-    }
-    
-    /**
-     * Aktualisiert den Chart-Titel
-     */
-    private void updateChartTitle(TimeScale timeScale, int tickCount) {
+    private void updateChartTitleForDiagnose2(TimeScale timeScale, int tickCount) {
         if (profitChart != null) {
             profitChart.setTitle("Profit-Entwicklung - " + signalId + " (" + providerName + ") - " + 
                                 (timeScale != null ? timeScale.getLabel() : "Unbekannt") + " [DIAGNOSE #" + updateCounter + "]");
         }
         
-        LOGGER.info("Profit-Chart-Titel aktualisiert mit " + tickCount + " Ticks");
+        LOGGER.info("Profit-Chart-Titel aktualisiert mit " + tickCount + " Ticks (DIAGNOSE #2 Style)");
+    }
+    
+    /**
+     * KORRIGIERT: Setzt einen leeren Chart mit TimeScale-Information
+     */
+    private void setEmptyChart(TimeScale timeScale) {
+        clearProfitSeries();
+        
+        // KEINE manuelle Y-Achsen-Range - verwende AUTO-RANGE
+        LOGGER.info("Empty Chart: Verwende AUTO-RANGE für Y-Achse");
+        
+        String timeScaleInfo = (timeScale != null) ? 
+            " - " + timeScale.getLabel() + " (keine Daten)" : " - KEINE DATEN";
+        profitChart.setTitle("Profit-Entwicklung - " + signalId + " (" + providerName + ")" + timeScaleInfo);
+        
+        LOGGER.info("Empty Chart gesetzt für TimeScale: " + (timeScale != null ? timeScale.getLabel() : "NULL"));
+    }
+    
+    /**
+     * LEGACY: Überladene Methode für Rückwärtskompatibilität
+     */
+    private void setEmptyChart() {
+        setEmptyChart(null);
+    }
+    
+    /**
+     * Leert die Profit-Chart-Serien (OPTIMIERT)
+     */
+    private void clearProfitSeries() {
+        if (profitSeries != null) profitSeries.clear();
+        if (profitPlusOpenSeries != null) profitPlusOpenSeries.clear();
     }
     
     // Getter-Methoden
