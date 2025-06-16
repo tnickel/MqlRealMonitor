@@ -24,9 +24,9 @@ import com.mql.realmonitor.data.TickDataLoader;
 import com.mql.realmonitor.parser.SignalData;
 
 /**
- * REFACTORED: Hauptmanager für das TickChartWindow
+ * OPTIMIERT: TickChartWindowManager für asynchrones Laden optimiert
+ * Reduziert die Zeit für initiales UI-Setup und verbessert Responsiveness
  * Koordiniert alle Komponenten: Chart-Panels, Toolbar, Layout, Daten-Loading
- * Deutlich kompakter als die ursprüngliche TickChartWindow-Klasse
  */
 public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCallbacks {
     
@@ -74,10 +74,11 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     // Status-Flags
     private volatile boolean isDataLoaded = false;
     private volatile boolean isWindowClosed = false;
+    private volatile boolean isInitialSetupComplete = false;
     private int refreshCounter = 0;
     
     /**
-     * Konstruktor
+     * OPTIMIERT: Konstruktor - Erstellt nur minimales UI, lädt Daten asynchron
      */
     public TickChartWindowManager(Shell parent, MqlRealMonitorGUI parentGui, String signalId, 
                                  String providerName, SignalData signalData, String tickFilePath) {
@@ -88,60 +89,104 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         this.signalData = signalData;
         this.tickFilePath = tickFilePath;
         
-        // Helfer-Klassen initialisieren
-        this.chartManager = new TickChartManager(signalId, providerName);
-        this.imageRenderer = new ChartImageRenderer(display);
-        
-        LOGGER.info("=== REFACTORED CHART WINDOW MANAGER ERSTELLT ===");
+        LOGGER.info("=== OPTIMIZED CHART WINDOW MANAGER ERSTELLT ===");
         LOGGER.info("Signal: " + signalId + " (" + providerName + ")");
         
-        createWindow(parent);
-        loadDataAsync();
+        // PHASE 1: Minimales Fenster sofort erstellen (schnell)
+        createMinimalWindow(parent);
+        
+        // PHASE 2: Helfer-Klassen initialisieren (mittel)
+        initializeHelperClasses();
+        
+        // PHASE 3: UI-Setup und Daten-Loading asynchron fortsetzen
+        continueSetupAsync();
     }
     
     /**
-     * Erstellt das Hauptfenster - REFACTORED: Kompakter
+     * PHASE 1: Erstellt nur das minimale Hauptfenster (SCHNELL - kein Blocking)
      */
-    private void createWindow(Shell parent) {
+    private void createMinimalWindow(Shell parent) {
+        LOGGER.info("PHASE 1: Erstelle minimales Fenster...");
+        
         shell = new Shell(parent, SWT.SHELL_TRIM | SWT.MODELESS);
-        shell.setText("Charts - " + signalId + " (" + providerName + ") [REFACTORED]");
+        shell.setText("Charts - " + signalId + " (" + providerName + ") [LOADING...]");
         shell.setSize(1000, 900);
         shell.setLayout(new GridLayout(1, false));
         
         centerWindow(parent);
         
-        createInfoPanel();
-        createTimeScalePanel();
-        createScrollableChartsArea();
-        createToolbarPanel();
+        // Nur Info-Label - alles andere wird async hinzugefügt
+        infoLabel = new Label(shell, SWT.WRAP);
+        infoLabel.setText("Initialisiere Chart-Fenster für " + providerName + "...");
+        infoLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        
         setupEventHandlers();
         
-        LOGGER.info("Refactored ChartWindow UI erstellt für Signal: " + signalId);
+        LOGGER.info("PHASE 1 abgeschlossen - Minimales Fenster erstellt");
     }
     
     /**
-     * Zentriert das Fenster
+     * PHASE 2: Initialisiert Helfer-Klassen (MITTEL - benötigt etwas Zeit)
      */
-    private void centerWindow(Shell parent) {
-        Point parentSize = parent.getSize();
-        Point parentLocation = parent.getLocation();
-        Point size = shell.getSize();
+    private void initializeHelperClasses() {
+        LOGGER.info("PHASE 2: Initialisiere Helfer-Klassen...");
         
-        int x = parentLocation.x + (parentSize.x - size.x) / 2;
-        int y = parentLocation.y + (parentSize.y - size.y) / 2;
+        // Helfer-Klassen initialisieren
+        this.chartManager = new TickChartManager(signalId, providerName);
+        this.imageRenderer = new ChartImageRenderer(display);
         
-        shell.setLocation(x, y);
+        LOGGER.info("PHASE 2 abgeschlossen - Helfer-Klassen initialisiert");
     }
     
     /**
-     * Erstellt das Info-Panel
+     * PHASE 3: Setzt UI-Setup und Daten-Loading asynchron fort
      */
-    private void createInfoPanel() {
+    private void continueSetupAsync() {
+        LOGGER.info("PHASE 3: Starte asynchrones Setup...");
+        
+        // UI-Setup in kleinen Schritten, damit UI responsiv bleibt
+        display.asyncExec(() -> {
+            if (!isWindowClosed && !shell.isDisposed()) {
+                createInfoPanelAsync();
+            }
+        });
+        
+        display.timerExec(100, () -> {
+            if (!isWindowClosed && !shell.isDisposed()) {
+                createTimeScalePanelAsync();
+            }
+        });
+        
+        display.timerExec(200, () -> {
+            if (!isWindowClosed && !shell.isDisposed()) {
+                createScrollableChartsAreaAsync();
+            }
+        });
+        
+        display.timerExec(300, () -> {
+            if (!isWindowClosed && !shell.isDisposed()) {
+                createToolbarPanelAsync();
+                isInitialSetupComplete = true;
+                
+                // Erst nach UI-Setup: Daten laden
+                loadDataAsync();
+            }
+        });
+    }
+    
+    /**
+     * Erstellt das Info-Panel asynchron
+     */
+    private void createInfoPanelAsync() {
+        LOGGER.info("Erstelle Info-Panel...");
+        
         Group infoGroup = new Group(shell, SWT.NONE);
-        infoGroup.setText("Signal Information (REFACTORED - Modular)");
+        infoGroup.setText("Signal Information (OPTIMIZED - Async Loading)");
         infoGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         infoGroup.setLayout(new GridLayout(2, false));
         
+        // Altes Label ersetzen
+        infoLabel.dispose();
         infoLabel = new Label(infoGroup, SWT.WRAP);
         GridData infoLabelData = new GridData(SWT.FILL, SWT.FILL, true, false);
         infoLabelData.horizontalSpan = 2;
@@ -154,14 +199,17 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         detailsText.setLayoutData(detailsData);
         
         updateInfoPanelInitial();
+        shell.layout();
     }
     
     /**
-     * Erstellt das Zeitintervall-Panel
+     * Erstellt das Zeitintervall-Panel asynchron
      */
-    private void createTimeScalePanel() {
+    private void createTimeScalePanelAsync() {
+        LOGGER.info("Erstelle Zeitintervall-Panel...");
+        
         Group timeScaleGroup = new Group(shell, SWT.NONE);
-        timeScaleGroup.setText("Zeitintervall (Refactored - Beide Chart-Panels)");
+        timeScaleGroup.setText("Zeitintervall (Optimized - Async Setup)");
         timeScaleGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         timeScaleGroup.setLayout(new GridLayout(TimeScale.values().length, false));
         
@@ -190,15 +238,18 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
             timeScaleButtons[i] = button;
         }
         
+        shell.layout();
         LOGGER.info("Zeitintervall-Panel erstellt");
     }
     
     /**
-     * REFACTORED: Erstellt scrollbaren Charts-Bereich mit beiden Chart-Panels
+     * OPTIMIZED: Erstellt scrollbaren Charts-Bereich asynchron
      */
-    private void createScrollableChartsArea() {
+    private void createScrollableChartsAreaAsync() {
+        LOGGER.info("Erstelle scrollbaren Charts-Bereich...");
+        
         Group chartsGroup = new Group(shell, SWT.NONE);
-        chartsGroup.setText("Charts (Refactored - Separate Panel-Klassen) - " + currentTimeScale.getLabel());
+        chartsGroup.setText("Charts (Optimized - Loading...) - " + currentTimeScale.getLabel());
         chartsGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         chartsGroup.setLayout(new GridLayout(1, false));
         
@@ -213,6 +264,44 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         chartsContainer.setLayout(new GridLayout(1, false));
         chartsContainer.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
         
+        // Chart-Panels werden später erstellt wenn Daten verfügbar sind
+        Label placeholderLabel = new Label(chartsContainer, SWT.CENTER);
+        placeholderLabel.setText("Charts werden geladen...\nBitte warten Sie einen Moment.");
+        placeholderLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, true));
+        
+        // ScrolledComposite konfigurieren
+        scrolledComposite.setContent(chartsContainer);
+        scrolledComposite.setMinSize(chartWidth, 200); // Minimale Höhe erstmal
+        
+        shell.layout();
+        LOGGER.info("Scrollbarer Charts-Bereich (Placeholder) erstellt");
+    }
+    
+    /**
+     * OPTIMIZED: Erstellt die Toolbar asynchron
+     */
+    private void createToolbarPanelAsync() {
+        LOGGER.info("Erstelle Toolbar...");
+        
+        toolbar = new TickChartWindowToolbar(shell, signalId, providerName, signalData, tickFilePath, parentGui, shell);
+        toolbar.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
+        toolbar.setCallbacks(this);
+        
+        shell.layout();
+        LOGGER.info("Toolbar erstellt");
+    }
+    
+    /**
+     * OPTIMIZED: Erstellt Chart-Panels erst wenn Daten verfügbar sind
+     */
+    private void createActualChartPanels() {
+        LOGGER.info("Erstelle tatsächliche Chart-Panels...");
+        
+        // Placeholder entfernen
+        for (org.eclipse.swt.widgets.Control child : chartsContainer.getChildren()) {
+            child.dispose();
+        }
+        
         // REFACTORED: Chart-Panels als separate Klassen erstellen
         drawdownPanel = new EquityDrawdownChartPanel(chartsContainer, parentGui, signalId, providerName, imageRenderer);
         drawdownPanel.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
@@ -226,8 +315,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         profitPanel.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         profitPanel.updateChartDimensions(chartWidth, profitChartHeight);
         
-        // ScrolledComposite konfigurieren
-        scrolledComposite.setContent(chartsContainer);
+        // ScrolledComposite aktualisieren
         scrolledComposite.setMinSize(chartWidth, totalChartHeight);
         
         // Resize-Handler
@@ -236,18 +324,22 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
             renderBothChartsToImages();
         });
         
-        LOGGER.info("Scrollbarer Charts-Bereich mit separaten Panel-Klassen erstellt");
+        chartsContainer.layout();
+        LOGGER.info("Chart-Panels erfolgreich erstellt");
     }
     
     /**
-     * REFACTORED: Erstellt die Toolbar als separate Klasse
+     * Zentriert das Fenster
      */
-    private void createToolbarPanel() {
-        toolbar = new TickChartWindowToolbar(shell, signalId, providerName, signalData, tickFilePath, parentGui, shell);
-        toolbar.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
-        toolbar.setCallbacks(this);
+    private void centerWindow(Shell parent) {
+        Point parentSize = parent.getSize();
+        Point parentLocation = parent.getLocation();
+        Point size = shell.getSize();
         
-        LOGGER.info("Toolbar als separate Klasse erstellt");
+        int x = parentLocation.x + (parentSize.x - size.x) / 2;
+        int y = parentLocation.y + (parentSize.y - size.y) / 2;
+        
+        shell.setLocation(x, y);
     }
     
     /**
@@ -270,23 +362,32 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         LOGGER.info("Zeitintervall-Wechsel: " + currentTimeScale.getLabel() + " -> " + newScale.getLabel());
         
         // Buttons aktualisieren
-        for (int i = 0; i < TimeScale.values().length; i++) {
-            TimeScale scale = TimeScale.values()[i];
-            timeScaleButtons[i].setSelection(scale == newScale);
+        if (timeScaleButtons != null) {
+            for (int i = 0; i < TimeScale.values().length; i++) {
+                TimeScale scale = TimeScale.values()[i];
+                if (timeScaleButtons[i] != null && !timeScaleButtons[i].isDisposed()) {
+                    timeScaleButtons[i].setSelection(scale == newScale);
+                }
+            }
         }
         
         currentTimeScale = newScale;
         
-        if (tickDataSet != null) {
+        if (tickDataSet != null && isInitialSetupComplete) {
             updateChartsWithCurrentData();
         }
     }
     
     /**
-     * REFACTORED: Aktualisiert beide Chart-Panels
+     * OPTIMIZED: Aktualisiert beide Chart-Panels - nur wenn alles bereit ist
      */
     private void updateChartsWithCurrentData() {
-        LOGGER.info("=== UPDATE BEIDE CHART-PANELS ===");
+        if (!isInitialSetupComplete) {
+            LOGGER.info("Initial Setup noch nicht abgeschlossen - Chart-Update wird verschoben");
+            return;
+        }
+        
+        LOGGER.info("=== UPDATE BEIDE CHART-PANELS (OPTIMIZED) ===");
         
         if (tickDataSet == null) {
             LOGGER.warning("tickDataSet ist NULL - kann Charts nicht aktualisieren");
@@ -302,6 +403,11 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                 LOGGER.info("FALLBACK: Verwende alle verfügbaren Ticks");
             }
             
+            // Chart-Panels erstellen falls noch nicht vorhanden
+            if (drawdownPanel == null || profitPanel == null) {
+                createActualChartPanels();
+            }
+            
             // REFACTORED: Beide Chart-Panels aktualisieren
             if (drawdownPanel != null && drawdownPanel.isReady()) {
                 drawdownPanel.updateChart(filteredTicks, currentTimeScale, chartManager);
@@ -315,7 +421,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
             
             updateInfoPanel();
             
-            LOGGER.info("Beide Chart-Panels erfolgreich aktualisiert");
+            LOGGER.info("Beide Chart-Panels erfolgreich aktualisiert (OPTIMIZED)");
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "FEHLER beim Aktualisieren der Chart-Panels", e);
@@ -323,10 +429,10 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     }
     
     /**
-     * REFACTORED: Rendert beide Chart-Panels
+     * OPTIMIZED: Rendert beide Chart-Panels - nur wenn bereit
      */
     private void renderBothChartsToImages() {
-        if (chartManager == null || imageRenderer == null) {
+        if (chartManager == null || imageRenderer == null || !isInitialSetupComplete) {
             return;
         }
         
@@ -378,13 +484,22 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     }
     
     /**
-     * Lädt Daten asynchron
+     * OPTIMIZED: Lädt Daten asynchron - besser strukturiert
      */
     private void loadDataAsync() {
+        LOGGER.info("=== OPTIMIZED ASYNC DATEN-LOAD START ===");
+        
+        updateInfoPanelLoading("Lade Tick-Daten...");
+        
         new Thread(() -> {
             try {
-                LOGGER.info("=== ASYNCHRONER DATEN-LOAD START (REFACTORED) ===");
+                LOGGER.info("Background-Thread: Lade Tick-Daten für " + signalId);
                 
+                // Daten-Loading mit Progress-Updates
+                updateLoadingProgress("Prüfe Tick-Datei...");
+                Thread.sleep(50); // Kurze Pause für UI-Update
+                
+                updateLoadingProgress("Lade Tick-Daten...");
                 tickDataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
                 
                 if (tickDataSet == null || tickDataSet.getTickCount() == 0) {
@@ -397,7 +512,10 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                 }
                 
                 isDataLoaded = true;
-                LOGGER.info("ERFOLG: Tick-Daten geladen: " + tickDataSet.getTickCount() + " Ticks");
+                LOGGER.info("ERFOLG: Tick-Daten geladen: " + tickDataSet.getTickCount() + " Ticks (OPTIMIZED)");
+                
+                updateLoadingProgress("Bereite Charts vor...");
+                Thread.sleep(100);
                 
                 display.asyncExec(() -> {
                     if (!isWindowClosed && !shell.isDisposed()) {
@@ -406,7 +524,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                 });
                 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "FATALER FEHLER beim Laden der Tick-Daten", e);
+                LOGGER.log(Level.SEVERE, "FATALER FEHLER beim optimierten Laden der Tick-Daten", e);
                 
                 display.asyncExec(() -> {
                     if (!isWindowClosed && !shell.isDisposed()) {
@@ -414,21 +532,56 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                     }
                 });
             }
-        }, "TickDataLoader-Refactored-" + signalId).start();
+        }, "OptimizedTickDataLoader-" + signalId).start();
+    }
+    
+    /**
+     * Aktualisiert Loading-Progress
+     */
+    private void updateLoadingProgress(String message) {
+        display.asyncExec(() -> {
+            if (!isWindowClosed && !shell.isDisposed() && infoLabel != null && !infoLabel.isDisposed()) {
+                infoLabel.setText("Signal: " + signalId + " - " + message);
+            }
+        });
     }
     
     /**
      * Zeigt initialen Info-Text
      */
     private void updateInfoPanelInitial() {
-        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Lädt... [REFACTORED - MODULAR]";
+        String info = "Signal ID: " + signalId + "   Provider: " + providerName + "   Status: Setup läuft... [OPTIMIZED]";
         infoLabel.setText(info);
-        detailsText.setText("=== REFACTORED CHART WINDOW (MODULAR) ===\n" +
-                           "Chart-Panels: Separate Klassen für Drawdown und Profit\n" +
-                           "Toolbar: Separate Klasse für alle Buttons\n" +
-                           "Manager: Koordiniert alle Komponenten\n" +
-                           "Tick-Datei: " + tickFilePath + "\n" +
-                           "Bitte warten Sie einen Moment.");
+        
+        if (detailsText != null) {
+            detailsText.setText("=== OPTIMIZED CHART WINDOW (ASYNC LOADING) ===\n" +
+                               "Chart-Panels: Werden nach Daten-Load erstellt\n" +
+                               "Toolbar: Async erstellt\n" +
+                               "Manager: Optimiert für bessere Responsiveness\n" +
+                               "Tick-Datei: " + tickFilePath + "\n" +
+                               "Setup-Phase läuft...");
+        }
+    }
+    
+    /**
+     * Aktualisiert Info-Panel während Loading
+     */
+    private void updateInfoPanelLoading(String status) {
+        display.asyncExec(() -> {
+            if (!isWindowClosed && !shell.isDisposed() && infoLabel != null && !infoLabel.isDisposed()) {
+                infoLabel.setText("Signal: " + signalId + " - " + status);
+                
+                if (detailsText != null && !detailsText.isDisposed()) {
+                    detailsText.setText("=== OPTIMIZED ASYNC LOADING ===\n" +
+                                       "Status: " + status + "\n" +
+                                       "Signal: " + signalId + "\n" +
+                                       "Provider: " + providerName + "\n" +
+                                       "Setup complete: " + isInitialSetupComplete + "\n" +
+                                       "Data loaded: " + isDataLoaded + "\n" +
+                                       "Tick-Datei: " + tickFilePath + "\n");
+                }
+            }
+        });
     }
     
     /**
@@ -443,24 +596,27 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
         
         infoLabel.setText(info.toString());
         
-        StringBuilder details = new StringBuilder();
-        details.append("=== REFACTORED CHART WINDOW - MODULAR ARCHITECTURE ===\n");
-        details.append("Drawdown-Panel: ").append(drawdownPanel != null && drawdownPanel.isReady() ? "OK" : "FEHLER").append("\n");
-        details.append("Profit-Panel: ").append(profitPanel != null && profitPanel.isReady() ? "OK" : "FEHLER").append("\n");
-        details.append("Toolbar: ").append(toolbar != null && !toolbar.isDisposed() ? "OK" : "FEHLER").append("\n");
-        details.append("ChartManager: ").append(chartManager != null ? "OK" : "FEHLER").append("\n");
-        details.append("ImageRenderer: ").append(imageRenderer != null ? "OK" : "FEHLER").append("\n");
-        
-        if (tickDataSet != null && filteredTicks != null) {
-            details.append("Tick-Daten: ").append(tickDataSet.getTickCount()).append(" gesamt, ").append(filteredTicks.size()).append(" gefiltert\n");
+        if (detailsText != null && !detailsText.isDisposed()) {
+            StringBuilder details = new StringBuilder();
+            details.append("=== OPTIMIZED CHART WINDOW - ASYNC LOADED ===\n");
+            details.append("Drawdown-Panel: ").append(drawdownPanel != null && drawdownPanel.isReady() ? "OK" : "LOADING").append("\n");
+            details.append("Profit-Panel: ").append(profitPanel != null && profitPanel.isReady() ? "OK" : "LOADING").append("\n");
+            details.append("Toolbar: ").append(toolbar != null && !toolbar.isDisposed() ? "OK" : "LOADING").append("\n");
+            details.append("ChartManager: ").append(chartManager != null ? "OK" : "NULL").append("\n");
+            details.append("ImageRenderer: ").append(imageRenderer != null ? "OK" : "NULL").append("\n");
+            details.append("Setup Complete: ").append(isInitialSetupComplete).append("\n");
+            
+            if (tickDataSet != null && filteredTicks != null) {
+                details.append("Tick-Daten: ").append(tickDataSet.getTickCount()).append(" gesamt, ").append(filteredTicks.size()).append(" gefiltert\n");
+            }
+            
+            details.append("Zoom-Faktor: ").append(String.format("%.2f", zoomFactor)).append("\n");
+            
+            detailsText.setText(details.toString());
         }
         
-        details.append("Zoom-Faktor: ").append(String.format("%.2f", zoomFactor)).append("\n");
-        
-        detailsText.setText(details.toString());
-        
         if (shell != null && !shell.isDisposed()) {
-            shell.setText("Charts - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [REFACTORED #" + refreshCounter + "]");
+            shell.setText("Charts - " + signalId + " (" + providerName + ") - " + currentTimeScale.getLabel() + " [OPTIMIZED #" + refreshCounter + "]");
         }
     }
     
@@ -468,8 +624,11 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
      * Zeigt "Keine Daten"-Nachricht
      */
     private void showNoDataMessage() {
-        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten [REFACTORED]");
-        detailsText.setText("Keine Tick-Daten verfügbar.\nDie Chart-Panels sind trotzdem funktional.");
+        infoLabel.setText("Signal ID: " + signalId + " - Keine Tick-Daten [OPTIMIZED]");
+        
+        if (detailsText != null && !detailsText.isDisposed()) {
+            detailsText.setText("Keine Tick-Daten verfügbar.\nDas Chart-System ist trotzdem funktional.");
+        }
         
         if (drawdownPanel != null) {
             drawdownPanel.setDataLoaded(false);
@@ -484,8 +643,8 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
      */
     private void showErrorMessage(String message) {
         MessageBox errorBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
-        errorBox.setText("Fehler im Refactored Chart Window");
-        errorBox.setMessage("REFACTORED CHART WINDOW:\n\n" + message);
+        errorBox.setText("Fehler im Optimized Chart Window");
+        errorBox.setMessage("OPTIMIZED CHART WINDOW:\n\n" + message);
         errorBox.open();
     }
     
@@ -495,7 +654,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     private void closeWindow() {
         isWindowClosed = true;
         
-        LOGGER.info("=== SCHLIESSE REFACTORED CHART WINDOW ===");
+        LOGGER.info("=== SCHLIESSE OPTIMIZED CHART WINDOW ===");
         
         if (imageRenderer != null) {
             imageRenderer.disposeImages();
@@ -511,7 +670,7 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
      */
     public void open() {
         shell.open();
-        LOGGER.info("Refactored ChartWindow geöffnet für Signal: " + signalId);
+        LOGGER.info("Optimized ChartWindow geöffnet für Signal: " + signalId);
     }
     
     // ========== TOOLBAR CALLBACKS IMPLEMENTATION ==========
@@ -519,10 +678,12 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
     @Override
     public void onRefresh() {
         refreshCounter++;
-        LOGGER.info("Refresh #" + refreshCounter + " angefordert");
+        LOGGER.info("Optimized Refresh #" + refreshCounter + " angefordert");
         
-        toolbar.setRefreshEnabled(false);
-        toolbar.setRefreshText("Lädt...");
+        if (toolbar != null) {
+            toolbar.setRefreshEnabled(false);
+            toolbar.setRefreshText("Lädt...");
+        }
         
         isDataLoaded = false;
         if (drawdownPanel != null) drawdownPanel.setDataLoaded(false);

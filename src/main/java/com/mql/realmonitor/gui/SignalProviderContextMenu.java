@@ -11,6 +11,7 @@ import org.eclipse.swt.events.MouseAdapter;
 import org.eclipse.swt.events.MouseEvent;
 import org.eclipse.swt.events.SelectionAdapter;
 import org.eclipse.swt.events.SelectionEvent;
+import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.MessageBox;
@@ -22,6 +23,7 @@ import com.mql.realmonitor.parser.SignalData;
 /**
  * ERWEITERT: Verwaltet das Kontextmenü für die SignalProviderTable
  * NEU: MQL5 Website-Link zum direkten Öffnen der Signalprovider-Seite
+ * ASYNCHRON: Doppelklick-Handler jetzt asynchron - behebt 60-Sekunden-Blocking
  */
 public class SignalProviderContextMenu {
     
@@ -54,16 +56,18 @@ public class SignalProviderContextMenu {
     }
     
     /**
-     * Konfiguriert das Tabellenverhalten mit Kontextmenü und Doppelklick
+     * ASYNCHRON: Konfiguriert das Tabellenverhalten mit asynchronem Doppelklick
+     * LÖST 60-SEKUNDEN-BLOCKING PROBLEM
      */
     public void setupTableBehavior(Table table) {
-        // Doppelklick für Tick-Chart
+        // ASYNCHRONER Doppelklick für Tick-Chart - BEHEBT BLOCKING!
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseDoubleClick(MouseEvent e) {
                 TableItem[] selection = table.getSelection();
                 if (selection.length > 0) {
-                    openTickChart(selection[0]);
+                    // ASYNCHRON: Chart-Fenster in Background-Thread öffnen
+                    openTickChartAsync(selection[0]);
                 }
             }
         });
@@ -71,6 +75,78 @@ public class SignalProviderContextMenu {
         // Rechtsklick-Kontextmenü
         Menu contextMenu = createContextMenu(table);
         table.setMenu(contextMenu);
+    }
+    
+    /**
+     * NEU: ASYNCHRONE Chart-Fenster-Erstellung - BEHEBT 60-SEKUNDEN-BLOCKING
+     * Erstellt sofort ein minimales Loading-Fenster und lädt Charts im Background
+     */
+    private void openTickChartAsync(TableItem item) {
+        String signalId = item.getText(ProviderTableHelper.COL_SIGNAL_ID);
+        String providerName = item.getText(ProviderTableHelper.COL_PROVIDER_NAME);
+        
+        LOGGER.info("=== ASYNCHRONE CHART-FENSTER-ERSTELLUNG GESTARTET ===");
+        LOGGER.info("Signal: " + signalId + " (" + providerName + ")");
+        
+        // Daten sofort sammeln (schnell)
+        Map<String, SignalData> lastSignalData = getLastSignalData.get();
+        SignalData signalData = lastSignalData.get(signalId);
+        
+        if (signalData == null) {
+            showErrorMessage("Fehler", "Keine Signaldaten für " + signalId + " verfügbar.");
+            return;
+        }
+        
+        String tickFilePath = parentGui.getMonitor().getConfig().getTickFilePath(signalId);
+        
+        // Status-Update für User-Feedback
+        updateProviderStatus.accept(signalId + ":Chart wird geöffnet...");
+        
+        // ASYNCHRON: Chart-Fenster-Erstellung in Background-Thread
+        new Thread(() -> {
+            try {
+                LOGGER.info("BACKGROUND-THREAD: Erstelle Chart-Fenster für " + signalId);
+                
+                // Chart-Fenster im UI-Thread erstellen (aber schnell)
+                Display.getDefault().asyncExec(() -> {
+                    try {
+                        // Erstelle Chart-Fenster mit asynchronem Manager
+                        AsyncTickChartWindow chartWindow = new AsyncTickChartWindow(
+                            parentGui.getShell(), 
+                            parentGui, 
+                            signalId, 
+                            providerName, 
+                            signalData, 
+                            tickFilePath
+                        );
+                        chartWindow.openAsync();
+                        
+                        LOGGER.info("ASYNC: Chart-Fenster erfolgreich gestartet für " + signalId);
+                        
+                    } catch (Exception e) {
+                        LOGGER.log(Level.SEVERE, "FEHLER beim asynchronen Öffnen des Chart-Fensters", e);
+                        
+                        Display.getDefault().asyncExec(() -> {
+                            showErrorMessage("Fehler beim Öffnen des Chart-Fensters", 
+                                           "Konnte Chart-Fenster für " + signalId + " nicht öffnen:\n" + e.getMessage());
+                            updateProviderStatus.accept(signalId + ":Chart-Fehler");
+                        });
+                    }
+                });
+                
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "FATALER FEHLER im Chart-Background-Thread", e);
+                
+                Display.getDefault().asyncExec(() -> {
+                    showErrorMessage("Schwerwiegender Fehler", 
+                                   "Unerwarteter Fehler beim Erstellen des Chart-Fensters:\n" + e.getMessage());
+                    updateProviderStatus.accept(signalId + ":Schwerer Fehler");
+                });
+            }
+            
+        }, "AsyncChartCreator-" + signalId).start();
+        
+        LOGGER.info("=== ASYNCHRONE CHART-ERSTELLUNG DELEGIERT AN BACKGROUND-THREAD ===");
     }
     
     /**
@@ -276,7 +352,7 @@ public class SignalProviderContextMenu {
     }
     
     /**
-     * Erstellt das "Tick-Chart öffnen" Menü-Item
+     * ASYNCHRON: Erstellt das "Tick-Chart öffnen" Menü-Item mit asynchronem Handler
      */
     private void createTickChartMenuItem(Menu contextMenu, Table table) {
         MenuItem chartItem = new MenuItem(contextMenu, SWT.PUSH);
@@ -327,44 +403,18 @@ public class SignalProviderContextMenu {
     }
     
     /**
-     * Öffnet das Tick-Chart für eine Tabellenzeile
+     * DEPRECATED: Alte synchrone Methode - wird durch openTickChartAsync ersetzt
+     * Wird noch von Kontextmenü verwendet, soll aber auch asynchron werden
      */
     private void openTickChart(TableItem item) {
-        String signalId = item.getText(ProviderTableHelper.COL_SIGNAL_ID);
-        String providerName = item.getText(ProviderTableHelper.COL_PROVIDER_NAME);
+        LOGGER.warning("DEPRECATED: openTickChart() synchron aufgerufen - sollte openTickChartAsync() verwenden");
         
-        Map<String, SignalData> lastSignalData = getLastSignalData.get();
-        SignalData signalData = lastSignalData.get(signalId);
-        
-        if (signalData == null) {
-            showErrorMessage("Fehler", "Keine Signaldaten für " + signalId + " verfügbar.");
-            return;
-        }
-        
-        String tickFilePath = parentGui.getMonitor().getConfig().getTickFilePath(signalId);
-        
-        try {
-            TickChartWindow chartWindow = new TickChartWindow(
-                parentGui.getShell(), 
-                parentGui, 
-                signalId, 
-                providerName, 
-                signalData, 
-                tickFilePath
-            );
-            chartWindow.open();
-            
-            LOGGER.info("Tick-Chart geöffnet für Signal: " + signalId + " (" + providerName + ")");
-            
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen des Tick-Charts: " + e.getMessage(), e);
-            showErrorMessage("Fehler beim Öffnen des Tick-Charts", 
-                           "Konnte Tick-Chart für " + signalId + " nicht öffnen:\n" + e.getMessage());
-        }
+        // Delegate an asynchrone Version
+        openTickChartAsync(item);
     }
     
     /**
-     * Öffnet Tick-Chart für ausgewählte Provider
+     * ASYNCHRON: Öffnet Tick-Chart für ausgewählte Provider
      */
     private void openTickChartForSelected(Table table) {
         TableItem[] selectedItems = table.getSelection();
@@ -379,7 +429,8 @@ public class SignalProviderContextMenu {
             return;
         }
         
-        openTickChart(selectedItems[0]);
+        // ASYNCHRON: Verwende neue asynchrone Methode
+        openTickChartAsync(selectedItems[0]);
     }
     
     /**
