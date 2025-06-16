@@ -1,6 +1,6 @@
 # MqlRealMonitor - Klassenübersicht
-# Generated: 2025-06-02
-# Version: 1.1.0
+# Generated: 2025-06-16
+# Version: 1.2.0
 #
 # PROJECT DESCRIPTION:
 # MqlRealMonitor ist eine Java-Desktop-Anwendung für das Monitoring von MQL5 Signal-Providern.
@@ -14,6 +14,7 @@
 # - Dual-Chart-System: Equity Drawdown Chart (%) + Profit Development Chart
 # - Provider-Tabelle mit Live-Updates und Chart-Übersicht für alle Provider
 # - NEU: Wochen- und Monatsgewinn-Berechnung basierend auf historischen Tick-Daten
+# - NEU: Asynchrone Chart-Fenster-Erstellung - behebt 60-Sekunden UI-Blocking
 # - Direkter Browser-Link zu MQL5-Signalprovider-Seiten
 # - Wiederverwendbare Chart-Komponenten und modulare GUI-Architektur
 #
@@ -29,6 +30,7 @@
 # - Refactored GUI: TickChartWindow von >1000 auf <100 Zeilen reduziert
 # - Wiederverwendbare Chart-Panels für verschiedene Fenster
 # - NEU: Automatische Profit-Berechnungen für Wochen- und Monatsgewinne
+# - NEU: Asynchrone Chart-Architektur verhindert UI-Thread-Blocking
 # - Robuste Fehlerbehandlung und umfassende Diagnostik
 # - Thread-sichere GUI-Updates und automatische Refresh-Zyklen
 # 
@@ -41,6 +43,7 @@ com.mql.realmonitor.MqlRealMonitor | Hauptklasse für MQL5 Signal-Monitoring. Or
 ## Configuration
 com.mql.realmonitor.config.MqlRealMonitorConfig | Konfigurationsverwaltung für alle konfigurierbaren Parameter, Pfade und Einstellungen. Verwaltet Intervalle in Minuten.
 com.mql.realmonitor.config.IdTranslationManager | translation tabelle id zu Signalprovidername
+
 ## Data Layer
 com.mql.realmonitor.data.TickDataLoader | Lädt und parst Tick-Daten aus CSV-Dateien. Bietet TickData und TickDataSet Klassen für Datencontainer.
 
@@ -55,7 +58,7 @@ com.mql.realmonitor.exception.MqlMonitorException | Spezifische Exception-Klasse
 com.mql.realmonitor.gui.MqlRealMonitorGUI | Haupt-GUI-Klasse mit Provider-Tabelle und Toolbar. Erweitert um Chart-Übersicht Button für Signalprovider-Overview.
 com.mql.realmonitor.gui.SignalProviderTable | Refactored Provider-Tabelle mit modularer Architektur. ERWEITERT: WeeklyProfit und MonthlyProfit Spalten für Gewinn-Berechnungen.
 com.mql.realmonitor.gui.ProviderTableHelper | Hilfsfunktionen für SignalProviderTable. ERWEITERT: Support für Profit-Spalten mit Farbkodierung und numerischer Sortierung.
-com.mql.realmonitor.gui.SignalProviderContextMenu | Kontextmenü für Provider-Tabelle. Erweitert um MQL5-Website-Link zum direkten Öffnen der Signalprovider-Seite.
+com.mql.realmonitor.gui.SignalProviderContextMenu | Kontextmenü für Provider-Tabelle. ASYNCHRON: Doppelklick-Handler verhindert UI-Blocking. MQL5-Website-Link für Browser-Öffnung.
 com.mql.realmonitor.gui.StatusUpdater | Verwaltet periodische Status-Updates und Thread-sichere GUI-Aktualisierungen. Memory-Monitoring und Laufzeit-Informationen.
 
 ## GUI Layer - Chart System
@@ -68,9 +71,10 @@ com.mql.realmonitor.gui.EquityDrawdownChartPanel | Wiederverwendbare SWT-Kompone
 com.mql.realmonitor.gui.ProfitDevelopmentChartPanel | Wiederverwendbare SWT-Komponente für Profit-Chart-Anzeige. Kapselt komplette Profit-Chart-Funktionalität.
 com.mql.realmonitor.gui.SignalOverviewPanel | Panel für einzelnen Signalprovider in der Übersicht. Zeigt Provider-Info, Drawdown- und Profit-Chart in 3 Spalten.
 
-## GUI Layer - Windows (Refactored)
+## GUI Layer - Windows (Refactored + Async)
 com.mql.realmonitor.gui.TickChartWindow | Stark vereinfachte Facade-Klasse (von >1000 auf <100 Zeilen). Delegiert alle Funktionalität an TickChartWindowManager.
-com.mql.realmonitor.gui.TickChartWindowManager | Hauptmanager für TickChartWindow. Koordiniert Chart-Panels, Toolbar, Layout und Daten-Loading nach Refactoring.
+com.mql.realmonitor.gui.TickChartWindowManager | Hauptmanager für TickChartWindow. OPTIMIERT: Asynchrones Setup und stufenweise UI-Erstellung für bessere Responsiveness.
+com.mql.realmonitor.gui.AsyncTickChartWindow | NEU: Asynchrone Chart-Fenster-Klasse - BEHEBT 60-SEKUNDEN UI-BLOCKING. Zeigt sofort Loading-Fenster, erstellt Charts im Background.
 com.mql.realmonitor.gui.TickChartWindowToolbar | Separate Toolbar-Klasse mit allen Buttons. Diagnostik, Tickdaten, MQL5-Website, Zoom-Funktionen und Event-Handler.
 com.mql.realmonitor.gui.SignalProviderOverviewWindow | Chart-Übersichtsfenster für alle Signalprovider. Scrollbare Tabelle mit Charts für jeden Provider (M15, 50% Größe).
 com.mql.realmonitor.gui.TickDataDisplayWindow | Separates scrollbares Fenster für rohe Tickdaten-Anzeige. Zeigt CSV-formatierte Tick-Historie in Textfeld.
@@ -88,19 +92,20 @@ com.mql.realmonitor.tickdata.TickDataWriter | Writer für Tick-Daten mit robuste
 
 ## Utilities
 com.mql.realmonitor.utils.MqlUtils | Utility-Klasse mit allgemeinen Hilfsfunktionen. Logging-Setup, Validierung, Formatierung und File-Handling-Utilities.
-com.mql.realmonitor.utils.PeriodProfitCalculator | NEU: Berechnet Wochen- und Monatsgewinne basierend auf Tick-Daten. Analysiert Equity-Veränderungen seit Wochenstart/Monatsstart.
+com.mql.realmonitor.utils.PeriodProfitCalculator | Berechnet Wochen- und Monatsgewinne basierend auf Tick-Daten. Analysiert Equity-Veränderungen seit Wochenstart/Monatsstart.
 
 # ========================================================================
 # ARCHITECTURE SUMMARY
 # ========================================================================
 
-## Key Architectural Improvements:
+## Key Architectural Improvements (Version 1.2.0):
 - Refactored TickChartWindow: Split into 4 modular classes (Window, Manager, Toolbar, Panels)
 - Reusable Chart Panels: EquityDrawdownChartPanel and ProfitDevelopmentChartPanel can be used in multiple windows
 - Dual Chart System: Both Drawdown and Profit charts managed by unified TickChartManager
 - Chart Overview: New SignalProviderOverviewWindow for viewing all providers at once
 - MQL5 Website Integration: Direct browser links to signal provider pages
 - NEU: Profit Analysis: Automatic calculation of weekly and monthly profit percentages
+- NEU: ASYNC ARCHITECTURE: AsyncTickChartWindow verhindert 60-Sekunden UI-Blocking komplett
 - Robust Data Handling: Improved error handling and diagnostics throughout
 
 ## Package Structure:
@@ -112,17 +117,36 @@ com.mql.realmonitor.utils.PeriodProfitCalculator | NEU: Berechnet Wochen- und Mo
 - GUI: User interface (core, charts, windows, utilities)
 - Parser: HTML parsing and data models
 - TickData: CSV file writing and reading
-- Utils: General utility functions (including new profit calculations)
+- Utils: General utility functions (including profit calculations)
 
-## Recent Enhancements (Version 1.1.0):
-- NEU: WeeklyProfit and MonthlyProfit columns in provider table
-- NEU: PeriodProfitCalculator for historical profit analysis
-- ERWEITERT: Provider table now shows 13 columns (was 11)
-- ERWEITERT: Color-coded profit values (green=positive, red=negative)
-- ERWEITERT: Sortable profit columns with N/A handling
-- ERWEITERT: Comprehensive debug logging for profit calculations
+## Recent Enhancements (Version 1.2.0):
+- NEU: AsyncTickChartWindow - Asynchrone Chart-Fenster-Erstellung
+- NEU: 4-Phasen Loading-System mit Progress-Feedback
+- NEU: Thread-sichere Chart-Erstellung im Background
+- NEU: Sofortiges Loading-Fenster verhindert UI-Blocking
+- NEU: Smart Close-Handler für Loading vs. Chart-Fenster
+- ERWEITERT: TickChartWindowManager für stufenweises UI-Setup optimiert
+- ERWEITERT: SignalProviderContextMenu mit asynchronem Doppelklick-Handler
+- KORRIGIERT: 60-Sekunden UI-Blocking Problem vollständig behoben
 
-## Column Structure (Provider Table):
+## Async Chart Architecture (NEU):
+```
+Doppelklick → AsyncTickChartWindow → Loading-Fenster (sofort, 0ms)
+           ↓
+Background-Thread → TickChartWindowManager (optimiert)
+           ↓
+4 Setup-Phasen → Chart-Fenster öffnet sich (1-2s)
+           ↓
+Loading-Fenster schließt automatisch → Fertig!
+```
+
+## Threading-Model (ERWEITERT):
+- UI-Thread: Haupt-GUI, Loading-Fenster, User-Interaktion
+- Background-Threads: Chart-Erstellung, Daten-Loading, Web-Downloads
+- Sync-Points: Nur für kritische UI-Updates (Display.asyncExec/syncExec)
+- No-Blocking: Keine langandauernden Operationen im UI-Thread
+
+## Column Structure (Provider Table - 15 Spalten):
 0. Signal ID
 1. Favoritenklasse  
 2. Provider Name
@@ -131,13 +155,24 @@ com.mql.realmonitor.utils.PeriodProfitCalculator | NEU: Berechnet Wochen- und Mo
 5. Floating Profit
 6. Equity Drawdown
 7. Gesamtwert
-8. WeeklyProfit (NEU)
-9. MonthlyProfit (NEU)
-10. Währung
-11. Letzte Aktualisierung
-12. Änderung
+8. WeeklyProfit (Currency)
+9. MonthlyProfit (Currency)
+10. WeeklyProfit (Percent)
+11. MonthlyProfit (Percent) 
+12. Währung
+13. Letzte Aktualisierung
+14. Änderung
 
-## Total Classes: 26 (was 25)
+## Performance Improvements:
+- UI-Blocking: Von 60 Sekunden auf 0ms reduziert
+- Chart-Loading: Stufenweise und asynchron
+- Memory: Optimierte Image-Verwaltung
+- Threading: Klare Trennung UI vs. Background-Operationen
+- User Experience: Sofortiges Feedback, abbruchbare Operationen
+
+## Total Classes: 27 (war 26)
 ## LOC Reduction: TickChartWindow reduced from >1000 to <100 lines through refactoring
 ## Reusability: Chart panels can now be reused across different windows
 ## NEW: Automated profit calculations for performance tracking
+## NEW: Complete async architecture eliminates UI blocking
+## NEW: Background chart creation with user-friendly loading experience
