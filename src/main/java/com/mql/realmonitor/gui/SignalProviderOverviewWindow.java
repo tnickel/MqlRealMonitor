@@ -13,6 +13,7 @@ import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Combo;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Group;
@@ -28,7 +29,7 @@ import com.mql.realmonitor.parser.SignalData;
 /**
  * Chart-Übersichtsfenster für alle Signalprovider
  * Zeigt eine scrollbare Tabelle mit Drawdown- und Profit-Charts für jeden Provider
- * Timeframe: M15, Chart-Größe: 50% der normalen Größe
+ * Timeframe: M15/H1/H4 umschaltbar, Chart-Größe: 50% der normalen Größe
  */
 public class SignalProviderOverviewWindow {
     
@@ -37,15 +38,16 @@ public class SignalProviderOverviewWindow {
     // Chart-Dimensionen (VERGRÖSSERT für bessere Vollflächendarstellung)
     private static final int CHART_WIDTH = 500;  // Erhöht von 400 auf 500
     private static final int CHART_HEIGHT = 280; // Erhöht von 200 auf 280
-    private static final TimeScale TIME_SCALE = TimeScale.M15; // Festes Timeframe
     
     // UI Komponenten
     private Shell shell;
     private ScrolledComposite scrolledComposite;
     private Composite chartsContainer;
     private Label statusLabel;
+    private Label infoLabel;
     private Button refreshButton;
     private Button closeButton;
+    private Combo timeframeCombo;
     
     // Parent GUI und Display
     private final MqlRealMonitorGUI parentGui;
@@ -58,6 +60,9 @@ public class SignalProviderOverviewWindow {
     private volatile boolean isLoading = false;
     private volatile boolean isWindowClosed = false;
     private int refreshCounter = 0;
+    
+    // Aktueller Timeframe (umschaltbar)
+    private TimeScale currentTimeScale = TimeScale.M15;
     
     /**
      * Konstruktor
@@ -77,7 +82,7 @@ public class SignalProviderOverviewWindow {
      */
     private void createWindow(Shell parent) {
         shell = new Shell(parent, SWT.SHELL_TRIM | SWT.MODELESS);
-        shell.setText("📊 Chart-Übersicht - Alle Signalprovider (M15, Vollflächig)");
+        shell.setText("📊 Chart-Übersicht - Alle Signalprovider (Umschaltbare Timeframes)");
         shell.setSize(1400, 900); // VERGRÖSSERT: Mehr Platz für Charts
         shell.setLayout(new GridLayout(1, false));
         
@@ -88,7 +93,7 @@ public class SignalProviderOverviewWindow {
         createButtonPanel();
         setupEventHandlers();
         
-        LOGGER.info("Chart-Übersichtsfenster UI erstellt (optimiert für vollflächige Chart-Darstellung)");
+        LOGGER.info("Chart-Übersichtsfenster UI erstellt (mit umschaltbaren Timeframes)");
     }
     
     /**
@@ -106,7 +111,7 @@ public class SignalProviderOverviewWindow {
     }
     
     /**
-     * Erstellt das Header-Panel mit Informationen
+     * Erstellt das Header-Panel mit Informationen und Timeframe-Auswahl
      */
     private void createHeaderPanel() {
         Group headerGroup = new Group(shell, SWT.NONE);
@@ -114,9 +119,35 @@ public class SignalProviderOverviewWindow {
         headerGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
         headerGroup.setLayout(new GridLayout(1, false));
         
-        Label infoLabel = new Label(headerGroup, SWT.WRAP);
-        infoLabel.setText("Diese Übersicht zeigt Drawdown- und Profit-Charts für alle verfügbaren Signalprovider.\n" +
-                         "Timeframe: M15 (letzte 30 Stunden) | Charts: Vollflächig optimiert | Automatische Aktualisierung alle 5 Minuten");
+        // Timeframe-Auswahl Panel
+        Composite timeframePanel = new Composite(headerGroup, SWT.NONE);
+        timeframePanel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        timeframePanel.setLayout(new GridLayout(3, false));
+        
+        Label timeframeLabel = new Label(timeframePanel, SWT.NONE);
+        timeframeLabel.setText("Timeframe:");
+        timeframeLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        if (parentGui.getBoldFont() != null) {
+            timeframeLabel.setFont(parentGui.getBoldFont());
+        }
+        
+        timeframeCombo = new Combo(timeframePanel, SWT.DROP_DOWN | SWT.READ_ONLY);
+        timeframeCombo.setItems(new String[] {"M15", "H1", "H4"});
+        timeframeCombo.select(0); // M15 als Standard
+        timeframeCombo.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        timeframeCombo.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                onTimeframeChanged();
+            }
+        });
+        
+        // Spacer
+        Label spacer = new Label(timeframePanel, SWT.NONE);
+        spacer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        
+        infoLabel = new Label(headerGroup, SWT.WRAP);
+        updateInfoLabel();
         infoLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         if (parentGui.getBoldFont() != null) {
             infoLabel.setFont(parentGui.getBoldFont());
@@ -126,7 +157,71 @@ public class SignalProviderOverviewWindow {
         statusLabel.setText("Lade Provider-Daten...");
         statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         
-        LOGGER.fine("Header-Panel erstellt");
+        LOGGER.fine("Header-Panel mit Timeframe-Auswahl erstellt");
+    }
+    
+    /**
+     * Aktualisiert das Info-Label basierend auf dem aktuellen Timeframe
+     */
+    private void updateInfoLabel() {
+        String timeframeDesc = getTimeframeDescription(currentTimeScale);
+        infoLabel.setText("Diese Übersicht zeigt Drawdown- und Profit-Charts für alle verfügbaren Signalprovider.\n" +
+                         "Timeframe: " + currentTimeScale.name() + " (" + timeframeDesc + ") | Charts: Vollflächig optimiert | Automatische Aktualisierung alle 5 Minuten");
+    }
+    
+    /**
+     * Gibt eine Beschreibung für den Timeframe zurück
+     */
+    private String getTimeframeDescription(TimeScale timeScale) {
+        switch (timeScale) {
+            case M15:
+                return "letzte 30 Stunden";
+            case H1:
+                return "letzte 5 Tage";
+            case H4:
+                return "letzte 20 Tage";
+            default:
+                return "unbekannt";
+        }
+    }
+    
+    /**
+     * Event-Handler für Timeframe-Wechsel
+     */
+    private void onTimeframeChanged() {
+        if (isLoading) {
+            LOGGER.info("Lädt bereits - Timeframe-Wechsel ignoriert");
+            return;
+        }
+        
+        int selectedIndex = timeframeCombo.getSelectionIndex();
+        TimeScale newTimeScale;
+        
+        switch (selectedIndex) {
+            case 0:
+                newTimeScale = TimeScale.M15;
+                break;
+            case 1:
+                newTimeScale = TimeScale.H1;
+                break;
+            case 2:
+                newTimeScale = TimeScale.H4;
+                break;
+            default:
+                newTimeScale = TimeScale.M15;
+                break;
+        }
+        
+        if (newTimeScale != currentTimeScale) {
+            currentTimeScale = newTimeScale;
+            LOGGER.info("Timeframe geändert zu: " + currentTimeScale.name());
+            
+            // Info-Label aktualisieren
+            updateInfoLabel();
+            
+            // Charts neu laden mit neuem Timeframe
+            refreshAllCharts();
+        }
     }
     
     /**
@@ -167,7 +262,7 @@ public class SignalProviderOverviewWindow {
         refreshButton = new Button(buttonPanel, SWT.PUSH);
         refreshButton.setText("🔄 Aktualisieren");
         refreshButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
-        refreshButton.setToolTipText("Lädt alle Charts neu");
+        refreshButton.setToolTipText("Lädt alle Charts mit dem aktuellen Timeframe neu");
         refreshButton.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent e) {
@@ -220,12 +315,13 @@ public class SignalProviderOverviewWindow {
         
         // UI in Lade-Zustand versetzen
         if (!isWindowClosed && !statusLabel.isDisposed()) {
-            statusLabel.setText("Lade Provider-Daten... (Refresh #" + refreshCounter + ")");
+            statusLabel.setText("Lade Provider-Daten mit " + currentTimeScale.name() + "... (Refresh #" + refreshCounter + ")");
             refreshButton.setEnabled(false);
             refreshButton.setText("Lädt...");
+            timeframeCombo.setEnabled(false); // ComboBox während Laden deaktivieren
         }
         
-        LOGGER.info("=== LADE ALLE PROVIDER-CHARTS (Refresh #" + refreshCounter + ") ===");
+        LOGGER.info("=== LADE ALLE PROVIDER-CHARTS MIT " + currentTimeScale.name() + " (Refresh #" + refreshCounter + ") ===");
         
         // KORRIGIERT: Provider-Daten im UI-Thread laden (SWT-Thread-Sicherheit)
         List<ProviderData> providerDataList = loadProviderDataFromMainTable();
@@ -233,6 +329,9 @@ public class SignalProviderOverviewWindow {
         if (providerDataList.isEmpty()) {
             if (!isWindowClosed && !statusLabel.isDisposed()) {
                 statusLabel.setText("Keine Provider-Daten gefunden. Bitte starten Sie das Monitoring.");
+                refreshButton.setEnabled(true);
+                refreshButton.setText("🔄 Aktualisieren");
+                timeframeCombo.setEnabled(true);
             }
             isLoading = false;
             return;
@@ -283,10 +382,11 @@ public class SignalProviderOverviewWindow {
                 // UI aktualisieren
                 display.asyncExec(() -> {
                     if (!isWindowClosed && !statusLabel.isDisposed()) {
-                        statusLabel.setText(String.format("Charts geladen: %d/%d Provider erfolgreich (Refresh #%d)", 
-                                                         finalLoadedCount, totalCount, refreshCounter));
+                        statusLabel.setText(String.format("Charts geladen: %d/%d Provider erfolgreich mit %s (Refresh #%d)", 
+                                                         finalLoadedCount, totalCount, currentTimeScale.name(), refreshCounter));
                         refreshButton.setEnabled(true);
                         refreshButton.setText("🔄 Aktualisieren");
+                        timeframeCombo.setEnabled(true); // ComboBox wieder aktivieren
                         
                         updateScrollableArea();
                         
@@ -295,7 +395,7 @@ public class SignalProviderOverviewWindow {
                     }
                 });
                 
-                LOGGER.info("Provider-Charts Laden abgeschlossen: " + finalLoadedCount + "/" + totalCount);
+                LOGGER.info("Provider-Charts Laden abgeschlossen: " + finalLoadedCount + "/" + totalCount + " mit " + currentTimeScale.name());
                 
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Fataler Fehler beim Laden der Provider-Charts", e);
@@ -305,6 +405,7 @@ public class SignalProviderOverviewWindow {
                         statusLabel.setText("Fehler beim Laden der Provider-Charts: " + e.getMessage());
                         refreshButton.setEnabled(true);
                         refreshButton.setText("🔄 Aktualisieren");
+                        timeframeCombo.setEnabled(true);
                         
                         showErrorMessage("Fehler beim Laden", 
                                        "Konnte Provider-Charts nicht laden:\n" + e.getMessage());
@@ -394,11 +495,11 @@ public class SignalProviderOverviewWindow {
     }
     
     /**
-     * Erstellt ein Chart-Panel für einen Provider
+     * Erstellt ein Chart-Panel für einen Provider mit dem aktuellen Timeframe
      */
     private void createProviderPanel(ProviderData providerData, TickDataLoader.TickDataSet tickDataSet) {
         try {
-            LOGGER.info("Erstelle Chart-Panel für Provider: " + providerData.signalId);
+            LOGGER.info("Erstelle Chart-Panel für Provider: " + providerData.signalId + " mit Timeframe: " + currentTimeScale.name());
             
             SignalOverviewPanel overviewPanel = new SignalOverviewPanel(
                 chartsContainer, 
@@ -408,13 +509,13 @@ public class SignalProviderOverviewWindow {
                 tickDataSet,
                 CHART_WIDTH,
                 CHART_HEIGHT,
-                TIME_SCALE
+                currentTimeScale  // Verwende den aktuell gewählten Timeframe
             );
             
             overviewPanel.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
             overviewPanels.add(overviewPanel);
             
-            LOGGER.fine("Chart-Panel erstellt für Provider: " + providerData.signalId);
+            LOGGER.fine("Chart-Panel erstellt für Provider: " + providerData.signalId + " mit " + currentTimeScale.name());
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler beim Erstellen des Chart-Panels für " + providerData.signalId, e);
@@ -461,10 +562,10 @@ public class SignalProviderOverviewWindow {
     }
     
     /**
-     * Aktualisiert alle Charts
+     * Aktualisiert alle Charts mit dem aktuellen Timeframe
      */
     private void refreshAllCharts() {
-        LOGGER.info("Refresh aller Charts angefordert");
+        LOGGER.info("Refresh aller Charts angefordert mit Timeframe: " + currentTimeScale.name());
         loadAllProviderCharts();
     }
     
@@ -475,7 +576,7 @@ public class SignalProviderOverviewWindow {
         // Auto-Refresh in 5 Minuten (300000 ms)
         display.timerExec(300000, () -> {
             if (!isWindowClosed && !shell.isDisposed() && !isLoading) {
-                LOGGER.info("Auto-Refresh gestartet");
+                LOGGER.info("Auto-Refresh gestartet mit Timeframe: " + currentTimeScale.name());
                 refreshAllCharts();
             }
         });
