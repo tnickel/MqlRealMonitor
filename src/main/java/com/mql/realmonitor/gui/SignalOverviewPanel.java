@@ -7,6 +7,7 @@ import java.util.logging.Logger;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.PaintEvent;
 import org.eclipse.swt.events.PaintListener;
+import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.swt.layout.GridData;
@@ -22,7 +23,8 @@ import com.mql.realmonitor.data.TickDataLoader;
 /**
  * Panel für einen einzelnen Signalprovider in der Übersicht
  * Zeigt Provider-Info, Drawdown-Chart und Profit-Chart in 3 Spalten
- * Charts sind 50% der normalen Größe, Timeframe ist fest auf M15
+ * Charts sind 50% der normalen Größe, Timeframe ist umschaltbar
+ * NEU: Provider-Info Panel wird basierend auf Favoritenklasse eingefärbt
  */
 public class SignalOverviewPanel extends Composite {
     
@@ -30,6 +32,7 @@ public class SignalOverviewPanel extends Composite {
     
     // UI Komponenten
     private Label providerInfoLabel;
+    private Group infoGroup;  // NEU: Referenz auf Info-Group für Hintergrundfarbe
     private Canvas drawdownCanvas;
     private Canvas profitCanvas;
     
@@ -40,32 +43,36 @@ public class SignalOverviewPanel extends Composite {
     // Daten
     private final String signalId;
     private final String providerName;
+    private final String favoriteClass;  // NEU: Favoritenklasse
     private final TickDataLoader.TickDataSet tickDataSet;
     private final int chartWidth;
     private final int chartHeight;
     private final TimeScale timeScale;
     private List<TickDataLoader.TickData> filteredTicks;
     
-    // Parent GUI
+    // Parent GUI und Helper
     private final MqlRealMonitorGUI parentGui;
+    private final ProviderTableHelper tableHelper;
     private final Display display;
     
     // Status
     private volatile boolean isChartsRendered = false;
     
     /**
-     * Konstruktor
+     * Konstruktor - ERWEITERT um Favoritenklasse
      */
     public SignalOverviewPanel(Composite parent, MqlRealMonitorGUI parentGui,
-                              String signalId, String providerName,
+                              String signalId, String providerName, String favoriteClass,
                               TickDataLoader.TickDataSet tickDataSet,
                               int chartWidth, int chartHeight, TimeScale timeScale) {
         super(parent, SWT.BORDER);
         
         this.parentGui = parentGui;
+        this.tableHelper = new ProviderTableHelper(parentGui);
         this.display = parent.getDisplay();
         this.signalId = signalId;
         this.providerName = providerName;
+        this.favoriteClass = favoriteClass;  // NEU: Favoritenklasse speichern
         this.tickDataSet = tickDataSet;
         this.chartWidth = chartWidth;
         this.chartHeight = chartHeight;
@@ -77,6 +84,7 @@ public class SignalOverviewPanel extends Composite {
         
         LOGGER.info("=== OVERVIEW PANEL ERSTELLT für " + signalId + " (" + providerName + ") ===");
         LOGGER.info("Chart-Dimensionen: " + chartWidth + "x" + chartHeight + ", Timeframe: " + timeScale.getLabel());
+        LOGGER.info("Favoritenklasse: " + (favoriteClass != null && !favoriteClass.trim().isEmpty() && !favoriteClass.equals("-") ? favoriteClass : "Keine Klasse"));
         
         createComponents();
         loadAndRenderChartsAsync();
@@ -89,7 +97,7 @@ public class SignalOverviewPanel extends Composite {
         setLayout(new GridLayout(3, false)); // 3 Spalten: Info, Drawdown, Profit
         setBackground(display.getSystemColor(SWT.COLOR_WHITE));
         
-        // Spalte 1: Provider-Information
+        // Spalte 1: Provider-Information (mit Favoritenklasse-Einfärbung)
         createProviderInfoSection();
         
         // Spalte 2: Drawdown-Chart
@@ -98,24 +106,49 @@ public class SignalOverviewPanel extends Composite {
         // Spalte 3: Profit-Chart
         createProfitChartSection();
         
-        LOGGER.fine("UI-Komponenten erstellt für " + signalId);
+        LOGGER.fine("UI-Komponenten erstellt für " + signalId + " mit Favoritenklasse: " + favoriteClass);
     }
     
     /**
-     * Erstellt die Provider-Info-Sektion (Spalte 1)
+     * Erstellt die Provider-Info-Sektion (Spalte 1) - ERWEITERT mit Favoritenklasse-Einfärbung
      */
     private void createProviderInfoSection() {
-        Group infoGroup = new Group(this, SWT.NONE);
+        infoGroup = new Group(this, SWT.NONE);
         infoGroup.setText("Provider-Info");
         infoGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, false, true));
         infoGroup.setLayout(new GridLayout(1, false));
         
+        // NEU: Hintergrundfarbe basierend auf Favoritenklasse setzen
+        Color backgroundColor = tableHelper.getFavoriteClassBackgroundColor(favoriteClass);
+        if (backgroundColor != null) {
+            infoGroup.setBackground(backgroundColor);
+            LOGGER.info("Provider-Info Panel eingefärbt für Signal " + signalId + " (Klasse: " + favoriteClass + ")");
+        } else {
+            // Standard-Hintergrundfarbe für Provider ohne Klasse
+            infoGroup.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
+            LOGGER.fine("Provider-Info Panel mit Standard-Farbe für Signal " + signalId + " (Keine Klasse)");
+        }
+        
         providerInfoLabel = new Label(infoGroup, SWT.WRAP);
         providerInfoLabel.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         
-        // Provider-Informationen zusammenstellen
+        // NEU: Label-Hintergrund an Group-Hintergrund anpassen
+        if (backgroundColor != null) {
+            providerInfoLabel.setBackground(backgroundColor);
+        } else {
+            providerInfoLabel.setBackground(display.getSystemColor(SWT.COLOR_WHITE));
+        }
+        
+        // Provider-Informationen zusammenstellen - ERWEITERT um Favoritenklasse
         StringBuilder info = new StringBuilder();
         info.append("Signal ID:\n").append(signalId).append("\n\n");
+        
+        // NEU: Favoritenklasse anzeigen
+        String displayFavoriteClass = (favoriteClass != null && !favoriteClass.trim().isEmpty() && !favoriteClass.equals("-")) 
+                                    ? favoriteClass 
+                                    : "Keine Klasse";
+        info.append("Favoritenklasse:\n").append(displayFavoriteClass).append("\n\n");
+        
         info.append("Provider:\n").append(providerName).append("\n\n");
         info.append("Timeframe:\n").append(timeScale.getLabel()).append("\n\n");
         
@@ -138,7 +171,7 @@ public class SignalOverviewPanel extends Composite {
             providerInfoLabel.setFont(parentGui.getBoldFont());
         }
         
-        LOGGER.fine("Provider-Info-Sektion erstellt für " + signalId);
+        LOGGER.fine("Provider-Info-Sektion erstellt für " + signalId + " mit Favoritenklasse-Einfärbung");
     }
     
     /**
@@ -370,6 +403,13 @@ public class SignalOverviewPanel extends Composite {
     }
     
     /**
+     * NEU: Gibt die Favoritenklasse zurück
+     */
+    public String getFavoriteClass() {
+        return favoriteClass;
+    }
+    
+    /**
      * Gibt das Timeframe zurück
      */
     public TimeScale getTimeScale() {
@@ -417,7 +457,7 @@ public class SignalOverviewPanel extends Composite {
     
     @Override
     public String toString() {
-        return String.format("SignalOverviewPanel{signalId='%s', providerName='%s', timeScale=%s, ready=%s}", 
-                           signalId, providerName, timeScale.getLabel(), isReady());
+        return String.format("SignalOverviewPanel{signalId='%s', providerName='%s', favoriteClass='%s', timeScale=%s, ready=%s}", 
+                           signalId, providerName, favoriteClass, timeScale.getLabel(), isReady());
     }
 }

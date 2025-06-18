@@ -419,6 +419,7 @@ public class SignalProviderOverviewWindow {
     
     /**
      * KORRIGIERT: Lädt Provider-Daten aus der Haupttabelle (im UI-Thread)
+     * ERWEITERT: Jetzt mit Favoritenklasse für Einfärbung des Provider-Info Panels
      */
     private List<ProviderData> loadProviderDataFromMainTable() {
         List<ProviderData> providerDataList = new ArrayList<>();
@@ -444,6 +445,7 @@ public class SignalProviderOverviewWindow {
             for (TableItem item : items) {
                 try {
                     String signalId = item.getText(ProviderTableHelper.COL_SIGNAL_ID);
+                    String favoriteClass = item.getText(ProviderTableHelper.COL_FAVORITE_CLASS);  // NEU: Favoritenklasse
                     String providerName = item.getText(ProviderTableHelper.COL_PROVIDER_NAME);
                     String status = item.getText(ProviderTableHelper.COL_STATUS);
                     
@@ -451,10 +453,12 @@ public class SignalProviderOverviewWindow {
                         providerName != null && !providerName.trim().isEmpty() &&
                         !"Lädt...".equals(providerName)) {
                         
-                        ProviderData providerData = new ProviderData(signalId, providerName, status);
+                        ProviderData providerData = new ProviderData(signalId, providerName, status, favoriteClass);
                         providerDataList.add(providerData);
                         
-                        LOGGER.fine("Provider gefunden: " + signalId + " (" + providerName + ")");
+                        String favoriteClassDisplay = (favoriteClass != null && !favoriteClass.trim().isEmpty() && !favoriteClass.equals("-")) 
+                                                    ? favoriteClass : "Keine";
+                        LOGGER.fine("Provider gefunden: " + signalId + " (" + providerName + ", Klasse: " + favoriteClassDisplay + ")");
                     }
                     
                 } catch (Exception e) {
@@ -496,6 +500,7 @@ public class SignalProviderOverviewWindow {
     
     /**
      * Erstellt ein Chart-Panel für einen Provider mit dem aktuellen Timeframe
+     * ERWEITERT: Jetzt mit Favoritenklasse-Einfärbung des Provider-Info Panels
      */
     private void createProviderPanel(ProviderData providerData, TickDataLoader.TickDataSet tickDataSet) {
         try {
@@ -506,6 +511,7 @@ public class SignalProviderOverviewWindow {
                 parentGui, 
                 providerData.signalId, 
                 providerData.providerName,
+                providerData.favoriteClass,  // NEU: Favoritenklasse für Einfärbung
                 tickDataSet,
                 CHART_WIDTH,
                 CHART_HEIGHT,
@@ -515,7 +521,9 @@ public class SignalProviderOverviewWindow {
             overviewPanel.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, false));
             overviewPanels.add(overviewPanel);
             
-            LOGGER.fine("Chart-Panel erstellt für Provider: " + providerData.signalId + " mit " + currentTimeScale.name());
+            String favoriteClassDisplay = (providerData.favoriteClass != null && !providerData.favoriteClass.trim().isEmpty() && !providerData.favoriteClass.equals("-")) 
+                                        ? providerData.favoriteClass : "Keine";
+            LOGGER.fine("Chart-Panel erstellt für Provider: " + providerData.signalId + " mit " + currentTimeScale.name() + " (Klasse: " + favoriteClassDisplay + ")");
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler beim Erstellen des Chart-Panels für " + providerData.signalId, e);
@@ -621,21 +629,27 @@ public class SignalProviderOverviewWindow {
     
     /**
      * Hilfsdatenklasse für Provider-Informationen
+     * ERWEITERT: Jetzt mit Favoritenklasse für Panel-Einfärbung
      */
     private static class ProviderData {
         final String signalId;
         final String providerName;
         final String status;
+        final String favoriteClass;  // NEU: Favoritenklasse
         
-        ProviderData(String signalId, String providerName, String status) {
+        ProviderData(String signalId, String providerName, String status, String favoriteClass) {
             this.signalId = signalId;
             this.providerName = providerName;
             this.status = status;
+            this.favoriteClass = favoriteClass;
         }
         
         @Override
         public String toString() {
-            return "ProviderData{signalId='" + signalId + "', providerName='" + providerName + "', status='" + status + "'}";
+            String favoriteClassDisplay = (favoriteClass != null && !favoriteClass.trim().isEmpty() && !favoriteClass.equals("-")) 
+                                        ? favoriteClass : "Keine";
+            return "ProviderData{signalId='" + signalId + "', providerName='" + providerName + 
+                   "', status='" + status + "', favoriteClass='" + favoriteClassDisplay + "'}";
         }
     }
 }
