@@ -25,7 +25,10 @@ import org.jfree.data.time.TimeSeriesCollection;
 import com.mql.realmonitor.data.TickDataLoader;
 
 /**
- * ERWEITERT: Verwaltet beide Charts mit verbesserter Datenkompression
+ * STARK ERWEITERT: Verwaltet beide Charts mit verbesserter X-Achsen-Formatierung
+ * NEU: Intelligente Datum+Zeit-Anzeige je nach TimeScale und Zeitraum
+ * NEU: Unterstützt ALL-Modus für kompletten verfügbaren Zeitraum
+ * NEU: Optimierte Chart-Breite für bessere Darstellung großer Datenmengen
  * OPTIMIERT: Aggressivere Datenkompression für schnelleres Rendering
  * KORRIGIERT: Profit-Chart verwendet relative Profit-Werte statt absolute Beträge
  * KORRIGIERT: Shapes (Punkte) aktiviert für DIAGNOSE #2 Darstellung
@@ -47,6 +50,9 @@ public class TickChartManager {
     private static final int MAX_DATA_POINTS = 100;  // Reduziert von 200 auf 100
     private static final int AGGRESSIVE_MAX_POINTS = 50;  // Für große Datenmengen
     
+    // NEU: Maximale Datenpunkte für ALL-Modus (mehr erlaubt)
+    private static final int MAX_DATA_POINTS_ALL = 500;  // Für ALL-Modus mehr Punkte
+    
     // Performance-Tracking
     private long lastOptimizationTime = 0;
     private int totalOriginalPoints = 0;
@@ -64,13 +70,16 @@ public class TickChartManager {
     
     /**
      * ERWEITERT: Optimiert die Tick-Daten durch intelligentes Sampling mit detailliertem Logging
+     * NEU: Angepasste Limits für ALL-Modus
      * AGGRESSIVER: Verwendet weniger Punkte für bessere Performance
      * 
      * @param tickDataList Die originalen Tick-Daten
      * @param maxDataPoints Maximale Anzahl der Datenpunkte
+     * @param timeScale Die Zeitskala für optimierte Kompression
      * @return Optimierte Tick-Daten
      */
-    private List<TickDataLoader.TickData> optimizeTickDataBySampling(List<TickDataLoader.TickData> tickDataList, int maxDataPoints) {
+    private List<TickDataLoader.TickData> optimizeTickDataBySampling(List<TickDataLoader.TickData> tickDataList, 
+                                                                    int maxDataPoints, TimeScale timeScale) {
         long startTime = System.currentTimeMillis();
         
         if (tickDataList == null || tickDataList.isEmpty()) {
@@ -79,6 +88,12 @@ public class TickChartManager {
         }
         
         int originalSize = tickDataList.size();
+        
+        // NEU: Für ALL-Modus großzügigere Limits
+        if (timeScale != null && timeScale.isAll()) {
+            maxDataPoints = Math.max(maxDataPoints, MAX_DATA_POINTS_ALL);
+            LOGGER.info("ALL-MODUS: Verwende erweiterte Datenpunkt-Limite: " + maxDataPoints);
+        }
         
         // Wenn weniger Daten als Maximum, keine Optimierung nötig
         if (originalSize <= maxDataPoints) {
@@ -89,10 +104,11 @@ public class TickChartManager {
         LOGGER.info("=== SAMPLING GESTARTET ===");
         LOGGER.info("Original Datenpunkte: " + originalSize);
         LOGGER.info("Ziel Datenpunkte: " + maxDataPoints);
+        LOGGER.info("TimeScale: " + (timeScale != null ? timeScale.getLabel() : "NULL"));
         
-        // AGGRESSIVER: Bei sehr großen Datenmengen noch weniger Punkte
+        // AGGRESSIVER: Bei sehr großen Datenmengen noch weniger Punkte (außer ALL-Modus)
         int effectiveMaxPoints = maxDataPoints;
-        if (originalSize > 1000) {
+        if (originalSize > 1000 && (timeScale == null || !timeScale.isAll())) {
             effectiveMaxPoints = AGGRESSIVE_MAX_POINTS;
             LOGGER.warning("AGGRESSIVE KOMPRESSION: Große Datenmenge (" + originalSize + ") -> verwende nur " + effectiveMaxPoints + " Punkte");
         }
@@ -239,9 +255,10 @@ public class TickChartManager {
     }
     
     /**
-     * ERWEITERT: Kombinierte Datenoptimierung mit Performance-Tracking
+     * ERWEITERT: Kombinierte Datenoptimierung mit Performance-Tracking und TimeScale-Support
      */
-    private List<TickDataLoader.TickData> optimizeTickData(List<TickDataLoader.TickData> tickDataList, int maxDataPoints) {
+    private List<TickDataLoader.TickData> optimizeTickData(List<TickDataLoader.TickData> tickDataList, 
+                                                          int maxDataPoints, TimeScale timeScale) {
         long totalStartTime = System.currentTimeMillis();
         
         if (tickDataList == null || tickDataList.isEmpty()) {
@@ -257,13 +274,14 @@ public class TickChartManager {
         LOGGER.info("Signal: " + signalId);
         LOGGER.info("Original Datenpunkte: " + originalSize);
         LOGGER.info("Ziel Datenpunkte: " + maxDataPoints);
+        LOGGER.info("TimeScale: " + (timeScale != null ? timeScale.getLabel() : "NULL"));
         LOGGER.info("============================================");
         
         // SCHRITT 1: Duplikate entfernen
         List<TickDataLoader.TickData> deduplicatedData = removeDuplicateValues(tickDataList);
         
         // SCHRITT 2: Sampling anwenden falls immer noch zu viele Punkte
-        List<TickDataLoader.TickData> finalData = optimizeTickDataBySampling(deduplicatedData, maxDataPoints);
+        List<TickDataLoader.TickData> finalData = optimizeTickDataBySampling(deduplicatedData, maxDataPoints, timeScale);
         
         // Performance-Tracking
         long totalTime = System.currentTimeMillis() - totalStartTime;
@@ -294,7 +312,8 @@ public class TickChartManager {
     }
     
     /**
-     * OPTIMIERT: Erstellt oder aktualisiert den Equity Drawdown Chart
+     * STARK ERWEITERT: Erstellt oder aktualisiert den Equity Drawdown Chart
+     * NEU: Intelligente X-Achsen-Formatierung mit Datum je nach TimeScale
      * NEU: Mit aggressiverer Data-Kompression für bessere Performance
      */
     public void createOrUpdateDrawdownChart(List<TickDataLoader.TickData> tickDataList, 
@@ -306,12 +325,14 @@ public class TickChartManager {
             return;
         }
         
-        LOGGER.info("=== ERSTELLE/UPDATE EQUITY DRAWDOWN CHART ===");
+        LOGGER.info("=== ERSTELLE/UPDATE EQUITY DRAWDOWN CHART (MIT ERWEITERTER X-ACHSE) ===");
         LOGGER.info("Original Datenpunkte: " + tickDataList.size());
         LOGGER.info("Peak Total Value: " + String.format("%.2f", peakTotalValue));
+        LOGGER.info("TimeScale: " + (timeScale != null ? timeScale.getLabel() : "NULL"));
         
-        // ERWEITERT: Aggressivere Data-Kompression
-        List<TickDataLoader.TickData> optimizedData = optimizeTickData(tickDataList, MAX_DATA_POINTS);
+        // ERWEITERT: Angepasste Data-Kompression je nach TimeScale
+        int maxPoints = (timeScale != null && timeScale.isAll()) ? MAX_DATA_POINTS_ALL : MAX_DATA_POINTS;
+        List<TickDataLoader.TickData> optimizedData = optimizeTickData(tickDataList, maxPoints, timeScale);
 
         LOGGER.info("Verwende " + optimizedData.size() + " Datenpunkte für Drawdown-Chart (Kompression: " + 
                    String.format("%.1f:1", (double)tickDataList.size() / optimizedData.size()) + ")");
@@ -375,17 +396,18 @@ public class TickChartManager {
             drawdownChart.setTitle("Total Value Drawdown (%) - EQUITY+FLOATING - " + signalId + 
                                   " (" + providerName + ") - " + timeScaleLabel + diagnoseTag);
             
-            // KORRIGIERT: X-Achse korrekt kalibrieren
-            configureDateAxis(plot, optimizedData);
+            // ERWEITERT: X-Achse korrekt kalibrieren mit neuer Formatierung
+            configureDateAxisEnhanced(plot, optimizedData, timeScale);
             
             LOGGER.info("Bestehender Drawdown-Chart aktualisiert");
         }
         
-        LOGGER.info("EQUITY DRAWDOWN CHART ERFOLGREICH ERSTELLT/AKTUALISIERT (Optimierte Performance)");
+        LOGGER.info("EQUITY DRAWDOWN CHART ERFOLGREICH ERSTELLT/AKTUALISIERT (Erweiterte X-Achse, Optimierte Performance)");
     }
     
     /**
-     * KORRIGIERT: Erstellt oder aktualisiert den Profit Development Chart
+     * STARK ERWEITERT: Erstellt oder aktualisiert den Profit Development Chart
+     * NEU: Intelligente X-Achsen-Formatierung mit Datum je nach TimeScale
      * FIX: Verwendet relative Profit-Werte statt absolute Beträge für korrekte Y-Achse
      */
     public void createOrUpdateProfitChart(List<TickDataLoader.TickData> tickDataList, 
@@ -396,11 +418,13 @@ public class TickChartManager {
             return;
         }
         
-        LOGGER.info("=== ERSTELLE/UPDATE PROFIT DEVELOPMENT CHART (KORRIGIERTE PROFIT-BERECHNUNG) ===");
+        LOGGER.info("=== ERSTELLE/UPDATE PROFIT DEVELOPMENT CHART (ERWEITERTE X-ACHSE, KORRIGIERTE PROFIT-BERECHNUNG) ===");
         LOGGER.info("Original Datenpunkte: " + tickDataList.size());
+        LOGGER.info("TimeScale: " + (timeScale != null ? timeScale.getLabel() : "NULL"));
         
-        // ERWEITERT: Aggressivere Data-Kompression
-        List<TickDataLoader.TickData> optimizedData = optimizeTickData(tickDataList, MAX_DATA_POINTS);
+        // ERWEITERT: Angepasste Data-Kompression je nach TimeScale
+        int maxPoints = (timeScale != null && timeScale.isAll()) ? MAX_DATA_POINTS_ALL : MAX_DATA_POINTS;
+        List<TickDataLoader.TickData> optimizedData = optimizeTickData(tickDataList, maxPoints, timeScale);
         LOGGER.info("Verwende " + optimizedData.size() + " Datenpunkte für Profit-Chart (Kompression: " + 
                    String.format("%.1f:1", (double)tickDataList.size() / optimizedData.size()) + ")");
         
@@ -475,13 +499,13 @@ public class TickChartManager {
             profitChart.setTitle("Profit-Entwicklung - " + signalId + 
                                " (" + providerName + ") - " + timeScaleLabel + diagnoseTag);
             
-            // KORRIGIERT: X-Achse korrekt kalibrieren
-            configureDateAxis(plot, optimizedData);
+            // ERWEITERT: X-Achse korrekt kalibrieren mit neuer Formatierung
+            configureDateAxisEnhanced(plot, optimizedData, timeScale);
             
             LOGGER.info("Bestehender Profit-Chart aktualisiert (mit relativen Profit-Werten)");
         }
         
-        LOGGER.info("PROFIT DEVELOPMENT CHART ERFOLGREICH ERSTELLT/AKTUALISIERT (Relative Profit-Werte, Optimierte Performance)");
+        LOGGER.info("PROFIT DEVELOPMENT CHART ERFOLGREICH ERSTELLT/AKTUALISIERT (Erweiterte X-Achse, Relative Profit-Werte, Optimierte Performance)");
     }
     
     /**
@@ -511,8 +535,8 @@ public class TickChartManager {
         plot.setDomainPannable(false);
         plot.setRangePannable(false);
         
-        // Achsen konfigurieren
-        configureDateAxis(plot, null);
+        // ERWEITERT: Achsen konfigurieren mit neuer Formatierung
+        configureDateAxisEnhanced(plot, null, timeScale);
         configureValueAxis(valueAxis, true);
         
         // 0-Linie hinzufügen
@@ -584,8 +608,8 @@ public class TickChartManager {
         plot.setDomainPannable(false);
         plot.setRangePannable(false);
         
-        // Achsen konfigurieren
-        configureDateAxis(plot, null);
+        // ERWEITERT: Achsen konfigurieren mit neuer Formatierung
+        configureDateAxisEnhanced(plot, null, timeScale);
         configureValueAxis(valueAxis, false);  // false = Profit-Chart (nicht Drawdown)
         
         // Chart erstellen
@@ -612,30 +636,68 @@ public class TickChartManager {
     }
     
     /**
-     * KORRIGIERT: Konfiguriert die Datums-Achse (X-Achse) mit korrekter Kalibrierung
-     * FIX: LocalDateTime zu Date Konvertierung
+     * NEU: STARK ERWEITERTE Datums-Achse (X-Achse) Konfiguration
+     * INTELLIGENTE FORMATIERUNG: Passt Datum+Zeit-Format an TimeScale und Zeitraum an
+     * VERBESSERTE SICHTBARKEIT: Zeigt immer relevante Datum+Zeit-Information
      * 
      * @param plot Der XYPlot
      * @param tickDataList Optionale Tick-Daten für präzise Range-Einstellung
+     * @param timeScale Die TimeScale für intelligente Formatierung
      */
-    private void configureDateAxis(XYPlot plot, List<TickDataLoader.TickData> tickDataList) {
+    private void configureDateAxisEnhanced(XYPlot plot, List<TickDataLoader.TickData> tickDataList, TimeScale timeScale) {
         DateAxis axis = (DateAxis) plot.getDomainAxis();
         
         // Zeitzone auf System-Default setzen
         axis.setTimeZone(TimeZone.getDefault());
         
-        // Format für die Achsenbeschriftung
-        SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm");
-        dateFormat.setTimeZone(TimeZone.getDefault());
+        // NEU: INTELLIGENTE FORMAT-AUSWAHL basierend auf TimeScale und Zeitraum
+        SimpleDateFormat dateFormat = createIntelligentDateFormat(tickDataList, timeScale);
         axis.setDateFormatOverride(dateFormat);
         
-        // Achsenbeschriftung
+        // Achsenbeschriftung mit TimeScale-Information
+        String axisLabel = "Zeit";
+        if (timeScale != null) {
+            if (timeScale.isAll()) {
+                axisLabel += " (Kompletter Zeitraum)";
+            } else {
+                axisLabel += " (" + timeScale.getLabel() + ")";
+            }
+        }
+        axis.setLabel(axisLabel);
+        
+        // Schriftarten
         axis.setLabelFont(new Font("SansSerif", Font.BOLD, 12));
         axis.setTickLabelFont(new Font("SansSerif", Font.PLAIN, 10));
         
-        // KORRIGIERT: Auto-Range aktivieren für korrekte Skalierung
+        // ERWEITERT: Auto-Range mit intelligenter Anpassung an TimeScale
         axis.setAutoRange(true);
-        axis.setAutoRangeMinimumSize(60000); // Mindestens 1 Minute Range
+        
+        // NEU: Mindest-Range basierend auf TimeScale
+        long minimumRangeMs = 60000; // Standard: 1 Minute
+        if (timeScale != null) {
+            switch (timeScale) {
+                case M1:
+                case M5:
+                    minimumRangeMs = 300000; // 5 Minuten
+                    break;
+                case M15:
+                    minimumRangeMs = 900000; // 15 Minuten
+                    break;
+                case H1:
+                    minimumRangeMs = 3600000; // 1 Stunde
+                    break;
+                case H4:
+                    minimumRangeMs = 14400000; // 4 Stunden
+                    break;
+                case D1:
+                    minimumRangeMs = 86400000; // 1 Tag
+                    break;
+                case ALL:
+                    minimumRangeMs = 3600000; // 1 Stunde für ALL-Modus
+                    break;
+            }
+        }
+        axis.setAutoRangeMinimumSize(minimumRangeMs);
         
         // Optional: Wenn Tick-Daten vorhanden, präzise Range setzen
         if (tickDataList != null && !tickDataList.isEmpty()) {
@@ -647,19 +709,95 @@ public class TickChartManager {
             Date minDate = Date.from(minDateTime.atZone(ZoneId.systemDefault()).toInstant());
             Date maxDate = Date.from(maxDateTime.atZone(ZoneId.systemDefault()).toInstant());
             
-            // 5% Padding hinzufügen
+            // NEU: Intelligentes Padding basierend auf TimeScale und Datenmenge
             long range = maxDate.getTime() - minDate.getTime();
-            long padding = (long)(range * 0.05);
+            double paddingPercent = 0.05; // Standard: 5%
+            
+            if (timeScale != null && timeScale.isAll()) {
+                paddingPercent = 0.02; // Weniger Padding für ALL-Modus
+            } else if (tickDataList.size() < 10) {
+                paddingPercent = 0.1; // Mehr Padding für wenige Datenpunkte
+            }
+            
+            long padding = (long)(range * paddingPercent);
+            
+            // NEU: Mindest-Padding basierend auf TimeScale
+            long minPadding = minimumRangeMs / 10; // 10% der Mindest-Range
+            padding = Math.max(padding, minPadding);
             
             axis.setRange(new Date(minDate.getTime() - padding), 
                          new Date(maxDate.getTime() + padding));
             
-            LOGGER.fine("X-Achse kalibriert: " + minDate + " bis " + maxDate);
+            LOGGER.info("X-Achse intelligent kalibriert: " + dateFormat.format(minDate) + 
+                       " bis " + dateFormat.format(maxDate) + 
+                       " (TimeScale: " + (timeScale != null ? timeScale.getLabel() : "NULL") + 
+                       ", Format: " + dateFormat.toPattern() + ")");
         }
     }
     
     /**
-     * Konfiguriert die Wert-Achse (Y-Achse)
+     * NEU: Erstellt intelligentes Datumsformat basierend auf TimeScale und Zeitraum
+     * SMART: Passt sich automatisch an verfügbare Daten und gewähltes Zeitintervall an
+     * 
+     * @param tickDataList Die Tick-Daten für Zeitraum-Analyse
+     * @param timeScale Die gewählte TimeScale
+     * @return Optimales SimpleDateFormat
+     */
+    private SimpleDateFormat createIntelligentDateFormat(List<TickDataLoader.TickData> tickDataList, TimeScale timeScale) {
+        SimpleDateFormat format;
+        
+        // STANDARD-FORMATIERUNG basierend auf TimeScale
+        if (timeScale != null) {
+            String pattern = timeScale.getDateTimeFormat();
+            format = new SimpleDateFormat(pattern);
+            LOGGER.info("TimeScale-basiertes Format gewählt: " + pattern);
+        } else {
+            // Fallback für NULL TimeScale
+            format = new SimpleDateFormat("dd.MM HH:mm");
+            LOGGER.info("Fallback-Format gewählt: dd.MM HH:mm");
+        }
+        
+        // INTELLIGENTE ANPASSUNG basierend auf tatsächlichen Daten
+        if (tickDataList != null && !tickDataList.isEmpty()) {
+            LocalDateTime startTime = tickDataList.get(0).getTimestamp();
+            LocalDateTime endTime = tickDataList.get(tickDataList.size() - 1).getTimestamp();
+            
+            // Berechne Zeitspanne
+            long durationHours = java.time.Duration.between(startTime, endTime).toHours();
+            long durationDays = java.time.Duration.between(startTime, endTime).toDays();
+            
+            LOGGER.info("Daten-Zeitspanne: " + durationHours + " Stunden, " + durationDays + " Tage");
+            
+            // INTELLIGENTE ÜBERSCHREIBUNG bei extremen Zeitspannen
+            if (durationDays > 30) {
+                // Lange Zeitspanne: Datum + Jahr wichtig
+                format = new SimpleDateFormat("dd.MM.yy");
+                LOGGER.info("Lange Zeitspanne erkannt -> Format überschrieben zu: dd.MM.yy");
+            } else if (durationDays > 7) {
+                // Mehrere Tage: Datum + Zeit
+                format = new SimpleDateFormat("dd.MM HH:mm");
+                LOGGER.info("Mehrtägige Zeitspanne erkannt -> Format überschrieben zu: dd.MM HH:mm");
+            } else if (durationHours < 4 && (timeScale == null || timeScale == TimeScale.M1 || timeScale == TimeScale.M5)) {
+                // Sehr kurze Zeitspanne: Nur Zeit
+                format = new SimpleDateFormat("HH:mm:ss");
+                LOGGER.info("Kurze Zeitspanne erkannt -> Format überschrieben zu: HH:mm:ss");
+            }
+            
+            // SPEZIALFALL: ALL-Modus mit vielen Tagen
+            if (timeScale != null && timeScale.isAll() && durationDays > 1) {
+                format = new SimpleDateFormat("dd.MM");
+                LOGGER.info("ALL-Modus mit " + durationDays + " Tagen -> Format überschrieben zu: dd.MM");
+            }
+        }
+        
+        // Zeitzone setzen
+        format.setTimeZone(TimeZone.getDefault());
+        
+        return format;
+    }
+    
+    /**
+     * ERWEITERT: Konfiguriert die Wert-Achse (Y-Achse) mit verbesserter Formatierung
      */
     private void configureValueAxis(NumberAxis axis, boolean isDrawdownChart) {
         axis.setLabelFont(new Font("SansSerif", Font.BOLD, 12));
@@ -680,14 +818,23 @@ public class TickChartManager {
         axis.setAutoRangeMinimumSize(1.0);
     }
     
-    // ========== KOMPATIBILITÄTS-METHODEN FÜR PANEL-KLASSEN ==========
+    /**
+     * ERWEITERT: Legacy-Methode für alte configureDateAxis - umgeleitet auf neue Implementierung
+     */
+    private void configureDateAxis(XYPlot plot, List<TickDataLoader.TickData> tickDataList) {
+        // Umleitung auf erweiterte Methode mit NULL TimeScale
+        configureDateAxisEnhanced(plot, tickDataList, null);
+    }
+    
+    // ========== KOMPATIBILITÄTS-METHODEN FÜR PANEL-KLASSEN (ERWEITERT) ==========
     
     /**
-     * KOMPATIBILITÄTS-METHODE für EquityDrawdownChartPanel
+     * ERWEITERT: KOMPATIBILITÄTS-METHODE für EquityDrawdownChartPanel
      * Aktualisiert nur den Drawdown-Chart mit gefilterten Daten
+     * NEU: Unterstützt erweiterte X-Achsen-Formatierung
      * 
      * @param filteredTicks Die gefilterten Tick-Daten
-     * @param timeScale Die Zeitskala
+     * @param timeScale Die Zeitskala für intelligente Formatierung
      */
     public void updateDrawdownChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         if (filteredTicks == null || filteredTicks.isEmpty()) {
@@ -698,16 +845,17 @@ public class TickChartManager {
         // Peak-Total-Value aus den Daten berechnen
         double peakTotalValue = calculatePeakFromData(filteredTicks);
         
-        // Chart erstellen/aktualisieren mit optimierten Daten
+        // Chart erstellen/aktualisieren mit optimierten Daten und erweiterter X-Achse
         createOrUpdateDrawdownChart(filteredTicks, peakTotalValue, false, timeScale);
     }
     
     /**
-     * KOMPATIBILITÄTS-METHODE für SignalOverviewPanel
+     * ERWEITERT: KOMPATIBILITÄTS-METHODE für SignalOverviewPanel
      * Aktualisiert beide Charts mit gefilterten Daten
+     * NEU: Unterstützt erweiterte X-Achsen-Formatierung
      * 
      * @param filteredTicks Die gefilterten Tick-Daten
-     * @param timeScale Die Zeitskala
+     * @param timeScale Die Zeitskala für intelligente Formatierung
      */
     public void updateChartsWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         if (filteredTicks == null || filteredTicks.isEmpty()) {
@@ -718,7 +866,7 @@ public class TickChartManager {
         // Peak-Total-Value aus den Daten berechnen
         double peakTotalValue = calculatePeakFromData(filteredTicks);
         
-        // Beide Charts erstellen/aktualisieren
+        // Beide Charts erstellen/aktualisieren mit erweiterter X-Achse
         createOrUpdateDrawdownChart(filteredTicks, peakTotalValue, false, timeScale);
         createOrUpdateProfitChart(filteredTicks, false, timeScale);
     }
@@ -735,11 +883,12 @@ public class TickChartManager {
     }
     
     /**
-     * KOMPATIBILITÄTS-METHODE für ProfitDevelopmentChartPanel
+     * ERWEITERT: KOMPATIBILITÄTS-METHODE für ProfitDevelopmentChartPanel
      * Aktualisiert nur den Profit-Chart mit gefilterten Daten
+     * NEU: Unterstützt erweiterte X-Achsen-Formatierung
      * 
      * @param filteredTicks Die gefilterten Tick-Daten
-     * @param timeScale Die Zeitskala
+     * @param timeScale Die Zeitskala für intelligente Formatierung
      */
     public void updateProfitChartWithData(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
         if (filteredTicks == null || filteredTicks.isEmpty()) {
@@ -747,7 +896,7 @@ public class TickChartManager {
             return;
         }
         
-        // Chart erstellen/aktualisieren mit optimierten Daten
+        // Chart erstellen/aktualisieren mit optimierten Daten und erweiterter X-Achse
         createOrUpdateProfitChart(filteredTicks, false, timeScale);
     }
     
@@ -776,7 +925,7 @@ public class TickChartManager {
     }
     
     /**
-     * NEU: Gibt Performance-Statistiken zurück
+     * ERWEITERT: Gibt Performance-Statistiken mit TimeScale-Info zurück
      */
     public String getPerformanceStats() {
         if (totalOriginalPoints == 0) {
@@ -789,6 +938,19 @@ public class TickChartManager {
         return String.format("Kompression: %d->%d Punkte (%.1f:1, %.1f%% Reduktion) in %dms", 
                            totalOriginalPoints, totalOptimizedPoints, compressionRatio, 
                            reductionPercent, lastOptimizationTime);
+    }
+    
+    /**
+     * NEU: Gibt X-Achsen-Formatierungs-Info zurück
+     */
+    public String getDateAxisInfo(TimeScale timeScale) {
+        if (timeScale == null) {
+            return "Standard-Formatierung: dd.MM HH:mm";
+        }
+        
+        return String.format("TimeScale: %s, Format: %s", 
+                           timeScale.getLabel(), 
+                           timeScale.getDateTimeFormat());
     }
     
     // ========== STANDARD GETTER-METHODEN ==========

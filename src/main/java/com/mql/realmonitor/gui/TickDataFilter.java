@@ -8,7 +8,8 @@ import java.util.logging.Logger;
 import com.mql.realmonitor.data.TickDataLoader;
 
 /**
- * VERBESSERT: Filtert Tick-Daten basierend auf Zeitintervallen
+ * ERWEITERT: Filtert Tick-Daten basierend auf Zeitintervallen
+ * NEU: Unterstützt ALL-Modus für kompletten verfügbaren Zeitraum
  * ALLE PROBLEME BEHOBEN: Robuste Filterung und umfassende Diagnostik
  */
 public class TickDataFilter {
@@ -16,17 +17,18 @@ public class TickDataFilter {
     private static final Logger LOGGER = Logger.getLogger(TickDataFilter.class.getName());
     
     /**
-     * KOMPLETT NEU GESCHRIEBEN: Filtert Tick-Daten basierend auf dem Zeitintervall
+     * ERWEITERT: Filtert Tick-Daten basierend auf dem Zeitintervall
+     * NEU: Unterstützt ALL-Modus für kompletten Zeitraum ohne Filterung
      * ROBUSTE LÖSUNG: Garantiert immer sinnvolle Ergebnisse für alle Signalprovider
      * 
      * @param tickDataSet Das vollständige TickDataSet
-     * @param timeScale Das gewünschte Zeitintervall
+     * @param timeScale Das gewünschte Zeitintervall (inkl. ALL)
      * @return Liste der gefilterten Tick-Daten
      */
     public static List<TickDataLoader.TickData> filterTicksForTimeScale(
             TickDataLoader.TickDataSet tickDataSet, TimeScale timeScale) {
         
-        LOGGER.info("=== TICK DATA FILTER START ===");
+        LOGGER.info("=== TICK DATA FILTER START (MIT ALL-UNTERSTÜTZUNG) ===");
         LOGGER.info("Input: tickDataSet=" + (tickDataSet != null ? tickDataSet.getSignalId() + " mit " + tickDataSet.getTickCount() + " Ticks" : "NULL") + 
                    ", timeScale=" + (timeScale != null ? timeScale.getLabel() : "NULL"));
         
@@ -42,6 +44,28 @@ public class TickDataFilter {
             return new ArrayList<>(allTicks);
         }
         
+        // NEU: ALL-Modus behandeln - kompletter Zeitraum ohne Filterung
+        if (timeScale.isAll()) {
+            List<TickDataLoader.TickData> allTicks = tickDataSet.getTicks();
+            LOGGER.info("=== ALL-MODUS AKTIVIERT ===");
+            LOGGER.info("Gebe kompletten verfügbaren Zeitraum zurück: " + allTicks.size() + " Ticks");
+            
+            if (!allTicks.isEmpty()) {
+                LocalDateTime earliestTime = allTicks.get(0).getTimestamp();
+                LocalDateTime latestTime = allTicks.get(allTicks.size() - 1).getTimestamp();
+                LOGGER.info("Kompletter Zeitraum: " + earliestTime + " bis " + latestTime);
+                
+                // Berechne und logge Zeitspanne
+                long totalMinutes = java.time.Duration.between(earliestTime, latestTime).toMinutes();
+                LOGGER.info("Zeitspanne: " + totalMinutes + " Minuten (" + (totalMinutes / 60.0) + " Stunden, " + (totalMinutes / 1440.0) + " Tage)");
+            }
+            
+            logFilterResult(allTicks, timeScale, false);
+            LOGGER.info("=== TICK DATA FILTER ENDE (ALL-MODUS) ===");
+            return new ArrayList<>(allTicks);
+        }
+        
+        // NORMALE ZEITINTERVALL-FILTERUNG (bestehende Logik)
         List<TickDataLoader.TickData> allTicks = tickDataSet.getTicks();
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime cutoffTime = now.minusMinutes(timeScale.getDisplayMinutes());
@@ -69,6 +93,7 @@ public class TickDataFilter {
                     recentTicks.add(allTicks.get(i));
                 }
                 LOGGER.info("FALLBACK: Gebe " + recentTicks.size() + " neueste verfügbare Ticks zurück");
+                LOGGER.info("TIPP: Verwende TimeScale.ALL für kompletten Zeitraum!");
                 logFilterResult(recentTicks, timeScale, true);
                 return recentTicks;
             }
@@ -120,6 +145,7 @@ public class TickDataFilter {
             TickDataLoader.TickData latestTick = allTicks.get(allTicks.size() - 1);
             filteredTicks.add(latestTick);
             LOGGER.warning("NOTFALL-FALLBACK: Gebe mindestens neuesten Tick zurück: " + latestTick.getTimestamp());
+            LOGGER.warning("TIPP: Verwende TimeScale.ALL für kompletten Zeitraum!");
         }
         
         logFilterResult(filteredTicks, timeScale, false);
@@ -129,7 +155,7 @@ public class TickDataFilter {
     }
     
     /**
-     * NEU: Loggt das Filter-Ergebnis detailliert
+     * ERWEITERT: Loggt das Filter-Ergebnis detailliert mit ALL-Unterstützung
      */
     private static void logFilterResult(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale, boolean wasFallback) {
         if (filteredTicks.isEmpty()) {
@@ -138,7 +164,7 @@ public class TickDataFilter {
         }
         
         LOGGER.info("=== FILTER-ERGEBNIS ZUSAMMENFASSUNG ===");
-        LOGGER.info("Zeitskala: " + timeScale.getLabel());
+        LOGGER.info("Zeitskala: " + timeScale.getLabel() + (timeScale.isAll() ? " (KOMPLETTER ZEITRAUM)" : ""));
         LOGGER.info("Gefilterte Ticks: " + filteredTicks.size());
         LOGGER.info("Fallback verwendet: " + wasFallback);
         
@@ -146,14 +172,19 @@ public class TickDataFilter {
         TickDataLoader.TickData last = filteredTicks.get(filteredTicks.size() - 1);
         
         LOGGER.info("Zeitraum: " + first.getTimestamp() + " bis " + last.getTimestamp());
+        
+        // Berechne Zeitspanne
+        long durationMinutes = java.time.Duration.between(first.getTimestamp(), last.getTimestamp()).toMinutes();
+        LOGGER.info("Zeitspanne: " + durationMinutes + " Minuten (" + String.format("%.1f", durationMinutes / 60.0) + " Stunden)");
+        
         LOGGER.info("Equity-Bereich: " + 
-                   filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getEquity).min().orElse(0) + 
-                   " bis " + 
-                   filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getEquity).max().orElse(0));
+                   String.format("%.2f bis %.2f",
+                   filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getEquity).min().orElse(0),
+                   filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getEquity).max().orElse(0)));
         LOGGER.info("Floating-Bereich: " + 
-                   filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getFloatingProfit).min().orElse(0) + 
-                   " bis " + 
-                   filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getFloatingProfit).max().orElse(0));
+                   String.format("%.2f bis %.2f",
+                   filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getFloatingProfit).min().orElse(0),
+                   filteredTicks.stream().mapToDouble(TickDataLoader.TickData::getFloatingProfit).max().orElse(0)));
         
         // Berechne und logge Drawdown-Bereich
         double minDrawdown = filteredTicks.stream()
@@ -164,6 +195,44 @@ public class TickDataFilter {
             .max().orElse(0);
         
         LOGGER.info("Drawdown-Bereich: " + String.format("%.6f%% bis %.6f%%", minDrawdown, maxDrawdown));
+    }
+    
+    /**
+     * NEU: Ermittelt die optimale Chart-Breite basierend auf dem Zeitraum
+     * 
+     * @param filteredTicks Die gefilterten Tick-Daten
+     * @param timeScale Die Zeitskala
+     * @return Empfohlene Chart-Breite in Pixeln
+     */
+    public static int calculateOptimalChartWidth(List<TickDataLoader.TickData> filteredTicks, TimeScale timeScale) {
+        if (filteredTicks == null || filteredTicks.isEmpty()) {
+            return 800; // Standard-Breite
+        }
+        
+        int tickCount = filteredTicks.size();
+        
+        if (timeScale.isAll()) {
+            // Für ALL: Variable Breite basierend auf Tick-Anzahl
+            // 2-4 Pixel pro Tick für gute Sichtbarkeit
+            int width = Math.max(800, Math.min(5000, tickCount * 3));
+            LOGGER.info("ALL-Modus: Optimale Chart-Breite " + width + "px für " + tickCount + " Ticks");
+            return width;
+        } else {
+            // Für normale Zeitintervalle: Feste Breiten
+            switch (timeScale) {
+                case M1:
+                case M5:
+                    return 800;   // Kurze Intervalle - Standard
+                case M15:
+                case H1:
+                    return 1200;  // Mittlere Intervalle - breiter
+                case H4:
+                case D1:
+                    return 1600;  // Lange Intervalle - sehr breit
+                default:
+                    return 800;
+            }
+        }
     }
     
     /**
@@ -222,7 +291,7 @@ public class TickDataFilter {
     }
     
     /**
-     * NEU: Erstellt einen Filter-Bericht für Debugging
+     * ERWEITERT: Erstellt einen Filter-Bericht für Debugging mit ALL-Unterstützung
      * 
      * @param tickDataSet Das TickDataSet
      * @param timeScale Die Zeitskala
@@ -230,7 +299,7 @@ public class TickDataFilter {
      */
     public static String createFilterReport(TickDataLoader.TickDataSet tickDataSet, TimeScale timeScale) {
         StringBuilder report = new StringBuilder();
-        report.append("=== TICK DATA FILTER BERICHT ===\n");
+        report.append("=== TICK DATA FILTER BERICHT (MIT ALL-UNTERSTÜTZUNG) ===\n");
         
         if (tickDataSet == null) {
             report.append("ERROR: tickDataSet ist NULL\n");
@@ -244,7 +313,13 @@ public class TickDataFilter {
         
         report.append("Signal ID: ").append(tickDataSet.getSignalId()).append("\n");
         report.append("Gesamt Ticks: ").append(tickDataSet.getTickCount()).append("\n");
-        report.append("Zeitskala: ").append(timeScale.getLabel()).append(" (").append(timeScale.getDisplayMinutes()).append(" Minuten)\n");
+        report.append("Zeitskala: ").append(timeScale.getLabel());
+        if (timeScale.isAll()) {
+            report.append(" (KOMPLETTER ZEITRAUM - KEINE FILTERUNG)");
+        } else {
+            report.append(" (").append(timeScale.getDisplayMinutes()).append(" Minuten)");
+        }
+        report.append("\n");
         
         List<TickDataLoader.TickData> filteredTicks = filterTicksForTimeScale(tickDataSet, timeScale);
         report.append("Gefilterte Ticks: ").append(filteredTicks.size()).append("\n");
@@ -255,6 +330,10 @@ public class TickDataFilter {
             report.append("  Min: ").append(stats.getFormattedMinDrawdown()).append("\n");
             report.append("  Max: ").append(stats.getFormattedMaxDrawdown()).append("\n");
             report.append("  Avg: ").append(stats.getFormattedAvgDrawdown()).append("\n");
+            
+            // Optimale Chart-Breite anzeigen
+            int optimalWidth = calculateOptimalChartWidth(filteredTicks, timeScale);
+            report.append("Empfohlene Chart-Breite: ").append(optimalWidth).append("px\n");
         }
         
         return report.toString();
