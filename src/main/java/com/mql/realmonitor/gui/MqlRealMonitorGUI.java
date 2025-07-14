@@ -25,6 +25,7 @@ import java.util.logging.Level;
  * DEBUG: initializeTableWithSavedData() mit ausführlicher Diagnostik
  * AKTUALISIERT: Format-Konvertierung statt Tausendertrennzeichen-Reparatur
  * NEU: Versionsnummer in der Titelleiste
+ * NEU: Delete Signal Funktionalität mit Toolbar-Button
  */
 public class MqlRealMonitorGUI {
     
@@ -50,6 +51,7 @@ public class MqlRealMonitorGUI {
     private Button refreshButton;
     private Button configButton;
     private Button overviewButton; // NEU: Chart-Übersicht Button
+    private Button deleteSignalButton; // NEU: Delete Signal Button
     private Text intervalText;
     private Label countLabel;
     
@@ -79,6 +81,9 @@ public class MqlRealMonitorGUI {
         
         // Tabelle sofort beim Erstellen initialisieren
         initializeTableWithSavedData();
+        
+        // NEU: Delete Signal Funktionalität initialisieren
+        initializeDeleteSignalFunctionality();
     }
     
     /**
@@ -125,6 +130,10 @@ public class MqlRealMonitorGUI {
         shell.addListener(SWT.Close, event -> {
             LOGGER.info("GUI wird geschlossen (Version " + VERSION + ")");
             monitor.shutdown();
+            
+            // NEU: Delete Signal Funktionalität bereinigen
+            cleanupDeleteSignalFunctionality();
+            
             disposeResources();
         });
         
@@ -155,12 +164,12 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * ERWEITERT: Erstellt die Toolbar mit neuem Chart-Übersicht Button
+     * ERWEITERT: Erstellt die Toolbar mit Chart-Übersicht Button und Delete Signal Button
      */
     private void createToolbar() {
         Composite toolbar = new Composite(shell, SWT.NONE);
         toolbar.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
-        toolbar.setLayout(new GridLayout(11, false)); // ERWEITERT: 11 statt 10 Spalten
+        toolbar.setLayout(new GridLayout(13, false)); // ERWEITERT: 13 statt 11 Spalten (für Delete Button)
         
         // Start Button
         startButton = new Button(toolbar, SWT.PUSH);
@@ -212,6 +221,19 @@ public class MqlRealMonitorGUI {
             }
         });
         
+        // NEU: Delete Signal Button
+        deleteSignalButton = new Button(toolbar, SWT.PUSH);
+        deleteSignalButton.setText("🗑️ Löschen");
+        deleteSignalButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        deleteSignalButton.setToolTipText("Ausgewähltes Signal aus Favoriten löschen");
+        deleteSignalButton.setEnabled(false); // Anfangs deaktiviert
+        deleteSignalButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                deleteSelectedSignalFromToolbar();
+            }
+        });
+        
         // Interval Label
         Label intervalLabel = new Label(toolbar, SWT.NONE);
         intervalLabel.setText("Intervall (min):");
@@ -253,6 +275,166 @@ public class MqlRealMonitorGUI {
                 showConfiguration();
             }
         });
+        
+        LOGGER.info("Toolbar mit Delete Signal Button erstellt");
+    }
+    
+    /**
+     * NEU: Behandelt das Löschen eines Signals über den Toolbar-Button
+     */
+    private void deleteSelectedSignalFromToolbar() {
+        try {
+            LOGGER.info("=== DELETE SIGNAL ÜBER TOOLBAR AUSGELÖST ===");
+            
+            // Prüfen ob SignalProviderTable verfügbar ist
+            if (providerTable == null) {
+                showError("Fehler", "Signalprovider-Tabelle nicht verfügbar.");
+                return;
+            }
+            
+            Table table = providerTable.getTable();
+            if (table == null || table.isDisposed()) {
+                showError("Fehler", "Tabelle nicht verfügbar oder bereits geschlossen.");
+                return;
+            }
+            
+            // Prüfen ob genau ein Signal ausgewählt ist
+            SignalProviderContextMenu contextMenu = providerTable.getContextMenu();
+            if (!contextMenu.hasSignalSelectedForDeletion(table)) {
+                String selectionInfo = contextMenu.getSelectedSignalInfo(table);
+                showInfo("Ungültige Auswahl", 
+                       "Bitte wählen Sie genau ein Signal zum Löschen aus.\n\nAktueller Status: " + selectionInfo);
+                return;
+            }
+            
+            // Delete-Funktion über das Kontextmenü ausführen
+            contextMenu.deleteSelectedSignalFromFavorites(table);
+            
+            LOGGER.info("Delete Signal über Toolbar erfolgreich ausgeführt");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Löschen des Signals über Toolbar", e);
+            showError("Unerwarteter Fehler", 
+                    "Fehler beim Löschen des Signals:\n\n" + e.getMessage());
+        }
+    }
+    
+    /**
+     * NEU: Aktualisiert den Zustand des Delete-Buttons basierend auf der Tabellenauswahl
+     */
+    private void updateDeleteButtonState() {
+        if (deleteSignalButton == null || deleteSignalButton.isDisposed()) {
+            return;
+        }
+        
+        try {
+            boolean hasValidSelection = false;
+            String tooltipText = "Ausgewähltes Signal aus Favoriten löschen";
+            
+            if (providerTable != null) {
+                Table table = providerTable.getTable();
+                if (table != null && !table.isDisposed()) {
+                    SignalProviderContextMenu contextMenu = providerTable.getContextMenu();
+                    hasValidSelection = contextMenu.hasSignalSelectedForDeletion(table);
+                    
+                    if (!hasValidSelection) {
+                        String selectionInfo = contextMenu.getSelectedSignalInfo(table);
+                        tooltipText = "Signal löschen nicht möglich: " + selectionInfo;
+                    }
+                }
+            }
+            
+            deleteSignalButton.setEnabled(hasValidSelection);
+            deleteSignalButton.setToolTipText(tooltipText);
+            
+            LOGGER.fine("Delete-Button Zustand aktualisiert: " + (hasValidSelection ? "AKTIVIERT" : "DEAKTIVIERT"));
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Aktualisieren des Delete-Button Zustands", e);
+            deleteSignalButton.setEnabled(false);
+            deleteSignalButton.setToolTipText("Fehler bei Zustandsüberprüfung");
+        }
+    }
+    
+    /**
+     * NEU: Setzt einen Listener für Tabellenauswahl-Änderungen
+     */
+    private void setupTableSelectionListener() {
+        if (providerTable == null) {
+            return;
+        }
+        
+        Table table = providerTable.getTable();
+        if (table == null || table.isDisposed()) {
+            return;
+        }
+        
+        try {
+            // Listener für Auswahl-Änderungen
+            table.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    // Delete-Button Zustand aktualisieren
+                    updateDeleteButtonState();
+                }
+            });
+            
+            // Auch bei Fokus-Änderungen aktualisieren
+            table.addFocusListener(new org.eclipse.swt.events.FocusListener() {
+                @Override
+                public void focusGained(org.eclipse.swt.events.FocusEvent e) {
+                    updateDeleteButtonState();
+                }
+                
+                @Override
+                public void focusLost(org.eclipse.swt.events.FocusEvent e) {
+                    // Optional: Button deaktivieren wenn Tabelle Fokus verliert
+                    // updateDeleteButtonState();
+                }
+            });
+            
+            LOGGER.info("Tabellen-Auswahl-Listener für Delete-Button erfolgreich eingerichtet");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Einrichten der Tabellen-Listener", e);
+        }
+    }
+    
+    /**
+     * NEU: Initialisiert die komplette Delete-Signal-Funktionalität
+     */
+    private void initializeDeleteSignalFunctionality() {
+        try {
+            LOGGER.info("=== INITIALISIERE DELETE SIGNAL FUNKTIONALITÄT ===");
+            
+            // Tabellen-Listener einrichten (verzögert, falls Tabelle noch nicht erstellt)
+            display.timerExec(1000, () -> {
+                setupTableSelectionListener();
+                updateDeleteButtonState();
+            });
+            
+            LOGGER.info("Delete Signal Funktionalität erfolgreich initialisiert");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Initialisieren der Delete Signal Funktionalität", e);
+        }
+    }
+    
+    /**
+     * NEU: Cleanup-Methode für das Schließen der Anwendung
+     */
+    private void cleanupDeleteSignalFunctionality() {
+        try {
+            if (deleteSignalButton != null && !deleteSignalButton.isDisposed()) {
+                deleteSignalButton.dispose();
+                deleteSignalButton = null;
+            }
+            
+            LOGGER.info("Delete Signal Funktionalität erfolgreich bereinigt");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Bereinigen der Delete Signal Funktionalität", e);
+        }
     }
     
     /**
@@ -691,6 +873,9 @@ public class MqlRealMonitorGUI {
             if (providerTable != null) {
                 providerTable.updateProviderData(signalData);
                 updateProviderCount();
+                
+                // NEU: Delete-Button Zustand aktualisieren wenn Daten sich ändern
+                updateDeleteButtonState();
             }
         });
     }
@@ -704,6 +889,9 @@ public class MqlRealMonitorGUI {
         display.asyncExec(() -> {
             if (providerTable != null) {
                 providerTable.updateProviderStatus(signalId, status);
+                
+                // NEU: Delete-Button Zustand aktualisieren wenn Status sich ändert
+                updateDeleteButtonState();
             }
         });
     }

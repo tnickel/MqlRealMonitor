@@ -15,6 +15,7 @@ import java.util.logging.Level;
  * Reader für die Favoriten-Datei
  * Verwaltet das Lesen und Parsen der favorites.txt Datei
  * ERWEITERT: Unterstützt Favoritenklassen (ID:Klasse Format mit Zahlen 1-10)
+ * NEU: Delete Signal Funktionalität mit Backup-System
  */
 public class FavoritesReader {
     
@@ -126,6 +127,285 @@ public class FavoritesReader {
         }
         
         return cachedFavoriteClasses.get(signalId.trim());
+    }
+    
+    /**
+     * NEU: Entfernt eine Signal-ID aus der favorites.txt Datei
+     * 
+     * @param signalId Die zu entfernende Signal-ID
+     * @return true wenn erfolgreich entfernt, false bei Fehlern
+     */
+    public boolean removeSignal(String signalId) {
+        if (signalId == null || signalId.trim().isEmpty()) {
+            LOGGER.warning("Keine Signal-ID zum Entfernen angegeben");
+            return false;
+        }
+        
+        String trimmedSignalId = signalId.trim();
+        String favoritesFile = config.getFavoritesFile();
+        
+        try {
+            LOGGER.info("=== ENTFERNE SIGNAL AUS FAVORITES: " + trimmedSignalId + " ===");
+            
+            Path filePath = Paths.get(favoritesFile);
+            
+            if (!Files.exists(filePath)) {
+                LOGGER.warning("Favoriten-Datei nicht gefunden: " + favoritesFile);
+                return false;
+            }
+            
+            // Aktuelle Favoriten laden
+            List<String> currentFavorites = readFavorites();
+            Map<String, String> currentClasses = readFavoritesWithClasses();
+            
+            // Prüfen ob Signal überhaupt vorhanden ist
+            if (!currentFavorites.contains(trimmedSignalId)) {
+                LOGGER.warning("Signal " + trimmedSignalId + " nicht in Favoriten gefunden");
+                return false;
+            }
+            
+            // Datei Zeile für Zeile lesen und ohne das zu löschende Signal neu schreiben
+            List<String> newLines = new ArrayList<>();
+            boolean signalFound = false;
+            
+            try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+                String line;
+                int lineNumber = 0;
+                
+                while ((line = reader.readLine()) != null) {
+                    lineNumber++;
+                    
+                    // Kommentare und leere Zeilen beibehalten
+                    if (line.trim().isEmpty() || line.trim().startsWith("#") || line.trim().startsWith("//")) {
+                        newLines.add(line);
+                        continue;
+                    }
+                    
+                    // Signal-ID aus Zeile extrahieren
+                    String lineSignalId;
+                    if (line.contains(":")) {
+                        lineSignalId = line.split(":", 2)[0].trim();
+                    } else {
+                        lineSignalId = line.trim();
+                    }
+                    
+                    // Zeile beibehalten wenn es nicht das zu löschende Signal ist
+                    if (!lineSignalId.equals(trimmedSignalId)) {
+                        newLines.add(line);
+                    } else {
+                        signalFound = true;
+                        LOGGER.info("Signal-Zeile gefunden und wird entfernt (Zeile " + lineNumber + "): " + line);
+                    }
+                }
+            }
+            
+            if (!signalFound) {
+                LOGGER.warning("Signal " + trimmedSignalId + " nicht in Datei gefunden (trotz Cache)");
+                return false;
+            }
+            
+            // Backup der ursprünglichen Datei erstellen
+            createBackupFile(favoritesFile);
+            
+            // Neue Datei schreiben
+            try (FileWriter writer = new FileWriter(favoritesFile, StandardCharsets.UTF_8)) {
+                for (String line : newLines) {
+                    writer.write(line + "\n");
+                }
+            }
+            
+            // Cache aktualisieren
+            refreshCache();
+            
+            LOGGER.info("=== SIGNAL ERFOLGREICH AUS FAVORITES ENTFERNT: " + trimmedSignalId + " ===");
+            LOGGER.info("Neue Anzahl Favoriten: " + readFavorites().size());
+            
+            return true;
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Entfernen des Signals " + trimmedSignalId + " aus " + favoritesFile, e);
+            return false;
+        }
+    }
+    
+    /**
+     * NEU: Erstellt ein Backup der Favoriten-Datei
+     * 
+     * @param favoritesFile Der Pfad zur Original-Datei
+     */
+    private void createBackupFile(String favoritesFile) {
+        try {
+            Path originalPath = Paths.get(favoritesFile);
+            if (!Files.exists(originalPath)) {
+                return;
+            }
+            
+            // Backup-Pfad mit Zeitstempel erstellen
+            String timestamp = java.time.LocalDateTime.now().format(
+                java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String backupFileName = favoritesFile + ".backup_" + timestamp;
+            Path backupPath = Paths.get(backupFileName);
+            
+            // Datei kopieren
+            Files.copy(originalPath, backupPath);
+            
+            LOGGER.info("Backup erstellt: " + backupFileName);
+            
+            // Alte Backup-Dateien aufräumen (nur die letzten 5 behalten)
+            cleanupOldBackups(favoritesFile);
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Konnte Backup nicht erstellen für " + favoritesFile, e);
+        }
+    }
+    
+    /**
+     * NEU: Räumt alte Backup-Dateien auf
+     * 
+     * @param favoritesFile Der Pfad zur Original-Datei
+     */
+    private void cleanupOldBackups(String favoritesFile) {
+        try {
+            Path parentDir = Paths.get(favoritesFile).getParent();
+            if (parentDir == null || !Files.exists(parentDir)) {
+                return;
+            }
+            
+            String fileName = Paths.get(favoritesFile).getFileName().toString();
+            String backupPrefix = fileName + ".backup_";
+            
+            // Alle Backup-Dateien finden
+            List<Path> backupFiles = new ArrayList<>();
+            try (var stream = Files.list(parentDir)) {
+                stream.filter(path -> path.getFileName().toString().startsWith(backupPrefix))
+                      .forEach(backupFiles::add);
+            }
+            
+            // Nach Änderungszeit sortieren (neueste zuerst)
+            backupFiles.sort((a, b) -> {
+                try {
+                    return Files.getLastModifiedTime(b).compareTo(Files.getLastModifiedTime(a));
+                } catch (Exception e) {
+                    return 0;
+                }
+            });
+            
+            // Nur die neuesten 5 behalten, Rest löschen
+            if (backupFiles.size() > 5) {
+                for (int i = 5; i < backupFiles.size(); i++) {
+                    try {
+                        Files.delete(backupFiles.get(i));
+                        LOGGER.fine("Altes Backup gelöscht: " + backupFiles.get(i).getFileName());
+                    } catch (Exception e) {
+                        LOGGER.warning("Konnte altes Backup nicht löschen: " + backupFiles.get(i));
+                    }
+                }
+                LOGGER.info("Backup-Aufräumung abgeschlossen: " + (backupFiles.size() - 5) + " alte Dateien gelöscht");
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Aufräumen alter Backup-Dateien", e);
+        }
+    }
+    
+    /**
+     * NEU: Fügt eine Signal-ID zu den Favoriten hinzu
+     * 
+     * @param signalId Die hinzuzufügende Signal-ID
+     * @param favoriteClass Optional: Favoritenklasse (1-10) oder null
+     * @return true wenn erfolgreich hinzugefügt, false bei Fehlern
+     */
+    public boolean addSignal(String signalId, String favoriteClass) {
+        if (signalId == null || signalId.trim().isEmpty()) {
+            LOGGER.warning("Keine Signal-ID zum Hinzufügen angegeben");
+            return false;
+        }
+        
+        String trimmedSignalId = signalId.trim();
+        String favoritesFile = config.getFavoritesFile();
+        
+        try {
+            LOGGER.info("=== FÜGE SIGNAL ZU FAVORITES HINZU: " + trimmedSignalId + " ===");
+            
+            // Prüfen ob Signal bereits vorhanden ist
+            List<String> currentFavorites = readFavorites();
+            if (currentFavorites.contains(trimmedSignalId)) {
+                LOGGER.warning("Signal " + trimmedSignalId + " ist bereits in Favoriten vorhanden");
+                return false;
+            }
+            
+            // Validiere Favoritenklasse
+            if (favoriteClass != null && !favoriteClass.trim().isEmpty() && !isValidFavoriteClass(favoriteClass)) {
+                LOGGER.warning("Ungültige Favoritenklasse: " + favoriteClass + " (muss 1-10 sein)");
+                favoriteClass = null; // Ignoriere ungültige Klasse
+            }
+            
+            // Neue Zeile zusammenstellen
+            String newLine;
+            if (favoriteClass != null && !favoriteClass.trim().isEmpty()) {
+                newLine = trimmedSignalId + ":" + favoriteClass.trim();
+            } else {
+                newLine = trimmedSignalId;
+            }
+            
+            // Backup erstellen
+            createBackupFile(favoritesFile);
+            
+            // Neue Zeile an Datei anhängen
+            try (FileWriter writer = new FileWriter(favoritesFile, StandardCharsets.UTF_8, true)) {
+                writer.write(newLine + "\n");
+            }
+            
+            // Cache aktualisieren
+            refreshCache();
+            
+            LOGGER.info("=== SIGNAL ERFOLGREICH ZU FAVORITES HINZUGEFÜGT: " + trimmedSignalId + 
+                       (favoriteClass != null ? " (Klasse: " + favoriteClass + ")" : "") + " ===");
+            LOGGER.info("Neue Anzahl Favoriten: " + readFavorites().size());
+            
+            return true;
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Hinzufügen des Signals " + trimmedSignalId + " zu " + favoritesFile, e);
+            return false;
+        }
+    }
+    
+    /**
+     * NEU: Gibt eine Liste aller Backup-Dateien zurück
+     * 
+     * @return Liste der Backup-Datei-Pfade
+     */
+    public List<String> getBackupFiles() {
+        String favoritesFile = config.getFavoritesFile();
+        List<String> backupFiles = new ArrayList<>();
+        
+        try {
+            Path parentDir = Paths.get(favoritesFile).getParent();
+            if (parentDir == null || !Files.exists(parentDir)) {
+                return backupFiles;
+            }
+            
+            String fileName = Paths.get(favoritesFile).getFileName().toString();
+            String backupPrefix = fileName + ".backup_";
+            
+            try (var stream = Files.list(parentDir)) {
+                stream.filter(path -> path.getFileName().toString().startsWith(backupPrefix))
+                      .sorted((a, b) -> {
+                          try {
+                              return Files.getLastModifiedTime(b).compareTo(Files.getLastModifiedTime(a));
+                          } catch (Exception e) {
+                              return 0;
+                          }
+                      })
+                      .forEach(path -> backupFiles.add(path.toString()));
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Auflisten der Backup-Dateien", e);
+        }
+        
+        return backupFiles;
     }
     
     /**
