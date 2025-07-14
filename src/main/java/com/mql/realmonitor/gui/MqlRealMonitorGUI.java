@@ -9,6 +9,7 @@ import org.eclipse.swt.events.SelectionEvent;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
 import org.eclipse.swt.graphics.FontData;
+import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.*;
@@ -164,12 +165,12 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * ERWEITERT: Erstellt die Toolbar mit Chart-Übersicht Button und Delete Signal Button
+     * ERWEITERT: Erstellt die Toolbar mit Chart-Übersicht Button, Delete Signal Button und Add Signal Button
      */
     private void createToolbar() {
         Composite toolbar = new Composite(shell, SWT.NONE);
         toolbar.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
-        toolbar.setLayout(new GridLayout(13, false)); // ERWEITERT: 13 statt 11 Spalten (für Delete Button)
+        toolbar.setLayout(new GridLayout(15, false)); // ERWEITERT: 15 statt 13 Spalten (für Add Signal Button)
         
         // Start Button
         startButton = new Button(toolbar, SWT.PUSH);
@@ -234,6 +235,18 @@ public class MqlRealMonitorGUI {
             }
         });
         
+        // NEU: Add Signal Button
+        Button addSignalButton = new Button(toolbar, SWT.PUSH);
+        addSignalButton.setText("➕ Hinzufügen");
+        addSignalButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        addSignalButton.setToolTipText("Neues Signal zu Favoriten hinzufügen");
+        addSignalButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                addNewSignalToFavorites();
+            }
+        });
+        
         // Interval Label
         Label intervalLabel = new Label(toolbar, SWT.NONE);
         intervalLabel.setText("Intervall (min):");
@@ -276,7 +289,255 @@ public class MqlRealMonitorGUI {
             }
         });
         
-        LOGGER.info("Toolbar mit Delete Signal Button erstellt");
+        LOGGER.info("Toolbar mit Delete Signal Button und Add Signal Button erstellt");
+    }
+    
+    /**
+     * NEU: Öffnet einen Dialog zum Hinzufügen eines neuen Signals zu den Favoriten
+     */
+    private void addNewSignalToFavorites() {
+        try {
+            LOGGER.info("=== ADD NEW SIGNAL DIALOG GEÖFFNET ===");
+            
+            // Dialog erstellen
+            Shell addSignalDialog = new Shell(shell, SWT.DIALOG_TRIM | SWT.APPLICATION_MODAL);
+            addSignalDialog.setText("Neues Signal zu Favoriten hinzufügen");
+            addSignalDialog.setSize(400, 200);
+            addSignalDialog.setLayout(new GridLayout(2, false));
+            
+            // Signal ID Label und Eingabefeld
+            Label signalIdLabel = new Label(addSignalDialog, SWT.NONE);
+            signalIdLabel.setText("Signal ID (Magic):");
+            signalIdLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+            
+            Text signalIdText = new Text(addSignalDialog, SWT.BORDER);
+            signalIdText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+            signalIdText.setToolTipText("Geben Sie die Signal-ID (Magic Number) ein, z.B. 1234567");
+            
+            // Favoritenklasse Label und Combo
+            Label favoriteClassLabel = new Label(addSignalDialog, SWT.NONE);
+            favoriteClassLabel.setText("Favoritenklasse (1-10):");
+            favoriteClassLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+            
+            Combo favoriteClassCombo = new Combo(addSignalDialog, SWT.DROP_DOWN | SWT.READ_ONLY);
+            favoriteClassCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+            favoriteClassCombo.setItems(new String[]{"1 (Hellgrün - Beste)", "2 (Hellgelb - Gut)", "3 (Hellorange - Mittel)", 
+                                                   "4 (Hellrot)", "5 (Hellrot)", "6 (Hellrot)", "7 (Hellrot)", 
+                                                   "8 (Hellrot)", "9 (Hellrot)", "10 (Hellrot - Schlechteste)"});
+            favoriteClassCombo.select(0); // Standard: Klasse 1
+            favoriteClassCombo.setToolTipText("Wählen Sie die Favoritenklasse (1=beste, 10=schlechteste)");
+            
+            // Separator
+            Label separator = new Label(addSignalDialog, SWT.SEPARATOR | SWT.HORIZONTAL);
+            GridData separatorData = new GridData(SWT.FILL, SWT.CENTER, true, false);
+            separatorData.horizontalSpan = 2;
+            separator.setLayoutData(separatorData);
+            
+            // Button Container
+            Composite buttonContainer = new Composite(addSignalDialog, SWT.NONE);
+            GridData buttonContainerData = new GridData(SWT.FILL, SWT.CENTER, true, false);
+            buttonContainerData.horizontalSpan = 2;
+            buttonContainer.setLayoutData(buttonContainerData);
+            buttonContainer.setLayout(new GridLayout(2, true));
+            
+            // OK Button
+            Button okButton = new Button(buttonContainer, SWT.PUSH);
+            okButton.setText("OK");
+            okButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+            
+            // Cancel Button
+            Button cancelButton = new Button(buttonContainer, SWT.PUSH);
+            cancelButton.setText("Abbrechen");
+            cancelButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+            
+            // Event Handlers
+            final boolean[] dialogResult = {false};
+            
+            okButton.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    String signalId = signalIdText.getText().trim();
+                    int selectedIndex = favoriteClassCombo.getSelectionIndex();
+                    
+                    if (validateSignalInput(signalId, selectedIndex)) {
+                        String favoriteClass = String.valueOf(selectedIndex + 1); // 1-10
+                        if (addSignalToFavoritesFile(signalId, favoriteClass)) {
+                            dialogResult[0] = true;
+                            addSignalDialog.close();
+                        }
+                    }
+                }
+            });
+            
+            cancelButton.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    dialogResult[0] = false;
+                    addSignalDialog.close();
+                }
+            });
+            
+            // Dialog zentrieren
+            centerDialog(addSignalDialog);
+            
+            // Dialog öffnen
+            addSignalDialog.open();
+            
+            // Event Loop für modalen Dialog
+            while (!addSignalDialog.isDisposed()) {
+                if (!display.readAndDispatch()) {
+                    display.sleep();
+                }
+            }
+            
+            // Nach dem Schließen: Tabelle aktualisieren falls Signal hinzugefügt wurde
+            if (dialogResult[0]) {
+                refreshTableAfterSignalAdded();
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen des Add Signal Dialogs", e);
+            showError("Fehler", "Konnte Dialog nicht öffnen: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * NEU: Validiert die Eingaben für ein neues Signal
+     */
+    private boolean validateSignalInput(String signalId, int favoriteClassIndex) {
+        // Signal ID Validierung
+        if (signalId == null || signalId.isEmpty()) {
+            showError("Ungültige Eingabe", "Bitte geben Sie eine Signal-ID ein.");
+            return false;
+        }
+        
+        // Prüfe ob Signal ID numerisch ist
+        try {
+            Long.parseLong(signalId);
+        } catch (NumberFormatException e) {
+            showError("Ungültige Signal-ID", "Die Signal-ID muss eine Zahl sein.\n\nBeispiel: 1234567");
+            return false;
+        }
+        
+        // Favoritenklasse Validierung
+        if (favoriteClassIndex < 0 || favoriteClassIndex > 9) {
+            showError("Ungültige Favoritenklasse", "Bitte wählen Sie eine Favoritenklasse von 1-10 aus.");
+            return false;
+        }
+        
+        // Prüfe ob Signal bereits existiert
+        try {
+            com.mql.realmonitor.downloader.FavoritesReader favoritesReader = 
+                new com.mql.realmonitor.downloader.FavoritesReader(monitor.getConfig());
+            
+            if (favoritesReader.containsSignalId(signalId)) {
+                showError("Signal bereits vorhanden", 
+                         "Das Signal " + signalId + " ist bereits in den Favoriten vorhanden.\n\n" +
+                         "Verwenden Sie den 'Löschen' Button um es zuerst zu entfernen, " +
+                         "falls Sie die Favoritenklasse ändern möchten.");
+                return false;
+            }
+        } catch (Exception e) {
+            LOGGER.warning("Konnte nicht prüfen ob Signal bereits existiert: " + e.getMessage());
+        }
+        
+        return true;
+    }
+    
+    /**
+     * NEU: Fügt ein Signal zur favorites.txt hinzu
+     */
+    private boolean addSignalToFavoritesFile(String signalId, String favoriteClass) {
+        try {
+            LOGGER.info("=== FÜGE NEUES SIGNAL ZU FAVORITES HINZU ===");
+            LOGGER.info("Signal ID: " + signalId + ", Favoritenklasse: " + favoriteClass);
+            
+            // FavoritesReader verwenden um Signal hinzuzufügen
+            com.mql.realmonitor.downloader.FavoritesReader favoritesReader = 
+                new com.mql.realmonitor.downloader.FavoritesReader(monitor.getConfig());
+            
+            boolean success = favoritesReader.addSignal(signalId, favoriteClass);
+            
+            if (success) {
+                LOGGER.info("Signal erfolgreich zu Favoriten hinzugefügt: " + signalId + ":" + favoriteClass);
+                
+                showInfo("Signal hinzugefügt", 
+                        "Das Signal wurde erfolgreich zu den Favoriten hinzugefügt:\n\n" +
+                        "Signal ID: " + signalId + "\n" +
+                        "Favoritenklasse: " + favoriteClass + "\n\n" +
+                        "Das Signal wird beim nächsten Refresh geladen.");
+                
+                return true;
+            } else {
+                LOGGER.severe("Fehler beim Hinzufügen des Signals zu favorites.txt: " + signalId);
+                
+                showError("Fehler beim Hinzufügen", 
+                         "Das Signal konnte nicht zu den Favoriten hinzugefügt werden:\n\n" +
+                         "Signal ID: " + signalId + "\n" +
+                         "Favoritenklasse: " + favoriteClass + "\n\n" +
+                         "Mögliche Ursachen:\n" +
+                         "• Datei ist schreibgeschützt\n" +
+                         "• Unzureichende Berechtigungen\n" +
+                         "• Signal bereits vorhanden\n\n" +
+                         "Prüfen Sie die Logs für Details.");
+                
+                return false;
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Unerwarteter Fehler beim Hinzufügen des Signals: " + signalId, e);
+            
+            showError("Schwerwiegender Fehler", 
+                     "Unerwarteter Fehler beim Hinzufügen des Signals:\n\n" +
+                     "Signal ID: " + signalId + "\n" +
+                     "Fehler: " + e.getMessage() + "\n\n" +
+                     "Das Signal wurde möglicherweise nicht hinzugefügt.");
+            
+            return false;
+        }
+    }
+    
+    /**
+     * NEU: Zentriert einen Dialog auf dem Hauptfenster
+     */
+    private void centerDialog(Shell dialog) {
+        Point parentLocation = shell.getLocation();
+        Point parentSize = shell.getSize();
+        Point dialogSize = dialog.getSize();
+        
+        int x = parentLocation.x + (parentSize.x - dialogSize.x) / 2;
+        int y = parentLocation.y + (parentSize.y - dialogSize.y) / 2;
+        
+        dialog.setLocation(x, y);
+    }
+    
+    /**
+     * NEU: Aktualisiert die Tabelle nach dem Hinzufügen eines Signals
+     */
+    private void refreshTableAfterSignalAdded() {
+        try {
+            LOGGER.info("=== AKTUALISIERE TABELLE NACH SIGNAL-HINZUFÜGUNG ===");
+            
+            // Status anzeigen
+            updateStatus("Aktualisiere Favoriten nach Signal-Hinzufügung...");
+            
+            // Favorites-Cache der Tabelle aktualisieren
+            if (providerTable != null) {
+                providerTable.refreshFavoriteClasses();
+                
+                // Manuellen Refresh auslösen um neue Daten zu laden
+                display.timerExec(1000, () -> {
+                    manualRefresh();
+                    updateStatus("Neues Signal hinzugefügt - Tabelle aktualisiert");
+                });
+            }
+            
+            LOGGER.info("Tabellen-Aktualisierung nach Signal-Hinzufügung eingeleitet");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Aktualisieren der Tabelle nach Signal-Hinzufügung", e);
+            updateStatus("Fehler beim Aktualisieren der Tabelle");
+        }
     }
     
     /**
