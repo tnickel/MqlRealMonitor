@@ -32,36 +32,33 @@ public class WebDownloader {
      * @param signalId Die ID des Signalproviders
      * @return Der HTML-Inhalt oder null bei Fehlern
      */
-    public String downloadSignalPage(String signalId) {
+    public String downloadSignalPage(String signalId, String url) {
         if (signalId == null || signalId.trim().isEmpty()) {
             LOGGER.warning("Signal-ID ist leer");
             return null;
         }
         
-        String url = config.buildSignalUrl(signalId);
-        String filePath = config.getDownloadFilePath(signalId);
+        if (url == null || url.trim().isEmpty()) {
+            LOGGER.warning("URL ist leer");
+            return null;
+        }
         
         try {
-            LOGGER.info("Lade Signal-Seite: " + signalId + " von " + url);
-            
-            // Alte HTML-Datei löschen falls vorhanden
-            deleteOldHtmlFile(filePath);
+            LOGGER.info("Lade Seite: " + signalId + " von " + url);
             
             // HTML-Inhalt herunterladen
             String htmlContent = downloadFromUrl(url);
             
             if (htmlContent != null && !htmlContent.trim().isEmpty()) {
-                // Lokal speichern
-                saveHtmlToFile(htmlContent, filePath);
                 LOGGER.info("Download erfolgreich: " + signalId + " (" + htmlContent.length() + " Zeichen)");
                 return htmlContent;
             } else {
-                LOGGER.warning("Leerer HTML-Inhalt für Signal: " + signalId);
+                LOGGER.warning("Leerer HTML-Inhalt für: " + signalId);
                 return null;
             }
             
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Download von Signal: " + signalId, e);
+            LOGGER.log(Level.WARNING, "Fehler beim Download von: " + signalId, e);
             return null;
         }
     }
@@ -275,6 +272,30 @@ public class WebDownloader {
         } catch (Exception e) {
             LOGGER.log(Level.FINE, "URL nicht erreichbar: " + urlString, e);
             return false;
+        }
+    }
+    public String downloadFromWebUrl(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            LOGGER.warning("URL ist leer");
+            return null;
+        }
+        
+        try {
+            LOGGER.info("Lade URL: " + url);
+            
+            String htmlContent = downloadFromUrl(url);
+            
+            if (htmlContent != null && !htmlContent.trim().isEmpty()) {
+                LOGGER.info("URL erfolgreich geladen: " + htmlContent.length() + " Zeichen");
+                return htmlContent;
+            } else {
+                LOGGER.warning("Leerer HTML-Inhalt von URL: " + url);
+                return null;
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Download der URL: " + url, e);
+            return null;
         }
     }
 }

@@ -1,7 +1,9 @@
 package com.mql.realmonitor.gui;
 
-import com.mql.realmonitor.MqlRealMonitor;
-import com.mql.realmonitor.parser.SignalData;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.SelectionAdapter;
@@ -12,12 +14,20 @@ import org.eclipse.swt.graphics.FontData;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
-import org.eclipse.swt.widgets.*;
+import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Combo;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Group;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.MessageBox;
+import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.widgets.Table;
+import org.eclipse.swt.widgets.Text;
 
-import java.util.List;
-import java.util.Map;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import com.mql.realmonitor.MqlRealMonitor;
+import com.mql.realmonitor.currency.CurrencyDataLoader; // NEU: Currency Import
+import com.mql.realmonitor.parser.SignalData;
 
 /**
  * Haupt-GUI für MqlRealMonitor
@@ -27,14 +37,15 @@ import java.util.logging.Level;
  * AKTUALISIERT: Format-Konvertierung statt Tausendertrennzeichen-Reparatur
  * NEU: Versionsnummer in der Titelleiste
  * NEU: Delete Signal Funktionalität mit Toolbar-Button
+ * NEU: Currency-Loading für XAUUSD/BTCUSD von MQL5 (v1.2.1)
  */
 public class MqlRealMonitorGUI {
     
     private static final Logger LOGGER = Logger.getLogger(MqlRealMonitorGUI.class.getName());
     
     // VERSION INFORMATION
-    private static final String VERSION = "1.2.0";
-    private static final String BUILD_DATE = "2025-06-06";
+    private static final String VERSION = "1.2.1"; // AKTUALISIERT: Version wegen Currency-Feature
+    private static final String BUILD_DATE = "2025-08-26"; // AKTUALISIERT: Aktuelles Datum
     private static final String APPLICATION_TITLE = "MQL5 Real Monitor - Signal Provider Überwachung";
     
     private final MqlRealMonitor monitor;
@@ -51,10 +62,14 @@ public class MqlRealMonitorGUI {
     private Button stopButton;
     private Button refreshButton;
     private Button configButton;
-    private Button overviewButton; // NEU: Chart-Übersicht Button
-    private Button deleteSignalButton; // NEU: Delete Signal Button
+    private Button overviewButton; // Chart-Übersicht Button
+    private Button deleteSignalButton; // Delete Signal Button
+    private Button kurseladenButton; // NEU: Currency Button
     private Text intervalText;
     private Label countLabel;
+    
+    // NEU: Currency-Funktionalität
+    private CurrencyDataLoader currencyDataLoader; // NEU: Currency Data Loader
     
     // Farben und Fonts
     private Color greenColor;
@@ -63,7 +78,7 @@ public class MqlRealMonitorGUI {
     private Font boldFont;
     private Font statusFont;
     
-    // NEU: Favoritenklasse-Farben (Helle Hintergrundfarben für bessere Lesbarkeit)
+    // Favoritenklasse-Farben (Helle Hintergrundfarben für bessere Lesbarkeit)
     private Color favoriteClass1Color;  // Grün
     private Color favoriteClass2Color;  // Gelb
     private Color favoriteClass3Color;  // Orange
@@ -80,11 +95,33 @@ public class MqlRealMonitorGUI {
         
         this.statusUpdater = new StatusUpdater(this);
         
+        // NEU: Currency Data Loader initialisieren
+        initializeCurrencyDataLoader();
+        
         // Tabelle sofort beim Erstellen initialisieren
         initializeTableWithSavedData();
         
-        // NEU: Delete Signal Funktionalität initialisieren
+        // Delete Signal Funktionalität initialisieren
         initializeDeleteSignalFunctionality();
+    }
+    
+    /**
+     * NEU: Initialisiert den CurrencyDataLoader.
+     */
+    private void initializeCurrencyDataLoader() {
+        try {
+            if (monitor != null && monitor.getConfig() != null) {
+                currencyDataLoader = new CurrencyDataLoader(monitor.getConfig());
+                LOGGER.info("CurrencyDataLoader erfolgreich initialisiert");
+            } else {
+                LOGGER.warning("Monitor oder Config ist null - CurrencyDataLoader kann nicht initialisiert werden");
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Initialisieren des CurrencyDataLoader: " + e.getMessage(), e);
+            showErrorMessage("Initialisierungsfehler", 
+                "CurrencyDataLoader konnte nicht initialisiert werden: " + e.getMessage());
+            currencyDataLoader = null;
+        }
     }
     
     /**
@@ -95,7 +132,7 @@ public class MqlRealMonitorGUI {
         redColor = new Color(display, 200, 0, 0);
         grayColor = new Color(display, 128, 128, 128);
         
-        // NEU: Favoritenklasse-Hintergrundfarben (hell und gut lesbar)
+        // Favoritenklasse-Hintergrundfarben (hell und gut lesbar)
         favoriteClass1Color = new Color(display, 200, 255, 200);    // 1 = Hellgrün (sehr hell)
         favoriteClass2Color = new Color(display, 255, 255, 200);    // 2 = Hellgelb 
         favoriteClass3Color = new Color(display, 255, 220, 180);    // 3 = Hellorange
@@ -132,8 +169,11 @@ public class MqlRealMonitorGUI {
             LOGGER.info("GUI wird geschlossen (Version " + VERSION + ")");
             monitor.shutdown();
             
-            // NEU: Delete Signal Funktionalität bereinigen
+            // Delete Signal Funktionalität bereinigen
             cleanupDeleteSignalFunctionality();
+            
+            // NEU: Currency-Funktionalität bereinigen
+            disposeCurrencyFunctionality();
             
             disposeResources();
         });
@@ -165,12 +205,12 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * ERWEITERT: Erstellt die Toolbar mit Chart-Übersicht Button, Delete Signal Button und Add Signal Button
+     * ERWEITERT: Erstellt die Toolbar mit Currency-Button, Chart-Übersicht Button, Delete Signal Button und Add Signal Button
      */
     private void createToolbar() {
         Composite toolbar = new Composite(shell, SWT.NONE);
         toolbar.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
-        toolbar.setLayout(new GridLayout(15, false)); // ERWEITERT: 15 statt 13 Spalten (für Add Signal Button)
+        toolbar.setLayout(new GridLayout(16, false)); // ERWEITERT: 16 statt 15 Spalten (für Currency Button)
         
         // Start Button
         startButton = new Button(toolbar, SWT.PUSH);
@@ -210,7 +250,7 @@ public class MqlRealMonitorGUI {
             }
         });
         
-        // NEU: Chart-Übersicht Button
+        // Chart-Übersicht Button
         overviewButton = new Button(toolbar, SWT.PUSH);
         overviewButton.setText("📊 Chart-Übersicht");
         overviewButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
@@ -222,7 +262,7 @@ public class MqlRealMonitorGUI {
             }
         });
         
-        // NEU: Delete Signal Button
+        // Delete Signal Button
         deleteSignalButton = new Button(toolbar, SWT.PUSH);
         deleteSignalButton.setText("🗑️ Löschen");
         deleteSignalButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
@@ -235,7 +275,7 @@ public class MqlRealMonitorGUI {
             }
         });
         
-        // NEU: Add Signal Button
+        // Add Signal Button
         Button addSignalButton = new Button(toolbar, SWT.PUSH);
         addSignalButton.setText("➕ Hinzufügen");
         addSignalButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
@@ -246,6 +286,9 @@ public class MqlRealMonitorGUI {
                 addNewSignalToFavorites();
             }
         });
+        
+        // NEU: Currency Button (Kurse laden)
+        createKurseladenButton(toolbar);
         
         // Interval Label
         Label intervalLabel = new Label(toolbar, SWT.NONE);
@@ -262,7 +305,7 @@ public class MqlRealMonitorGUI {
         new Label(toolbar, SWT.SEPARATOR | SWT.VERTICAL)
             .setLayoutData(new GridData(SWT.LEFT, SWT.FILL, false, false));
         
-        // Repair Button - AKTUALISIERT: Format-Konvertierung
+        // Repair Button - Format-Konvertierung
         Button repairButton = new Button(toolbar, SWT.PUSH);
         repairButton.setText("Tick-Dateien reparieren");
         repairButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
@@ -289,11 +332,251 @@ public class MqlRealMonitorGUI {
             }
         });
         
-        LOGGER.info("Toolbar mit Delete Signal Button und Add Signal Button erstellt");
+        LOGGER.info("Toolbar mit Currency Button, Delete Signal Button und Add Signal Button erstellt");
+    }
+    
+    // ========================================================================
+    // NEU: CURRENCY-FUNKTIONALITÄT
+    // ========================================================================
+    
+    /**
+     * NEU: Erstellt den "Kurse laden" Button in der Toolbar.
+     * 
+     * @param parent Der Parent-Composite (Toolbar)
+     */
+    private void createKurseladenButton(Composite parent) {
+        if (parent == null || parent.isDisposed()) {
+            LOGGER.warning("Parent für Kurse laden Button ist null oder disposed");
+            return;
+        }
+        
+        try {
+            kurseladenButton = new Button(parent, SWT.PUSH);
+            kurseladenButton.setText("💰 Kurse laden");
+            kurseladenButton.setToolTipText("Lädt aktuelle Währungskurse (XAUUSD, BTCUSD) von MQL5");
+            
+            // Layout-Daten setzen
+            GridData gridData = new GridData(SWT.LEFT, SWT.CENTER, false, false);
+            kurseladenButton.setLayoutData(gridData);
+            
+            // Event-Handler für Button-Klick
+            kurseladenButton.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    loadCurrencyRates();
+                }
+            });
+            
+            // Button initial aktivieren nur wenn CurrencyDataLoader verfügbar
+            kurseladenButton.setEnabled(currencyDataLoader != null);
+            
+            LOGGER.info("Kurse laden Button erfolgreich erstellt");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Erstellen des Kurse laden Buttons: " + e.getMessage(), e);
+            showErrorMessage("Button-Erstellungsfehler", 
+                "Kurse laden Button konnte nicht erstellt werden: " + e.getMessage());
+        }
     }
     
     /**
-     * NEU: Öffnet einen Dialog zum Hinzufügen eines neuen Signals zu den Favoriten
+     * NEU: Lädt Währungskurse von MQL5 in einem separaten Thread.
+     */
+    private void loadCurrencyRates() {
+        // Validierung
+        if (currencyDataLoader == null) {
+            showErrorMessage("Fehler", "CurrencyDataLoader ist nicht initialisiert.\nBitte Anwendung neu starten.");
+            return;
+        }
+        
+        if (kurseladenButton == null || kurseladenButton.isDisposed()) {
+            LOGGER.warning("Kurse laden Button ist nicht verfügbar");
+            return;
+        }
+        
+        // Prevent multiple simultaneous loads
+        if (!kurseladenButton.getEnabled()) {
+            LOGGER.info("Currency Loading bereits aktiv - ignoriere weiteren Button-Klick");
+            return;
+        }
+        
+        LOGGER.info("=== USER-AKTION: Kurse laden Button geklickt ===");
+        
+        // Button deaktivieren und Status ändern
+        kurseladenButton.setEnabled(false);
+        kurseladenButton.setText("Lade...");
+        
+        // Status-Update
+        updateStatus("Lade Währungskurse von MQL5...");
+        
+        // Loading in separatem Thread um GUI nicht zu blockieren
+        Thread loadingThread = new Thread(() -> {
+            String diagnosis = null;
+            boolean success = false;
+            
+            try {
+                LOGGER.info("Starte Currency Loading Thread...");
+                diagnosis = currencyDataLoader.loadCurrencyRatesWithDiagnosis();
+                success = true;
+                
+                LOGGER.info("Currency Loading erfolgreich abgeschlossen");
+                
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "Currency Loading Thread Fehler: " + e.getMessage(), e);
+                diagnosis = "FEHLER beim Laden der Währungskurse:\n" + e.getMessage();
+                success = false;
+            }
+            
+            // Ergebnis in UI-Thread verarbeiten
+            final String finalDiagnosis = diagnosis;
+            final boolean finalSuccess = success;
+            
+            display.asyncExec(() -> {
+                try {
+                    // Ergebnis-Dialog anzeigen
+                    showCurrencyLoadingResult(finalDiagnosis, finalSuccess);
+                    
+                    // Button und Status zurücksetzen
+                    resetKurseladenButton();
+                    updateStatusAfterCurrencyLoading(finalSuccess);
+                    
+                    LOGGER.info("Currency Loading UI-Updates abgeschlossen");
+                    
+                } catch (Exception uiException) {
+                    LOGGER.log(Level.SEVERE, "Fehler beim UI-Update nach Currency Loading: " + uiException.getMessage(), uiException);
+                }
+            });
+        });
+        
+        loadingThread.setName("CurrencyLoadingThread");
+        loadingThread.setDaemon(true);
+        loadingThread.start();
+    }
+    
+    /**
+     * NEU: Setzt den Kurse laden Button nach dem Loading zurück.
+     */
+    private void resetKurseladenButton() {
+        try {
+            if (kurseladenButton != null && !kurseladenButton.isDisposed()) {
+                kurseladenButton.setEnabled(true);
+                kurseladenButton.setText("💰 Kurse laden");
+                
+                LOGGER.fine("Kurse laden Button zurückgesetzt");
+            }
+        } catch (Exception e) {
+            LOGGER.warning("Fehler beim Zurücksetzen des Kurse laden Buttons: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * NEU: Aktualisiert den Status nach dem Currency Loading.
+     * 
+     * @param success true wenn erfolgreich
+     */
+    private void updateStatusAfterCurrencyLoading(boolean success) {
+        try {
+            String statusMessage;
+            if (success) {
+                statusMessage = "Währungskurse erfolgreich geladen";
+            } else {
+                statusMessage = "Fehler beim Laden der Währungskurse";
+            }
+            
+            updateStatus(statusMessage);
+            
+            LOGGER.info("Status nach Currency Loading aktualisiert: " + statusMessage);
+            
+        } catch (Exception e) {
+            LOGGER.warning("Fehler beim Status-Update nach Currency Loading: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * NEU: Zeigt das Ergebnis des Currency Loading in einem Dialog.
+     * 
+     * @param message Die anzuzeigende Nachricht
+     * @param success true wenn erfolgreich
+     */
+    private void showCurrencyLoadingResult(String message, boolean success) {
+        try {
+            if (shell == null || shell.isDisposed()) {
+                LOGGER.warning("Shell nicht verfügbar für Currency Loading Result Dialog");
+                return;
+            }
+            
+            int style = success ? (SWT.ICON_INFORMATION | SWT.OK) : (SWT.ICON_ERROR | SWT.OK);
+            MessageBox messageBox = new MessageBox(shell, style);
+            
+            String title = success ? "Währungskurse geladen" : "Fehler beim Laden";
+            messageBox.setText(title);
+            
+            // Nachricht formatieren
+            String displayMessage = message;
+            if (message != null && message.length() > 500) {
+                displayMessage = message.substring(0, 500) + "\n\n... (gekürzt)";
+            }
+            messageBox.setMessage(displayMessage != null ? displayMessage : "Unbekannter Fehler");
+            
+            messageBox.open();
+            
+            LOGGER.info("Currency Loading Result Dialog angezeigt - " + (success ? "Erfolg" : "Fehler"));
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Anzeigen des Currency Loading Result Dialogs: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * NEU: Zeigt eine allgemeine Fehlermeldung in einem Dialog.
+     * 
+     * @param title Titel des Dialogs
+     * @param message Fehlermeldung
+     */
+    private void showErrorMessage(String title, String message) {
+        try {
+            if (shell == null || shell.isDisposed()) {
+                LOGGER.warning("Shell nicht verfügbar für Error Dialog");
+                return;
+            }
+            
+            MessageBox messageBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK);
+            messageBox.setText(title != null ? title : "Fehler");
+            messageBox.setMessage(message != null ? message : "Unbekannter Fehler");
+            messageBox.open();
+            
+            LOGGER.info("Error Dialog angezeigt: " + title);
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Anzeigen des Error Dialogs: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * NEU: Currency-Funktionalität beim Dispose aufräumen.
+     */
+    private void disposeCurrencyFunctionality() {
+        try {
+            // Currency Data Loader aufräumen
+            if (currencyDataLoader != null) {
+                currencyDataLoader = null;
+                LOGGER.info("CurrencyDataLoader disposed");
+            }
+            
+            // Button wird automatisch durch SWT disposed
+            kurseladenButton = null;
+            
+        } catch (Exception e) {
+            LOGGER.warning("Fehler beim Dispose der Currency-Funktionalität: " + e.getMessage());
+        }
+    }
+    
+    // ========================================================================
+    // BESTEHENDE FUNKTIONALITÄT (Add Signal, Delete Signal, etc.)
+    // ========================================================================
+    
+    /**
+     * Öffnet einen Dialog zum Hinzufügen eines neuen Signals zu den Favoriten
      */
     private void addNewSignalToFavorites() {
         try {
@@ -402,7 +685,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Validiert die Eingaben für ein neues Signal
+     * Validiert die Eingaben für ein neues Signal
      */
     private boolean validateSignalInput(String signalId, int favoriteClassIndex) {
         // Signal ID Validierung
@@ -445,7 +728,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Fügt ein Signal zur favorites.txt hinzu
+     * Fügt ein Signal zur favorites.txt hinzu
      */
     private boolean addSignalToFavoritesFile(String signalId, String favoriteClass) {
         try {
@@ -498,7 +781,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Zentriert einen Dialog auf dem Hauptfenster
+     * Zentriert einen Dialog auf dem Hauptfenster
      */
     private void centerDialog(Shell dialog) {
         Point parentLocation = shell.getLocation();
@@ -512,7 +795,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Aktualisiert die Tabelle nach dem Hinzufügen eines Signals
+     * Aktualisiert die Tabelle nach dem Hinzufügen eines Signals
      */
     private void refreshTableAfterSignalAdded() {
         try {
@@ -541,7 +824,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Behandelt das Löschen eines Signals über den Toolbar-Button
+     * Behandelt das Löschen eines Signals über den Toolbar-Button
      */
     private void deleteSelectedSignalFromToolbar() {
         try {
@@ -581,7 +864,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Aktualisiert den Zustand des Delete-Buttons basierend auf der Tabellenauswahl
+     * Aktualisiert den Zustand des Delete-Buttons basierend auf der Tabellenauswahl
      */
     private void updateDeleteButtonState() {
         if (deleteSignalButton == null || deleteSignalButton.isDisposed()) {
@@ -618,7 +901,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Setzt einen Listener für Tabellenauswahl-Änderungen
+     * Setzt einen Listener für Tabellenauswahl-Änderungen
      */
     private void setupTableSelectionListener() {
         if (providerTable == null) {
@@ -662,7 +945,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Initialisiert die komplette Delete-Signal-Funktionalität
+     * Initialisiert die komplette Delete-Signal-Funktionalität
      */
     private void initializeDeleteSignalFunctionality() {
         try {
@@ -682,7 +965,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Cleanup-Methode für das Schließen der Anwendung
+     * Cleanup-Methode für das Schließen der Anwendung
      */
     private void cleanupDeleteSignalFunctionality() {
         try {
@@ -699,7 +982,7 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Öffnet die Chart-Übersicht für alle Signalprovider
+     * Öffnet die Chart-Übersicht für alle Signalprovider
      */
     private void openChartOverview() {
         try {
@@ -876,13 +1159,17 @@ public class MqlRealMonitorGUI {
                       "Favoriten-Datei: " + monitor.getConfig().getFavoritesFile() + "\n" +
                       "Download-Verzeichnis: " + monitor.getConfig().getDownloadDir() + "\n" +
                       "Tick-Verzeichnis: " + monitor.getConfig().getTickDir() + "\n" +
-                      "Intervall: " + monitor.getConfig().getIntervalMinutes() + " Minuten");
+                      "Intervall: " + monitor.getConfig().getIntervalMinutes() + " Minuten\n\n" +
+                      "=== NEU IN VERSION 1.2.1 ===\n" +
+                      "• Currency Loading für XAUUSD/BTCUSD von MQL5\n" +
+                      "• Kursdaten-Speicherung in realtick/tick_kurse/\n" +
+                      "• Thread-sichere Currency-Operationen");
         box.setText("Konfiguration - MQL5 Real Monitor v" + VERSION);
         box.open();
     }
     
     /**
-     * AKTUALISIERT: Konvertiert Tick-Dateien vom alten 4-Spalten-Format ins neue 5-Spalten-Format
+     * Konvertiert Tick-Dateien vom alten 4-Spalten-Format ins neue 5-Spalten-Format
      */
     private void repairTickFiles() {
         MessageBox confirmBox = new MessageBox(shell, SWT.ICON_QUESTION | SWT.YES | SWT.NO);
@@ -1012,7 +1299,7 @@ public class MqlRealMonitorGUI {
             
             // GUI-Update und kurze Pause
             updateProviderCount();
-            final int finalCreatedEntries = createdEntries;  // <-- FINALE KOPIE ERSTELLEN
+            final int finalCreatedEntries = createdEntries;
             display.asyncExec(() -> {
                 updateStatus("DEBUG: " + finalCreatedEntries  + " Provider erstellt, lade Tick-Daten...");
             });
@@ -1135,7 +1422,7 @@ public class MqlRealMonitorGUI {
                 providerTable.updateProviderData(signalData);
                 updateProviderCount();
                 
-                // NEU: Delete-Button Zustand aktualisieren wenn Daten sich ändern
+                // Delete-Button Zustand aktualisieren wenn Daten sich ändern
                 updateDeleteButtonState();
             }
         });
@@ -1151,7 +1438,7 @@ public class MqlRealMonitorGUI {
             if (providerTable != null) {
                 providerTable.updateProviderStatus(signalId, status);
                 
-                // NEU: Delete-Button Zustand aktualisieren wenn Status sich ändert
+                // Delete-Button Zustand aktualisieren wenn Status sich ändert
                 updateDeleteButtonState();
             }
         });
@@ -1238,7 +1525,7 @@ public class MqlRealMonitorGUI {
         if (boldFont != null && !boldFont.isDisposed()) boldFont.dispose();
         if (statusFont != null && !statusFont.isDisposed()) statusFont.dispose();
         
-        // NEU: Favoritenklasse-Farben freigeben
+        // Favoritenklasse-Farben freigeben
         if (favoriteClass1Color != null && !favoriteClass1Color.isDisposed()) favoriteClass1Color.dispose();
         if (favoriteClass2Color != null && !favoriteClass2Color.isDisposed()) favoriteClass2Color.dispose();
         if (favoriteClass3Color != null && !favoriteClass3Color.isDisposed()) favoriteClass3Color.dispose();
@@ -1282,43 +1569,43 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * NEU: Gibt die SignalProviderTable zurück
+     * Gibt die SignalProviderTable zurück
      */
     public SignalProviderTable getProviderTable() {
         return providerTable;
     }
     
-    // NEU: Getter für Favoritenklasse-Farben (vereinfacht)
+    // Getter für Favoritenklasse-Farben (vereinfacht)
     
     /**
-     * NEU: Gibt die Hintergrundfarbe für Favoritenklasse 1 zurück (Hellgrün)
+     * Gibt die Hintergrundfarbe für Favoritenklasse 1 zurück (Hellgrün)
      */
     public Color getFavoriteClass1Color() {
         return favoriteClass1Color;
     }
     
     /**
-     * NEU: Gibt die Hintergrundfarbe für Favoritenklasse 2 zurück (Hellgelb)
+     * Gibt die Hintergrundfarbe für Favoritenklasse 2 zurück (Hellgelb)
      */
     public Color getFavoriteClass2Color() {
         return favoriteClass2Color;
     }
     
     /**
-     * NEU: Gibt die Hintergrundfarbe für Favoritenklasse 3 zurück (Hellorange)
+     * Gibt die Hintergrundfarbe für Favoritenklasse 3 zurück (Hellorange)
      */
     public Color getFavoriteClass3Color() {
         return favoriteClass3Color;
     }
     
     /**
-     * NEU: Gibt die Hintergrundfarbe für Favoritenklassen 4-10 zurück (Hellrot)
+     * Gibt die Hintergrundfarbe für Favoritenklassen 4-10 zurück (Hellrot)
      */
     public Color getFavoriteClass4To10Color() {
         return favoriteClass4To10Color;
     }
     
-    // NEU: Version Information Getter
+    // Version Information Getter
     
     /**
      * Gibt die aktuelle Anwendungsversion zurück

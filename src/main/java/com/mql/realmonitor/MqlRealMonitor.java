@@ -209,7 +209,8 @@ public class MqlRealMonitor {
                     gui.updateProviderStatus(id, "Downloading...");
                     
                     // HTML herunterladen
-                    String htmlContent = downloader.downloadSignalPage(id);
+                    String url = "https://www.mql5.com/en/signals/" + id;  // oder /de/, falls gewünscht
+                    String htmlContent = downloader.downloadSignalPage(id, url);
                     
                     if (htmlContent != null && !htmlContent.trim().isEmpty()) {
                         // HTML parsen
