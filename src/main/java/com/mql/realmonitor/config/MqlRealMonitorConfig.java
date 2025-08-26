@@ -12,18 +12,14 @@ import java.util.logging.Level;
  * Konfigurationsverwaltung für MqlRealMonitor
  * Verwaltet alle konfigurierbaren Parameter und Pfade
  * GEÄNDERT: Intervall jetzt in Minuten statt Stunden
+ * NEU: Konfigurierbarer BASE_PATH über Konstruktor-Parameter
  */
 public class MqlRealMonitorConfig {
     
     private static final Logger LOGGER = Logger.getLogger(MqlRealMonitorConfig.class.getName());
     
-    // Standard-Pfade
-    private static final String BASE_PATH = "C:\\Forex\\MqlAnalyzer";
-    private static final String CONFIG_DIR = BASE_PATH + "\\config";  // KORRIGIERT: config statt conf
-    private static final String CONFIG_FILE = CONFIG_DIR + "\\MqlRealMonitorConfig.txt";
-    private static final String FAVORITES_FILE = BASE_PATH + "\\config\\favorites.txt";
-    private static final String DOWNLOAD_DIR = BASE_PATH + "\\Realtick\\download";
-    private static final String TICK_DIR = BASE_PATH + "\\Realtick\\tick";
+    // Standard BASE_PATH (falls nicht anders angegeben)
+    private static final String DEFAULT_BASE_PATH = "C:\\Forex\\MqlAnalyzer";
     
     // Standard-Konfigurationswerte - GEÄNDERT: Intervall in Minuten
     private static final int DEFAULT_INTERVAL_MINUTES = 15; // GEÄNDERT: von 1 Stunde zu 15 Minuten
@@ -36,17 +32,67 @@ public class MqlRealMonitorConfig {
     private int timeoutSeconds;
     private String userAgent;
     private String urlTemplate;
+    
+    // NEU: Dynamische Pfade basierend auf konfigurierbarem BASE_PATH
     private String basePath;
     private String configDir;
+    private String configFile;
     private String favoritesFile;
     private String downloadDir;
     private String tickDir;
     
     private Properties properties;
     
+    /**
+     * Standard-Konstruktor mit Default-Pfad
+     */
     public MqlRealMonitorConfig() {
+        this(DEFAULT_BASE_PATH);
+    }
+    
+    /**
+     * NEU: Konstruktor mit konfigurierbarem BASE_PATH
+     * 
+     * @param basePath Der zu verwendende Basis-Pfad
+     */
+    public MqlRealMonitorConfig(String basePath) {
         this.properties = new Properties();
+        
+        // NEU: Pfade dynamisch basierend auf basePath setzen
+        setBasePath(basePath);
         setDefaultValues();
+        
+        LOGGER.info("MqlRealMonitorConfig initialisiert mit BASE_PATH: " + this.basePath);
+    }
+    
+    /**
+     * NEU: Setzt den Basis-Pfad und berechnet alle abhängigen Pfade neu
+     * 
+     * @param basePath Der neue Basis-Pfad
+     */
+    private void setBasePath(String basePath) {
+        // Basis-Pfad validieren und normalisieren
+        if (basePath == null || basePath.trim().isEmpty()) {
+            LOGGER.warning("Ungültiger BASE_PATH übergeben, verwende Standard: " + DEFAULT_BASE_PATH);
+            basePath = DEFAULT_BASE_PATH;
+        }
+        
+        // Pfad normalisieren (Backslashes für Windows)
+        this.basePath = basePath.trim().replace("/", "\\");
+        
+        // Alle abhängigen Pfade berechnen
+        this.configDir = this.basePath + "\\config";
+        this.configFile = this.configDir + "\\MqlRealMonitorConfig.txt";
+        this.favoritesFile = this.configDir + "\\favorites.txt";
+        this.downloadDir = this.basePath + "\\Realtick\\download";
+        this.tickDir = this.basePath + "\\Realtick\\tick";
+        
+        LOGGER.info("Pfade neu berechnet:");
+        LOGGER.info("  BASE_PATH: " + this.basePath);
+        LOGGER.info("  CONFIG_DIR: " + this.configDir);
+        LOGGER.info("  FAVORITES_FILE: " + this.favoritesFile);
+        LOGGER.info("  DOWNLOAD_DIR: " + this.downloadDir);
+        LOGGER.info("  TICK_DIR: " + this.tickDir);
     }
     
     /**
@@ -57,11 +103,6 @@ public class MqlRealMonitorConfig {
         this.timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
         this.userAgent = DEFAULT_USER_AGENT;
         this.urlTemplate = DEFAULT_URL_TEMPLATE;
-        this.basePath = BASE_PATH;
-        this.configDir = CONFIG_DIR;
-        this.favoritesFile = FAVORITES_FILE;
-        this.downloadDir = DOWNLOAD_DIR;
-        this.tickDir = TICK_DIR;
     }
     
     /**
@@ -72,12 +113,12 @@ public class MqlRealMonitorConfig {
             // Verzeichnisse erstellen falls nicht vorhanden
             ensureDirectoriesExist();
             
-            File configFile = new File(CONFIG_FILE);
+            File configFileObj = new File(configFile);
             
-            if (configFile.exists()) {
-                LOGGER.info("Lade Konfiguration aus: " + CONFIG_FILE);
+            if (configFileObj.exists()) {
+                LOGGER.info("Lade Konfiguration aus: " + configFile);
                 
-                try (FileInputStream fis = new FileInputStream(configFile)) {
+                try (FileInputStream fis = new FileInputStream(configFileObj)) {
                     properties.load(fis);
                     parseProperties();
                     LOGGER.info("Konfiguration erfolgreich geladen");
@@ -106,10 +147,10 @@ public class MqlRealMonitorConfig {
             // Properties aus aktuellen Werten setzen
             updateProperties();
             
-            File configFile = new File(CONFIG_FILE);
-            try (FileOutputStream fos = new FileOutputStream(configFile)) {
-                properties.store(fos, "MqlRealMonitor Konfiguration - Automatisch generiert");
-                LOGGER.info("Konfiguration gespeichert: " + CONFIG_FILE);
+            File configFileObj = new File(configFile);
+            try (FileOutputStream fos = new FileOutputStream(configFileObj)) {
+                properties.store(fos, "MqlRealMonitor Konfiguration - BASE_PATH: " + basePath);
+                LOGGER.info("Konfiguration gespeichert: " + configFile);
             }
             
         } catch (Exception e) {
@@ -137,22 +178,29 @@ public class MqlRealMonitorConfig {
         timeoutSeconds = getIntProperty("timeoutSeconds", DEFAULT_TIMEOUT_SECONDS);
         userAgent = properties.getProperty("userAgent", DEFAULT_USER_AGENT);
         urlTemplate = properties.getProperty("urlTemplate", DEFAULT_URL_TEMPLATE);
-        basePath = properties.getProperty("basePath", BASE_PATH);
-        configDir = properties.getProperty("configDir", CONFIG_DIR);
-        favoritesFile = properties.getProperty("favoritesFile", FAVORITES_FILE);
-        downloadDir = properties.getProperty("downloadDir", DOWNLOAD_DIR);
-        tickDir = properties.getProperty("tickDir", TICK_DIR);
+        
+        // NEU: BASE_PATH aus Properties laden (falls dort gespeichert)
+        String savedBasePath = properties.getProperty("basePath");
+        if (savedBasePath != null && !savedBasePath.equals(basePath)) {
+            LOGGER.info("BASE_PATH in Properties unterscheidet sich von aktuell verwendetem:");
+            LOGGER.info("  Aktuell: " + basePath);
+            LOGGER.info("  Properties: " + savedBasePath);
+            LOGGER.info("  Verwende aktuellen BASE_PATH (nicht aus Properties)");
+        }
     }
     
     /**
      * Aktualisiert Properties aus aktuellen Werten
      * GEÄNDERT: intervalHour → intervalMinutes
+     * NEU: Speichert auch BASE_PATH für Referenz
      */
     private void updateProperties() {
         properties.setProperty("intervalMinutes", String.valueOf(intervalMinutes)); // GEÄNDERT
         properties.setProperty("timeoutSeconds", String.valueOf(timeoutSeconds));
         properties.setProperty("userAgent", userAgent);
         properties.setProperty("urlTemplate", urlTemplate);
+        
+        // NEU: BASE_PATH für Referenz speichern (wird aber nicht beim Laden verwendet)
         properties.setProperty("basePath", basePath);
         properties.setProperty("configDir", configDir);
         properties.setProperty("favoritesFile", favoritesFile);
@@ -200,14 +248,18 @@ public class MqlRealMonitorConfig {
     /**
      * Loggt die aktuelle Konfiguration
      * GEÄNDERT: Zeigt Minuten statt Stunden
+     * NEU: Zeigt auch alle Pfade
      */
     private void logCurrentConfig() {
-        LOGGER.info("Aktuelle Konfiguration:");
+        LOGGER.info("=== AKTUELLE KONFIGURATION ===");
+        LOGGER.info("  BASE_PATH: " + basePath);
         LOGGER.info("  Intervall (Minuten): " + intervalMinutes); // GEÄNDERT
         LOGGER.info("  Timeout (Sekunden): " + timeoutSeconds);
         LOGGER.info("  Favoriten-Datei: " + favoritesFile);
         LOGGER.info("  Download-Verzeichnis: " + downloadDir);
         LOGGER.info("  Tick-Verzeichnis: " + tickDir);
+        LOGGER.info("  Config-Datei: " + configFile);
+        LOGGER.info("===============================");
     }
     
     // Getter-Methoden - GEÄNDERT: intervalHour → intervalMinutes
@@ -257,6 +309,13 @@ public class MqlRealMonitorConfig {
     
     public String getTickDir() {
         return tickDir;
+    }
+    
+    /**
+     * NEU: Gibt den Pfad zur Config-Datei zurück
+     */
+    public String getConfigFile() {
+        return configFile;
     }
     
     /**
@@ -314,12 +373,59 @@ public class MqlRealMonitorConfig {
     }
     
     /**
+     * NEU: Erlaubt nachträgliche Änderung des BASE_PATH
+     * ACHTUNG: Bereits geladene Konfiguration wird neu eingelesen!
+     * 
+     * @param newBasePath Der neue BASIS-Pfad
+     */
+    public void changeBasePath(String newBasePath) {
+        LOGGER.info("=== BASE_PATH WIRD GEÄNDERT ===");
+        LOGGER.info("  Alt: " + this.basePath);
+        LOGGER.info("  Neu: " + newBasePath);
+        
+        setBasePath(newBasePath);
+        
+        // Konfiguration aus neuem Pfad laden
+        loadConfig();
+        
+        LOGGER.info("=== BASE_PATH ERFOLGREICH GEÄNDERT ===");
+    }
+    
+    /**
      * Validiert die aktuelle Konfiguration
      */
     public boolean isValid() {
-        return intervalMinutes > 0 && 
-               timeoutSeconds > 0 && 
-               userAgent != null && !userAgent.trim().isEmpty() &&
-               urlTemplate != null && !urlTemplate.trim().isEmpty();
+        boolean valid = intervalMinutes > 0 && 
+                       timeoutSeconds > 0 && 
+                       userAgent != null && !userAgent.trim().isEmpty() &&
+                       urlTemplate != null && !urlTemplate.trim().isEmpty() &&
+                       basePath != null && !basePath.trim().isEmpty();
+        
+        if (!valid) {
+            LOGGER.warning("Konfiguration ist ungültig!");
+            LOGGER.warning("  intervalMinutes: " + intervalMinutes);
+            LOGGER.warning("  timeoutSeconds: " + timeoutSeconds);
+            LOGGER.warning("  userAgent: " + (userAgent != null ? "OK" : "NULL"));
+            LOGGER.warning("  urlTemplate: " + (urlTemplate != null ? "OK" : "NULL"));
+            LOGGER.warning("  basePath: " + (basePath != null ? "OK" : "NULL"));
+        }
+        
+        return valid;
+    }
+    
+    /**
+     * NEU: Gibt eine Zusammenfassung der aktuellen Konfiguration zurück
+     */
+    public String getConfigSummary() {
+        StringBuilder summary = new StringBuilder();
+        summary.append("MqlRealMonitorConfig Summary:\n");
+        summary.append("  BASE_PATH: ").append(basePath).append("\n");
+        summary.append("  Intervall: ").append(intervalMinutes).append(" Minuten\n");
+        summary.append("  Timeout: ").append(timeoutSeconds).append(" Sekunden\n");
+        summary.append("  Favoriten-Datei: ").append(favoritesFile).append("\n");
+        summary.append("  Verzeichnisse: config, download, tick alle unter BASE_PATH\n");
+        summary.append("  Gültig: ").append(isValid() ? "JA" : "NEIN");
+        
+        return summary.toString();
     }
 }

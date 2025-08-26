@@ -20,6 +20,7 @@ import java.util.logging.Level;
  * VERBESSERT: Hauptklasse für MqlRealMonitor mit korrektem Logging für Diagnostik
  * Orchestriert Download, Parsing und GUI-Updates für MQL5 Signalprovider-Monitoring
  * ALLE CHART-PROBLEME BEHOBEN: Robuste Diagnostik und Fehlerbehandlung aktiviert
+ * NEU: Unterstützt konfigurierbaren BASE_PATH über Kommandozeilen-Parameter
  */
 public class MqlRealMonitor {
     
@@ -34,14 +35,29 @@ public class MqlRealMonitor {
     private ScheduledExecutorService scheduler;
     private volatile boolean isRunning = false;
     
+    /**
+     * Standard-Konstruktor mit Default-Pfad
+     */
     public MqlRealMonitor() {
-        initializeComponents();
+        this(null);
+    }
+    
+    /**
+     * NEU: Konstruktor mit konfigurierbarem BASE_PATH
+     * 
+     * @param basePath Der zu verwendende Basis-Pfad oder null für Standard
+     */
+    public MqlRealMonitor(String basePath) {
+        initializeComponents(basePath);
     }
     
     /**
      * VERBESSERT: Initialisiert alle Komponenten des MqlRealMonitor mit korrektem Logging
+     * NEU: Unterstützt konfigurierbaren BASE_PATH
+     * 
+     * @param basePath Der zu verwendende Basis-Pfad oder null für Standard
      */
-    private void initializeComponents() {
+    private void initializeComponents(String basePath) {
         try {
             // KRITISCH: Logging-Level für umfassende Diagnostik setzen
             setupDiagnosticLogging();
@@ -49,8 +65,14 @@ public class MqlRealMonitor {
             LOGGER.info("=== MQL REAL MONITOR INITIALISIERUNG (VERBESSERT) ===");
             LOGGER.info("Aktiviere umfassende Diagnostik für Chart-Probleme...");
             
-            // Konfiguration laden
-            config = new MqlRealMonitorConfig();
+            // NEU: Konfiguration mit optionalem BASE_PATH laden
+            if (basePath != null && !basePath.trim().isEmpty()) {
+                LOGGER.info("Verwende benutzerdefinierten BASE_PATH: " + basePath);
+                config = new MqlRealMonitorConfig(basePath.trim());
+            } else {
+                LOGGER.info("Verwende Standard-BASE_PATH");
+                config = new MqlRealMonitorConfig();
+            }
             config.loadConfig();
             
             // Komponenten initialisieren
@@ -66,6 +88,9 @@ public class MqlRealMonitor {
             scheduler = Executors.newSingleThreadScheduledExecutor();
             
             LOGGER.info("Alle Komponenten erfolgreich initialisiert - Diagnostik aktiviert");
+            LOGGER.info("Aktuelle Konfiguration:");
+            LOGGER.info("  BASE_PATH: " + config.getBasePath());
+            LOGGER.info("  Favoriten-Datei: " + config.getFavoritesFile());
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler bei der Initialisierung", e);
@@ -274,7 +299,130 @@ public class MqlRealMonitor {
     }
     
     /**
+     * NEU: Parst Kommandozeilen-Argumente
+     * 
+     * @param args Die Kommandozeilen-Argumente
+     * @return Der extrahierte BASE_PATH oder null wenn nicht angegeben
+     */
+    private static String parseCommandLineArgs(String[] args) {
+        String basePath = null;
+        
+        if (args == null || args.length == 0) {
+            LOGGER.info("Keine Kommandozeilen-Parameter übergeben");
+            return null;
+        }
+        
+        LOGGER.info("Verarbeite Kommandozeilen-Parameter: " + java.util.Arrays.toString(args));
+        
+        for (int i = 0; i < args.length; i++) {
+            String arg = args[i];
+            
+            // --base-path oder -b Parameter
+            if (("--base-path".equals(arg) || "-b".equals(arg)) && i + 1 < args.length) {
+                basePath = args[i + 1];
+                LOGGER.info("BASE_PATH aus Parameter: " + basePath);
+                i++; // Nächsten Parameter überspringen (ist der Wert)
+            }
+            // --base-path=VALUE Format
+            else if (arg.startsWith("--base-path=")) {
+                basePath = arg.substring("--base-path=".length());
+                LOGGER.info("BASE_PATH aus Parameter (= Format): " + basePath);
+            }
+            // Direkter Pfad als erstes Argument (legacy)
+            else if (i == 0 && !arg.startsWith("-")) {
+                basePath = arg;
+                LOGGER.info("BASE_PATH als erstes Argument: " + basePath);
+            }
+            // Hilfe anzeigen
+            else if ("--help".equals(arg) || "-h".equals(arg)) {
+                showUsageAndExit();
+            }
+            // Unbekannter Parameter
+            else if (arg.startsWith("-")) {
+                LOGGER.warning("Unbekannter Parameter: " + arg);
+                System.err.println("Warnung: Unbekannter Parameter: " + arg);
+                System.err.println("Verwende --help für Hilfe");
+            }
+        }
+        
+        return basePath;
+    }
+    
+    /**
+     * NEU: Zeigt die Verwendung und beendet das Programm
+     */
+    private static void showUsageAndExit() {
+        System.out.println("MQL Real Monitor - MQL5 Signal Provider Monitor");
+        System.out.println();
+        System.out.println("Verwendung:");
+        System.out.println("  java -jar MqlRealMonitor.jar [OPTIONS]");
+        System.out.println();
+        System.out.println("Optionen:");
+        System.out.println("  --base-path <pfad>   Setzt den Basis-Pfad für alle Dateien");
+        System.out.println("  -b <pfad>            Kurz-Version von --base-path");
+        System.out.println("  --base-path=<pfad>   Alternative Syntax für BASE_PATH");
+        System.out.println("  --help               Zeigt diese Hilfe");
+        System.out.println("  -h                   Kurz-Version von --help");
+        System.out.println();
+        System.out.println("Beispiele:");
+        System.out.println("  java -jar MqlRealMonitor.jar --base-path \"C:\\Forex\\MyMql\"");
+        System.out.println("  java -jar MqlRealMonitor.jar -b \"D:\\Trading\\MqlMonitor\"");
+        System.out.println("  java -jar MqlRealMonitor.jar --base-path=\"/home/user/mql\"");
+        System.out.println("  java -jar MqlRealMonitor.jar \"C:\\Forex\\MqlAnalyzer\" (Legacy)");
+        System.out.println();
+        System.out.println("Standard BASE_PATH: C:\\Forex\\MqlAnalyzer");
+        System.out.println();
+        System.out.println("Der BASE_PATH wird für folgende Unterverzeichnisse verwendet:");
+        System.out.println("  config\\      - Konfigurationsdateien (favorites.txt, etc.)");
+        System.out.println("  Realtick\\download\\  - Heruntergeladene HTML-Dateien");
+        System.out.println("  Realtick\\tick\\      - Tick-Daten (CSV-Dateien)");
+        
+        System.exit(0);
+    }
+    
+    /**
+     * NEU: Validiert den übergebenen BASE_PATH
+     * 
+     * @param basePath Der zu validierende BASE_PATH
+     * @return true wenn gültig oder null, false wenn ungültig
+     */
+    private static boolean validateBasePath(String basePath) {
+        if (basePath == null) {
+            return true; // null ist OK (Standard wird verwendet)
+        }
+        
+        String trimmed = basePath.trim();
+        if (trimmed.isEmpty()) {
+            LOGGER.severe("BASE_PATH ist leer");
+            return false;
+        }
+        
+        // Prüfe auf ungültige Zeichen (einfache Prüfung)
+        if (trimmed.contains("\"") || trimmed.contains("*") || trimmed.contains("?") || trimmed.contains("<") || trimmed.contains(">") || trimmed.contains("|")) {
+            LOGGER.severe("BASE_PATH enthält ungültige Zeichen: " + trimmed);
+            return false;
+        }
+        
+        try {
+            // Prüfe ob Pfad erstellt werden kann
+            java.nio.file.Path path = java.nio.file.Paths.get(trimmed);
+            if (!java.nio.file.Files.exists(path)) {
+                LOGGER.info("BASE_PATH existiert noch nicht, wird bei Bedarf erstellt: " + trimmed);
+            } else {
+                LOGGER.info("BASE_PATH existiert bereits: " + trimmed);
+            }
+            return true;
+        } catch (Exception e) {
+            LOGGER.severe("BASE_PATH ist ungültig: " + trimmed + " - " + e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
      * VERBESSERT: Hauptmethode - Startet das MqlRealMonitor GUI mit Diagnostik
+     * NEU: Unterstützt BASE_PATH Kommandozeilen-Parameter
+     * 
+     * @param args Kommandozeilen-Argumente: [--base-path <pfad>] [--help]
      */
     public static void main(String[] args) {
         try {
@@ -284,14 +432,40 @@ public class MqlRealMonitor {
             LOGGER.info("=== STARTE MQL REAL MONITOR (VERBESSERTE VERSION) ===");
             LOGGER.info("Version: " + MqlUtils.getVersion());
             LOGGER.info("Diagnostik-Modus: AKTIVIERT für Chart-Debugging");
+            LOGGER.info("Kommandozeilen-Argumente: " + java.util.Arrays.toString(args));
             
-            MqlRealMonitor monitor = new MqlRealMonitor();
+            // NEU: Kommandozeilen-Parameter parsen
+            String basePath = parseCommandLineArgs(args);
+            
+            // BASE_PATH validieren
+            if (!validateBasePath(basePath)) {
+                System.err.println("FEHLER: Ungültiger BASE_PATH übergeben!");
+                System.err.println("Verwende --help für Hilfe");
+                System.exit(1);
+            }
+            
+            // Monitor mit optionalem BASE_PATH starten
+            MqlRealMonitor monitor = new MqlRealMonitor(basePath);
+            
+            // Konfigurations-Zusammenfassung loggen
+            LOGGER.info("=== KONFIGURATIONSZUSAMMENFASSUNG ===");
+            LOGGER.info(monitor.getConfig().getConfigSummary());
+            LOGGER.info("=====================================");
+            
+            // GUI starten
             monitor.gui.open();
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fataler Fehler beim Start", e);
             System.err.println("KRITISCHER FEHLER beim Start von MqlRealMonitor:");
             e.printStackTrace();
+            System.err.println();
+            System.err.println("Mögliche Ursachen:");
+            System.err.println("- Ungültiger BASE_PATH angegeben");
+            System.err.println("- Keine Berechtigung zum Erstellen von Verzeichnissen");
+            System.err.println("- Konfigurationsfehler");
+            System.err.println();
+            System.err.println("Verwende --help für Hilfe");
             System.exit(1);
         }
     }
