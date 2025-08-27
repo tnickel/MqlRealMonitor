@@ -274,6 +274,13 @@ public class WebDownloader {
             return false;
         }
     }
+    
+    /**
+     * Lädt Inhalt von einer beliebigen URL herunter (öffentliche Methode)
+     * 
+     * @param url Die URL zum Herunterladen
+     * @return HTML-Content oder null bei Fehlern
+     */
     public String downloadFromWebUrl(String url) {
         if (url == null || url.trim().isEmpty()) {
             LOGGER.warning("URL ist leer");

@@ -108,19 +108,175 @@ public class MqlRealMonitorGUI {
     /**
      * NEU: Initialisiert den CurrencyDataLoader.
      */
+    /**
+     * ERWEITERTE DEBUG-VERSION: Initialisiert den CurrencyDataLoader mit detaillierter Diagnose.
+     * Gehört in die MqlRealMonitorGUI Klasse.
+     */
+    /**
+     * Initialisiert den CurrencyDataLoader mit detailliertem Exception-Dialog.
+     * Zeigt bei jeder Exception ein PopUp-Fenster mit allen Details.
+     * Gehört in die MqlRealMonitorGUI Klasse.
+     */
     private void initializeCurrencyDataLoader() {
+        LOGGER.info("=== CURRENCY DATA LOADER INITIALISIERUNG MIT DETAILLIERTEM DEBUG ===");
+        
         try {
-            if (monitor != null && monitor.getConfig() != null) {
-                currencyDataLoader = new CurrencyDataLoader(monitor.getConfig());
-                LOGGER.info("CurrencyDataLoader erfolgreich initialisiert");
-            } else {
-                LOGGER.warning("Monitor oder Config ist null - CurrencyDataLoader kann nicht initialisiert werden");
+            // Schritt 1: Monitor validierung
+            if (monitor == null) {
+                String errorMsg = "Monitor ist NULL - CurrencyDataLoader kann nicht initialisiert werden";
+                LOGGER.severe("FEHLER: " + errorMsg);
+                showDetailedExceptionDialog("Monitor-Fehler", errorMsg, null, null);
+                currencyDataLoader = null;
+                return;
             }
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Fehler beim Initialisieren des CurrencyDataLoader: " + e.getMessage(), e);
-            showErrorMessage("Initialisierungsfehler", 
-                "CurrencyDataLoader konnte nicht initialisiert werden: " + e.getMessage());
+            
+            // Schritt 2: Config validierung  
+            if (monitor.getConfig() == null) {
+                String errorMsg = "Monitor.getConfig() ist NULL - CurrencyDataLoader kann nicht initialisiert werden";
+                LOGGER.severe("FEHLER: " + errorMsg);
+                showDetailedExceptionDialog("Config-Fehler", errorMsg, null, null);
+                currencyDataLoader = null;
+                return;
+            }
+            
+            LOGGER.info("Monitor und Config OK - Erstelle CurrencyDataLoader...");
+            LOGGER.info("BasePath: " + monitor.getConfig().getBasePath());
+            
+            // Schritt 3: CurrencyDataLoader erstellen - HIER passiert wahrscheinlich der Fehler
+            currencyDataLoader = new CurrencyDataLoader(monitor.getConfig());
+            
+            if (currencyDataLoader != null) {
+                LOGGER.info("CurrencyDataLoader erfolgreich erstellt!");
+            } else {
+                String errorMsg = "CurrencyDataLoader ist NULL nach erfolgreicher Erstellung";
+                LOGGER.severe("FEHLER: " + errorMsg);
+                showDetailedExceptionDialog("Erstellungs-Fehler", errorMsg, null, null);
+            }
+            
+        } catch (NoClassDefFoundError e) {
+            String errorMsg = "KLASSE NICHT GEFUNDEN: " + e.getMessage();
+            LOGGER.severe("NoClassDefFoundError: " + errorMsg);
+            showDetailedExceptionDialog("Klasse nicht gefunden", errorMsg, e, "NoClassDefFoundError");
             currencyDataLoader = null;
+            
+        } catch (NoSuchMethodError e) {
+            String errorMsg = "METHODE NICHT GEFUNDEN: " + e.getMessage();
+            LOGGER.severe("NoSuchMethodError: " + errorMsg); 
+            showDetailedExceptionDialog("Methode nicht gefunden", errorMsg, e, "NoSuchMethodError");
+            currencyDataLoader = null;
+            
+        } catch (LinkageError e) {
+            String errorMsg = "LINKAGE FEHLER: " + e.getMessage();
+            LOGGER.severe("LinkageError: " + errorMsg);
+            showDetailedExceptionDialog("Linkage-Fehler", errorMsg, e, "LinkageError");
+            currencyDataLoader = null;
+            
+        } catch (Exception e) {
+            String errorMsg = "ALLGEMEINE EXCEPTION: " + e.getMessage();
+            LOGGER.log(Level.SEVERE, "Exception beim Initialisieren des CurrencyDataLoader", e);
+            showDetailedExceptionDialog("Unerwarteter Fehler", errorMsg, e, e.getClass().getSimpleName());
+            currencyDataLoader = null;
+            
+        } catch (Throwable t) {
+            String errorMsg = "SCHWERWIEGENDER FEHLER: " + t.getMessage();
+            LOGGER.log(Level.SEVERE, "Throwable beim Initialisieren des CurrencyDataLoader", t);
+            showDetailedExceptionDialog("Schwerwiegender Fehler", errorMsg, t, t.getClass().getSimpleName());
+            currencyDataLoader = null;
+        }
+        
+        // Status loggen
+        boolean success = (currencyDataLoader != null);
+        LOGGER.info("=== CURRENCY DATA LOADER INITIALISIERUNG " + (success ? "ERFOLGREICH" : "FEHLGESCHLAGEN") + " ===");
+        
+        // Button Status setzen
+        if (kurseladenButton != null && !kurseladenButton.isDisposed()) {
+            kurseladenButton.setEnabled(success);
+            LOGGER.info("Kurse laden Button " + (success ? "AKTIVIERT" : "DEAKTIVIERT"));
+        }
+    }
+
+    /**
+     * Zeigt einen detaillierten Exception-Dialog mit allen verfügbaren Informationen.
+     * 
+     * @param title Titel des Dialogs
+     * @param message Haupt-Fehlermeldung  
+     * @param throwable Die Exception/Throwable (kann null sein)
+     * @param errorType Typ des Fehlers als String
+     */
+    private void showDetailedExceptionDialog(String title, String message, Throwable throwable, String errorType) {
+        try {
+            if (shell == null || shell.isDisposed()) {
+                LOGGER.warning("Shell nicht verfügbar für Exception-Dialog");
+                return;
+            }
+            
+            StringBuilder fullMessage = new StringBuilder();
+            fullMessage.append("=== DETAILLIERTE FEHLER-INFORMATION ===\n\n");
+            
+            // Basis-Info
+            fullMessage.append("TITEL: ").append(title).append("\n");
+            fullMessage.append("NACHRICHT: ").append(message).append("\n\n");
+            
+            if (errorType != null) {
+                fullMessage.append("FEHLER-TYP: ").append(errorType).append("\n\n");
+            }
+            
+            // Exception-Details falls verfügbar
+            if (throwable != null) {
+                fullMessage.append("EXCEPTION-KLASSE: ").append(throwable.getClass().getName()).append("\n");
+                fullMessage.append("EXCEPTION-MESSAGE: ").append(throwable.getMessage()).append("\n\n");
+                
+                // Cause falls verfügbar
+                if (throwable.getCause() != null) {
+                    fullMessage.append("URSACHE-KLASSE: ").append(throwable.getCause().getClass().getName()).append("\n");
+                    fullMessage.append("URSACHE-MESSAGE: ").append(throwable.getCause().getMessage()).append("\n\n");
+                }
+                
+                // Stack Trace (erste 10 Zeilen)
+                fullMessage.append("STACK TRACE (erste 10 Zeilen):\n");
+                StackTraceElement[] stackTrace = throwable.getStackTrace();
+                int maxLines = Math.min(10, stackTrace.length);
+                for (int i = 0; i < maxLines; i++) {
+                    fullMessage.append("  ").append(stackTrace[i].toString()).append("\n");
+                }
+                
+                if (stackTrace.length > 10) {
+                    fullMessage.append("  ... (").append(stackTrace.length - 10).append(" weitere Zeilen)\n");
+                }
+            }
+            
+            // System-Informationen
+            fullMessage.append("\n=== SYSTEM-INFORMATIONEN ===\n");
+            fullMessage.append("Java Version: ").append(System.getProperty("java.version")).append("\n");
+            fullMessage.append("Java Vendor: ").append(System.getProperty("java.vendor")).append("\n");
+            fullMessage.append("OS Name: ").append(System.getProperty("os.name")).append("\n");
+            fullMessage.append("OS Version: ").append(System.getProperty("os.version")).append("\n");
+            fullMessage.append("Working Directory: ").append(System.getProperty("user.dir")).append("\n");
+            
+            // Konfiguration falls verfügbar
+            if (monitor != null && monitor.getConfig() != null) {
+                fullMessage.append("\n=== KONFIGURATION ===\n");
+                fullMessage.append("Base Path: ").append(monitor.getConfig().getBasePath()).append("\n");
+                fullMessage.append("Config-Klasse: ").append(monitor.getConfig().getClass().getName()).append("\n");
+            }
+            
+            fullMessage.append("\n=== ENDE DER FEHLER-INFORMATION ===");
+            
+            // Dialog anzeigen
+            MessageBox messageBox = new MessageBox(shell, SWT.ICON_ERROR | SWT.OK | SWT.RESIZE);
+            messageBox.setText("CurrencyDataLoader Fehler-Details: " + title);
+            messageBox.setMessage(fullMessage.toString());
+            messageBox.open();
+            
+            LOGGER.info("Detaillierter Exception-Dialog angezeigt für: " + title);
+            
+        } catch (Exception dialogException) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Anzeigen des Exception-Dialogs", dialogException);
+            System.err.println("FATAL: Konnte Exception-Dialog nicht anzeigen: " + dialogException.getMessage());
+            System.err.println("Original Fehler war: " + title + " - " + message);
+            if (throwable != null) {
+                throwable.printStackTrace();
+            }
         }
     }
     

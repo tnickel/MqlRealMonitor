@@ -1,6 +1,6 @@
 # MqlRealMonitor - Klassenübersicht
-# Generated: 2025-06-16
-# Version: 1.2.0
+# Generated: 2025-08-27
+# Version: 1.2.1
 #
 # PROJECT DESCRIPTION:
 # MqlRealMonitor ist eine Java-Desktop-Anwendung für das Monitoring von MQL5 Signal-Providern.
@@ -15,6 +15,7 @@
 # - Provider-Tabelle mit Live-Updates und Chart-Übersicht für alle Provider
 # - NEU: Wochen- und Monatsgewinn-Berechnung basierend auf historischen Tick-Daten
 # - NEU: Asynchrone Chart-Fenster-Erstellung - behebt 60-Sekunden UI-Blocking
+# - NEU: Currency-Loading für XAUUSD/BTCUSD von MQL5 (v1.2.1)
 # - Direkter Browser-Link zu MQL5-Signalprovider-Seiten
 # - Wiederverwendbare Chart-Komponenten und modulare GUI-Architektur
 #
@@ -31,6 +32,7 @@
 # - Wiederverwendbare Chart-Panels für verschiedene Fenster
 # - NEU: Automatische Profit-Berechnungen für Wochen- und Monatsgewinne
 # - NEU: Asynchrone Chart-Architektur verhindert UI-Thread-Blocking
+# - NEU: Currency-Funktionalität für Währungskurse (XAUUSD, BTCUSD)
 # - Robuste Fehlerbehandlung und umfassende Diagnostik
 # - Thread-sichere GUI-Updates und automatische Refresh-Zyklen
 # 
@@ -44,18 +46,24 @@ com.mql.realmonitor.MqlRealMonitor | Hauptklasse für MQL5 Signal-Monitoring. Or
 com.mql.realmonitor.config.MqlRealMonitorConfig | Konfigurationsverwaltung für alle konfigurierbaren Parameter, Pfade und Einstellungen. Verwaltet Intervalle in Minuten.
 com.mql.realmonitor.config.IdTranslationManager | translation tabelle id zu Signalprovidername
 
+## Currency Package (NEU in Version 1.2.1)
+com.mql.realmonitor.currency.CurrencyData | Model-Klasse für Währungskursdaten (Symbol, Kurs, Zeitstempel). Unterstützt CSV-Serialisierung für XAUUSD/BTCUSD.
+com.mql.realmonitor.currency.CurrencyDataLoader | Hauptklasse für das Laden von Währungskursen von MQL5. Orchestriert Download, Parse und Save-Prozess für Currency-Daten.
+com.mql.realmonitor.currency.CurrencyDataWriter | Writer für Kursdaten in CSV-Dateien im tick_kurse Verzeichnis. Verwaltet Dateierstellung und Append-Operations.
+com.mql.realmonitor.currency.CurrencyParser | Parser für XAUUSD/BTCUSD Kurse aus MQL5 HTML-Content. Verwendet Regex-Patterns für flexibles HTML-Parsing.
+
 ## Data Layer
 com.mql.realmonitor.data.TickDataLoader | Lädt und parst Tick-Daten aus CSV-Dateien. Bietet TickData und TickDataSet Klassen für Datencontainer.
 
 ## Download Layer
 com.mql.realmonitor.downloader.FavoritesReader | Liest und verwaltet die favorites.txt Datei mit Signal-IDs. Unterstützt Caching und Validierung.
-com.mql.realmonitor.downloader.WebDownloader | HTTP-Downloader für MQL5 Signalprovider-Seiten. Verwaltet Downloads und lokale HTML-Datei-Speicherung.
+com.mql.realmonitor.downloader.WebDownloader | HTTP-Downloader für MQL5 Signalprovider-Seiten und Currency-URLs. Verwaltet Downloads und lokale HTML-Datei-Speicherung.
 
 ## Exception Handling
 com.mql.realmonitor.exception.MqlMonitorException | Spezifische Exception-Klasse für alle MQL-Fehler. Bietet kategorisierte Fehlertypen und benutzerfreundliche Nachrichten.
 
 ## GUI Layer - Core
-com.mql.realmonitor.gui.MqlRealMonitorGUI | Haupt-GUI-Klasse mit Provider-Tabelle und Toolbar. Erweitert um Chart-Übersicht Button für Signalprovider-Overview.
+com.mql.realmonitor.gui.MqlRealMonitorGUI | Haupt-GUI-Klasse mit Provider-Tabelle und Toolbar. ERWEITERT: Currency-Button für XAUUSD/BTCUSD Loading (v1.2.1).
 com.mql.realmonitor.gui.SignalProviderTable | Refactored Provider-Tabelle mit modularer Architektur. ERWEITERT: WeeklyProfit und MonthlyProfit Spalten für Gewinn-Berechnungen.
 com.mql.realmonitor.gui.ProviderTableHelper | Hilfsfunktionen für SignalProviderTable. ERWEITERT: Support für Profit-Spalten mit Farbkodierung und numerischer Sortierung.
 com.mql.realmonitor.gui.SignalProviderContextMenu | Kontextmenü für Provider-Tabelle. ASYNCHRON: Doppelklick-Handler verhindert UI-Blocking. MQL5-Website-Link für Browser-Öffnung.
@@ -98,7 +106,7 @@ com.mql.realmonitor.utils.PeriodProfitCalculator | Berechnet Wochen- und Monatsg
 # ARCHITECTURE SUMMARY
 # ========================================================================
 
-## Key Architectural Improvements (Version 1.2.0):
+## Key Architectural Improvements (Version 1.2.1):
 - Refactored TickChartWindow: Split into 4 modular classes (Window, Manager, Toolbar, Panels)
 - Reusable Chart Panels: EquityDrawdownChartPanel and ProfitDevelopmentChartPanel can be used in multiple windows
 - Dual Chart System: Both Drawdown and Profit charts managed by unified TickChartManager
@@ -106,11 +114,13 @@ com.mql.realmonitor.utils.PeriodProfitCalculator | Berechnet Wochen- und Monatsg
 - MQL5 Website Integration: Direct browser links to signal provider pages
 - NEU: Profit Analysis: Automatic calculation of weekly and monthly profit percentages
 - NEU: ASYNC ARCHITECTURE: AsyncTickChartWindow verhindert 60-Sekunden UI-Blocking komplett
+- NEU: CURRENCY FUNCTIONALITY: Complete currency data loading system for XAUUSD/BTCUSD from MQL5
 - Robust Data Handling: Improved error handling and diagnostics throughout
 
 ## Package Structure:
 - Main: Core application entry point
 - Config: Configuration management
+- Currency: Currency data loading and processing (NEU in v1.2.1)
 - Data: Tick data loading and processing
 - Downloader: Web downloading and favorites management
 - Exception: Centralized error handling
@@ -119,30 +129,31 @@ com.mql.realmonitor.utils.PeriodProfitCalculator | Berechnet Wochen- und Monatsg
 - TickData: CSV file writing and reading
 - Utils: General utility functions (including profit calculations)
 
-## Recent Enhancements (Version 1.2.0):
-- NEU: AsyncTickChartWindow - Asynchrone Chart-Fenster-Erstellung
-- NEU: 4-Phasen Loading-System mit Progress-Feedback
-- NEU: Thread-sichere Chart-Erstellung im Background
-- NEU: Sofortiges Loading-Fenster verhindert UI-Blocking
-- NEU: Smart Close-Handler für Loading vs. Chart-Fenster
-- ERWEITERT: TickChartWindowManager für stufenweises UI-Setup optimiert
-- ERWEITERT: SignalProviderContextMenu mit asynchronem Doppelklick-Handler
-- KORRIGIERT: 60-Sekunden UI-Blocking Problem vollständig behoben
+## Recent Enhancements (Version 1.2.1):
+- NEU: Currency Package - Komplette Währungskurs-Funktionalität für XAUUSD/BTCUSD
+- NEU: "Kurse laden" Button in Haupt-GUI für Currency-Loading von MQL5
+- NEU: Thread-sichere Currency-Datenverarbeitung mit detaillierter Diagnostik
+- NEU: CSV-basierte Currency-Datenspeicherung in realtick/tick_kurse/
+- ERWEITERT: WebDownloader um downloadFromWebUrl() für allgemeine URL-Downloads
+- ERWEITERT: MqlRealMonitorGUI um Currency-Button und Exception-Handling
+- KORRIGIERT: Vollständige Exception-Behandlung für Currency-Initialisierung
 
-## Async Chart Architecture (NEU):
+## Currency Architecture (NEU in Version 1.2.1):
 ```
-Doppelklick → AsyncTickChartWindow → Loading-Fenster (sofort, 0ms)
-           ↓
-Background-Thread → TickChartWindowManager (optimiert)
-           ↓
-4 Setup-Phasen → Chart-Fenster öffnet sich (1-2s)
-           ↓
-Loading-Fenster schließt automatisch → Fertig!
+User-Klick "Kurse laden" → CurrencyDataLoader.loadCurrencyRatesWithDiagnosis()
+                         ↓
+WebDownloader.downloadFromWebUrl(MQL5_URL) → HTML-Download
+                         ↓
+CurrencyParser.parseRates(htmlContent) → XAUUSD/BTCUSD Extraktion
+                         ↓
+CurrencyDataWriter.writeCurrencyData() → CSV-Speicherung in tick_kurse/
+                         ↓
+Erfolg/Fehler-Dialog → Thread-sichere GUI-Updates
 ```
 
 ## Threading-Model (ERWEITERT):
-- UI-Thread: Haupt-GUI, Loading-Fenster, User-Interaktion
-- Background-Threads: Chart-Erstellung, Daten-Loading, Web-Downloads
+- UI-Thread: Haupt-GUI, Loading-Fenster, User-Interaktion, Currency-Button-Handling
+- Background-Threads: Chart-Erstellung, Daten-Loading, Web-Downloads, Currency-Loading
 - Sync-Points: Nur für kritische UI-Updates (Display.asyncExec/syncExec)
 - No-Blocking: Keine langandauernden Operationen im UI-Thread
 
@@ -166,13 +177,20 @@ Loading-Fenster schließt automatisch → Fertig!
 ## Performance Improvements:
 - UI-Blocking: Von 60 Sekunden auf 0ms reduziert
 - Chart-Loading: Stufenweise und asynchron
+- Currency-Loading: Thread-sichere Background-Verarbeitung
 - Memory: Optimierte Image-Verwaltung
 - Threading: Klare Trennung UI vs. Background-Operationen
 - User Experience: Sofortiges Feedback, abbruchbare Operationen
 
-## Total Classes: 27 (war 26)
+## File Structure Enhancements (Version 1.2.1):
+- realtick/tick_kurse/ - Neues Verzeichnis für Currency-CSV-Dateien
+- realtick/download_mql5/ - Download-Cache für MQL5 Currency-HTML-Seiten
+- xauusd.txt, btcusd.txt - CSV-Dateien mit Zeitstempel, Symbol, Kurs
+
+## Total Classes: 31 (war 27 - +4 Currency Classes)
 ## LOC Reduction: TickChartWindow reduced from >1000 to <100 lines through refactoring
 ## Reusability: Chart panels can now be reused across different windows
 ## NEW: Automated profit calculations for performance tracking
 ## NEW: Complete async architecture eliminates UI blocking
 ## NEW: Background chart creation with user-friendly loading experience
+## NEW: Currency data loading system for XAUUSD/BTCUSD from MQL5

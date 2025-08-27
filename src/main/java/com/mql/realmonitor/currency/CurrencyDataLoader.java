@@ -126,25 +126,21 @@ public class CurrencyDataLoader {
      */
     private String downloadFromUrl(String url) {
         try {
-            logger.info("Lade HTML von: " + url);
+        	logger.info("Lade HTML von: " + url);
             
-            // WebDownloader erwartet normalerweise eine Signal-ID, wir verwenden "mql5_rates"
-            String tempHtmlFile = webDownloader.downloadSignalPage("mql5_rates", url);
+            // WebDownloader gibt direkt HTML-Content zurück, NICHT einen Dateipfad!
+            String htmlContent = webDownloader.downloadFromWebUrl(url);
             
-            if (tempHtmlFile != null) {
-                File htmlFile = new File(tempHtmlFile);
-                if (htmlFile.exists() && htmlFile.length() > 0) {
-                	String content = MqlUtils.readTextFile(tempHtmlFile);
-                    logger.info("Download erfolgreich: " + content.length() + " Zeichen");
-                    return content;
-                }
+            if (htmlContent != null && !htmlContent.trim().isEmpty()) {
+            	logger.info("Download erfolgreich: " + htmlContent.length() + " Zeichen");
+                return htmlContent;
+            } else {
+            	logger.warning("Download von " + url + " lieferte keinen Content");
+                return null;
             }
             
-            logger.warning("Download von " + url + " lieferte keinen Content");
-            return null;
-            
         } catch (Exception e) {
-            logger.warning("Fehler beim Download von " + url + ": " + e.getMessage());
+        	logger.warning("Fehler beim Download von " + url + ": " + e.getMessage());
             return null;
         }
     }
@@ -166,7 +162,13 @@ public class CurrencyDataLoader {
             logger.warning("Fehler beim Speichern der HTML-Datei: " + e.getMessage());
         }
     }
-    
+    /**
+     * Lädt Inhalt von einer URL herunter
+     * 
+     * @param urlString Die URL zum Herunterladen
+     * @return Der Inhalt als String oder null bei Fehlern
+     */
+   
     /**
      * Lädt Währungskurse und gibt Diagnose-Informationen zurück.
      * 
