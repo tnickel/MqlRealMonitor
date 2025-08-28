@@ -590,7 +590,7 @@ public class MqlRealMonitorGUI {
             display.asyncExec(() -> {
                 try {
                     // Ergebnis-Dialog anzeigen
-                    showCurrencyLoadingResult(finalDiagnosis, finalSuccess);
+                    //Jetzt ist alles geladen
                     
                     // Button und Status zurücksetzen
                     resetKurseladenButton();
@@ -648,40 +648,7 @@ public class MqlRealMonitorGUI {
         }
     }
     
-    /**
-     * NEU: Zeigt das Ergebnis des Currency Loading in einem Dialog.
-     * 
-     * @param message Die anzuzeigende Nachricht
-     * @param success true wenn erfolgreich
-     */
-    private void showCurrencyLoadingResult(String message, boolean success) {
-        try {
-            if (shell == null || shell.isDisposed()) {
-                LOGGER.warning("Shell nicht verfügbar für Currency Loading Result Dialog");
-                return;
-            }
-            
-            int style = success ? (SWT.ICON_INFORMATION | SWT.OK) : (SWT.ICON_ERROR | SWT.OK);
-            MessageBox messageBox = new MessageBox(shell, style);
-            
-            String title = success ? "Währungskurse geladen" : "Fehler beim Laden";
-            messageBox.setText(title);
-            
-            // Nachricht formatieren
-            String displayMessage = message;
-            if (message != null && message.length() > 500) {
-                displayMessage = message.substring(0, 500) + "\n\n... (gekürzt)";
-            }
-            messageBox.setMessage(displayMessage != null ? displayMessage : "Unbekannter Fehler");
-            
-            messageBox.open();
-            
-            LOGGER.info("Currency Loading Result Dialog angezeigt - " + (success ? "Erfolg" : "Fehler"));
-            
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Fehler beim Anzeigen des Currency Loading Result Dialogs: " + e.getMessage(), e);
-        }
-    }
+   
     
     /**
      * NEU: Zeigt eine allgemeine Fehlermeldung in einem Dialog.
