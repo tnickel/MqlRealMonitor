@@ -23,6 +23,9 @@
         <swt.version>3.124.0</swt.version>
         <jfreechart.version>1.5.4</jfreechart.version>
         <junit.version>5.9.2</junit.version>
+        <!-- NEU: Selenium Version -->
+        <selenium.version>4.15.0</selenium.version>
+        <webdrivermanager.version>5.5.3</webdrivermanager.version>
     </properties>
     
     <!-- Dependencies -->
@@ -47,6 +50,34 @@
             <groupId>org.jfree</groupId>
             <artifactId>jcommon</artifactId>
             <version>1.0.24</version>
+        </dependency>
+        
+        <!-- NEU: Selenium WebDriver für Browser-Automatisierung -->
+        <dependency>
+            <groupId>org.seleniumhq.selenium</groupId>
+            <artifactId>selenium-java</artifactId>
+            <version>${selenium.version}</version>
+        </dependency>
+        
+        <!-- NEU: WebDriverManager für automatische Browser-Driver-Verwaltung -->
+        <dependency>
+            <groupId>io.github.bonigarcia</groupId>
+            <artifactId>webdrivermanager</artifactId>
+            <version>${webdrivermanager.version}</version>
+        </dependency>
+        
+        <!-- NEU: Selenium Chrome Driver (explizit) -->
+        <dependency>
+            <groupId>org.seleniumhq.selenium</groupId>
+            <artifactId>selenium-chrome-driver</artifactId>
+            <version>${selenium.version}</version>
+        </dependency>
+        
+        <!-- NEU: Selenium Support Klassen -->
+        <dependency>
+            <groupId>org.seleniumhq.selenium</groupId>
+            <artifactId>selenium-support</artifactId>
+            <version>${selenium.version}</version>
         </dependency>
         
         <!-- Alternative SWT Dependencies für andere Plattformen -->
@@ -169,7 +200,13 @@
                 <configuration>
                     <useSystemClassLoader>false</useSystemClassLoader>
                     <!-- SWT-spezifische JVM-Argumente für Tests -->
-                    <argLine>-Djava.awt.headless=false</argLine>
+                    <!-- NEU: Selenium-spezifische JVM-Argumente -->
+                    <argLine>-Djava.awt.headless=false -Dwebdriver.chrome.driver=${webdriver.chrome.driver}</argLine>
+                    <systemPropertyVariables>
+                        <!-- NEU: Selenium-System-Properties -->
+                        <webdriver.chrome.driver>${webdriver.chrome.driver}</webdriver.chrome.driver>
+                        <webdriver.gecko.driver>${webdriver.gecko.driver}</webdriver.gecko.driver>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
             
@@ -203,6 +240,8 @@
                                         <exclude>META-INF/DEPENDENCIES</exclude>
                                         <exclude>META-INF/LICENSE</exclude>
                                         <exclude>META-INF/NOTICE</exclude>
+                                        <!-- NEU: Selenium-spezifische Excludes -->
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
                                     </excludes>
                                 </filter>
                             </filters>
@@ -226,6 +265,9 @@
                             <!-- SWT-spezifische Manifest-Einträge -->
                             <SWT-Version>${swt.version}</SWT-Version>
                             <JFreeChart-Version>${jfreechart.version}</JFreeChart-Version>
+                            <!-- NEU: Selenium-spezifische Manifest-Einträge -->
+                            <Selenium-Version>${selenium.version}</Selenium-Version>
+                            <WebDriverManager-Version>${webdrivermanager.version}</WebDriverManager-Version>
                         </manifestEntries>
                     </archive>
                 </configuration>
@@ -271,6 +313,9 @@
                     <mainClass>com.mql.realmonitor.MqlRealMonitor</mainClass>
                     <options>
                         <option>-Djava.awt.headless=false</option>
+                        <!-- NEU: Selenium-spezifische JVM-Options -->
+                        <option>-Dwebdriver.chrome.logfile=chrome.log</option>
+                        <option>-Dwebdriver.chrome.verboseLogging=true</option>
                     </options>
                 </configuration>
             </plugin>
@@ -331,6 +376,28 @@
                     <version>${swt.version}</version>
                 </dependency>
             </dependencies>
+        </profile>
+        
+        <!-- NEU: Selenium-Test Profil -->
+        <profile>
+            <id>selenium-test</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <includes>
+                                <include>**/*SeleniumTest.java</include>
+                            </includes>
+                            <systemPropertyVariables>
+                                <selenium.headless>true</selenium.headless>
+                                <webdriver.chrome.driver>${webdriver.chrome.driver}</webdriver.chrome.driver>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
         
     </profiles>

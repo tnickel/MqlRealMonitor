@@ -65,6 +65,7 @@ public class WebDownloader {
     
     /**
      * Lädt Inhalt von einer URL herunter
+     * ERWEITERT: Mit Anti-Cache Headers für aktuelle Kursdaten
      * 
      * @param urlString Die URL zum Herunterladen
      * @return Der Inhalt als String oder null bei Fehlern
@@ -80,11 +81,35 @@ public class WebDownloader {
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(config.getTimeoutSeconds() * 1000);
             connection.setReadTimeout(config.getTimeoutSeconds() * 1000);
+            
+            // Standard Headers
             connection.setRequestProperty("User-Agent", config.getUserAgent());
             connection.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
             connection.setRequestProperty("Accept-Language", "de-DE,de;q=0.9,en;q=0.8");
             connection.setRequestProperty("Accept-Encoding", "gzip, deflate");
             connection.setRequestProperty("Connection", "keep-alive");
+            
+            // NEU: Anti-Cache Headers für aktuelle Kursdaten
+            connection.setRequestProperty("Cache-Control", "no-cache, no-store, must-revalidate");
+            connection.setRequestProperty("Pragma", "no-cache");
+            connection.setRequestProperty("Expires", "0");
+            
+            // NEU: Zusätzliche Headers um nicht wie Bot zu wirken
+            connection.setRequestProperty("Upgrade-Insecure-Requests", "1");
+            connection.setRequestProperty("Sec-Fetch-Dest", "document");
+            connection.setRequestProperty("Sec-Fetch-Mode", "navigate");
+            connection.setRequestProperty("Sec-Fetch-Site", "none");
+            connection.setRequestProperty("Sec-Fetch-User", "?1");
+            
+            // NEU: Random Delay um nicht wie Bot zu wirken (nur für Currency-URLs)
+            if (urlString.contains("mql5.com") && urlString.contains("quotes")) {
+                try {
+                    Thread.sleep(1000 + (int)(Math.random() * 2000)); // 1-3 Sekunden
+                    LOGGER.fine("Anti-Bot Delay angewendet für: " + urlString);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             
             // Verbindung herstellen
             connection.connect();
@@ -92,7 +117,17 @@ public class WebDownloader {
             int responseCode = connection.getResponseCode();
             
             if (responseCode == HttpURLConnection.HTTP_OK) {
-                return readResponseContent(connection);
+                String content = readResponseContent(connection);
+                
+                // Debug-Logging für Currency-URLs
+                if (urlString.contains("mql5.com") && urlString.contains("quotes")) {
+                    LOGGER.info("Currency-URL erfolgreich geladen: " + urlString);
+                    LOGGER.info("Content-Länge: " + (content != null ? content.length() : 0) + " Zeichen");
+                    LOGGER.info("Response Headers: Cache-Control=" + connection.getHeaderField("Cache-Control"));
+                    LOGGER.info("Response Headers: Last-Modified=" + connection.getHeaderField("Last-Modified"));
+                }
+                
+                return content;
             } else {
                 LOGGER.warning("HTTP-Fehler " + responseCode + " für URL: " + urlString);
                 return null;

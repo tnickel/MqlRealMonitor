@@ -12,26 +12,64 @@ import com.mql.realmonitor.exception.MqlMonitorException.ErrorType;
 /**
  * Parser für Währungskurse von der MQL5-Website.
  * Extrahiert XAUUSD und BTCUSD Kurse aus dem HTML-Content.
+ * ERWEITERT: Unterstützt sowohl Punkt als auch Komma als Dezimaltrennzeichen.
  */
 public class CurrencyParser {
     
     private static final Logger logger = Logger.getLogger(CurrencyParser.class.getName());
     
-    // Regex-Patterns für verschiedene mögliche HTML-Strukturen von MQL5
+    // SPEZIFISCHE Regex-Patterns für MQL5 HTML-Struktur
+    // Angepasst an die tatsächliche HTML-Struktur von MQL5 Quotes-Seite
     private static final Pattern[] XAUUSD_PATTERNS = {
-        Pattern.compile("XAUUSD[^>]*?([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("XAU/USD[^>]*?([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("Gold[^>]*?([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
+        // HAUPT-PATTERN: Spezifisch für MQL5 HTML-Struktur mit ticker_bid
+        Pattern.compile("ticker_bid_375\">([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("ticker_ask_375\">([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
+        
+        // Spezifisch für navigator-overview-all__quote-val mit XAUUSD
+        Pattern.compile("XAUUSD.*?navigator-overview-all__quote-val[^>]*>([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL),
+        Pattern.compile("Gold vs US Dollar.*?navigator-overview-all__quote-val[^>]*>([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL),
+        
+        // Fallback: JSON-Format
         Pattern.compile("\"symbol\":\"XAUUSD\"[^}]*?\"bid\":([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("data-symbol=\"XAUUSD\"[^>]*?data-bid=\"([0-9]+\\.[0-9]+)\"", Pattern.CASE_INSENSITIVE)
+        Pattern.compile("\"375\":\"XAUUSD\"[^}]*?([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
+        
+        // Fallback: data-Attribute
+        Pattern.compile("data-symbol=\"XAUUSD\"[^>]*?data-bid=\"([0-9]+\\.[0-9]+)\"", Pattern.CASE_INSENSITIVE),
+        
+        // NEU: Komma-Versionen für deutsche Locale
+        Pattern.compile("ticker_bid_375\">([0-9]+,[0-9]+)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("ticker_ask_375\">([0-9]+,[0-9]+)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("XAUUSD.*?navigator-overview-all__quote-val[^>]*>([0-9]+,[0-9]+)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL),
+        
+        // ALTE Fallback-Patterns (weniger spezifisch)
+        Pattern.compile("XAUUSD[^>]{0,100}([0-9]+[.,][0-9]+)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("XAU/USD[^>]{0,100}([0-9]+[.,][0-9]+)", Pattern.CASE_INSENSITIVE)
     };
     
     private static final Pattern[] BTCUSD_PATTERNS = {
-        Pattern.compile("BTCUSD[^>]*?([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("BTC/USD[^>]*?([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("Bitcoin[^>]*?([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
+        // HAUPT-PATTERN: Spezifisch für MQL5 HTML-Struktur mit ticker_bid
+        Pattern.compile("ticker_bid_4467\">([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("ticker_ask_4467\">([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
+        
+        // Spezifisch für navigator-overview-all__quote-val mit BTCUSD
+        Pattern.compile("BTCUSD.*?navigator-overview-all__quote-val[^>]*>([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL),
+        Pattern.compile("Bitcoin vs US Dollar.*?navigator-overview-all__quote-val[^>]*>([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL),
+        
+        // Fallback: JSON-Format
         Pattern.compile("\"symbol\":\"BTCUSD\"[^}]*?\"bid\":([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("data-symbol=\"BTCUSD\"[^>]*?data-bid=\"([0-9]+\\.[0-9]+)\"", Pattern.CASE_INSENSITIVE)
+        Pattern.compile("\"4467\":\"BTCUSD\"[^}]*?([0-9]+\\.[0-9]+)", Pattern.CASE_INSENSITIVE),
+        
+        // Fallback: data-Attribute
+        Pattern.compile("data-symbol=\"BTCUSD\"[^>]*?data-bid=\"([0-9]+\\.[0-9]+)\"", Pattern.CASE_INSENSITIVE),
+        
+        // NEU: Komma-Versionen für deutsche Locale
+        Pattern.compile("ticker_bid_4467\">([0-9]+,[0-9]+)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("ticker_ask_4467\">([0-9]+,[0-9]+)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("BTCUSD.*?navigator-overview-all__quote-val[^>]*>([0-9]+,[0-9]+)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL),
+        
+        // ALTE Fallback-Patterns (weniger spezifisch)
+        Pattern.compile("BTCUSD[^>]{0,100}([0-9]+[.,][0-9]+)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("BTC/USD[^>]{0,100}([0-9]+[.,][0-9]+)", Pattern.CASE_INSENSITIVE)
     };
     
     /**
@@ -83,6 +121,7 @@ public class CurrencyParser {
     
     /**
      * Extrahiert einen einzelnen Kurs aus dem HTML-Content.
+     * ERWEITERT: Unterstützt sowohl Punkt als auch Komma als Dezimaltrennzeichen.
      * 
      * @param htmlContent Der HTML-Content
      * @param patterns Array von Regex-Patterns zum Testen
@@ -97,14 +136,17 @@ public class CurrencyParser {
             if (matcher.find()) {
                 try {
                     String rateString = matcher.group(1);
-                    double rate = Double.parseDouble(rateString);
+                    
+                    // NEU: Normalisiere das Zahlenformat (Komma zu Punkt)
+                    String normalizedRateString = normalizeDecimalFormat(rateString);
+                    double rate = Double.parseDouble(normalizedRateString);
                     
                     // Plausibilitätsprüfung
                     if (isValidRate(rate, symbol)) {
-                        logger.info(symbol + " gefunden mit Pattern " + (i+1) + ": " + rate);
+                        logger.info(symbol + " gefunden mit Pattern " + (i+1) + ": " + rateString + " → " + rate);
                         return rate;
                     } else {
-                        logger.warning(symbol + " Pattern " + (i+1) + " lieferte unplausiblen Wert: " + rate);
+                        logger.warning(symbol + " Pattern " + (i+1) + " lieferte unplausiblen Wert: " + rateString + " → " + rate);
                     }
                 } catch (NumberFormatException e) {
                     logger.warning(symbol + " Pattern " + (i+1) + " lieferte ungültigen Zahlenwert: " + matcher.group(1));
@@ -114,6 +156,38 @@ public class CurrencyParser {
         
         logger.warning(symbol + " konnte mit keinem der " + patterns.length + " Patterns gefunden werden");
         return null;
+    }
+    
+    /**
+     * NEU: Normalisiert Dezimalformat von deutschem (Komma) zu englischem (Punkt) Format.
+     * Beispiel: "3392,96000" → "3392.96000"
+     * 
+     * @param numberString Der zu normalisierende Zahlen-String
+     * @return Normalisierter String mit Punkt als Dezimaltrennzeichen
+     */
+    private String normalizeDecimalFormat(String numberString) {
+        if (numberString == null) {
+            return null;
+        }
+        
+        // Entferne Whitespace
+        String cleaned = numberString.trim();
+        
+        // Ersetze Komma durch Punkt für Dezimaltrennzeichen
+        // Aber nur wenn es EIN Komma gibt (nicht bei Tausender-Trennzeichen)
+        if (cleaned.contains(",")) {
+            int commaIndex = cleaned.lastIndexOf(",");
+            String beforeComma = cleaned.substring(0, commaIndex);
+            String afterComma = cleaned.substring(commaIndex + 1);
+            
+            // Prüfe ob es ein Dezimaltrennzeichen ist (2-5 Ziffern nach Komma)
+            if (afterComma.matches("[0-9]{2,5}") && !beforeComma.contains(",")) {
+                cleaned = beforeComma + "." + afterComma;
+                logger.fine("Dezimalformat normalisiert: " + numberString + " → " + cleaned);
+            }
+        }
+        
+        return cleaned;
     }
     
     /**
@@ -130,12 +204,12 @@ public class CurrencyParser {
         
         switch (symbol.toLowerCase()) {
             case "xauusd":
-                // Gold: typisch zwischen 1000-3000 USD
-                return rate >= 500 && rate <= 5000;
+                // Gold: typisch zwischen 1000-5000 USD (erweitert für aktuelle Preise)
+                return rate >= 500 && rate <= 6000;
                 
             case "btcusd":
-                // Bitcoin: typisch zwischen 10000-100000 USD
-                return rate >= 1000 && rate <= 200000;
+                // Bitcoin: typisch zwischen 10000-200000 USD
+                return rate >= 1000 && rate <= 300000;
                 
             default:
                 // Für andere Symbole: grundlegende Validierung
@@ -144,7 +218,8 @@ public class CurrencyParser {
     }
     
     /**
-     * Diagnostik-Methode: Sucht nach möglichen Währungsreferenzen im HTML.
+     * ERWEITERTE Diagnostik-Methode: Sucht nach möglichen Währungsreferenzen im HTML.
+     * Unterstützt jetzt auch Komma-getrennte Zahlen.
      * 
      * @param htmlContent Der HTML-Content
      * @return Liste gefundener Währungsreferenzen für Debugging
@@ -170,6 +245,29 @@ public class CurrencyParser {
             }
         }
         
+        // NEU: Suche speziell nach MQL5 ticker IDs für bessere Diagnostik
+        Pattern tickerIdPattern = Pattern.compile("ticker_(?:bid|ask)_([0-9]+)\">([0-9]+[.,][0-9]+)", Pattern.CASE_INSENSITIVE);
+        Matcher tickerIdMatcher = tickerIdPattern.matcher(htmlContent);
+        
+        int tickerCount = 0;
+        while (tickerIdMatcher.find() && tickerCount < 15) {
+            String tickerId = tickerIdMatcher.group(1);
+            String tickerValue = tickerIdMatcher.group(2);
+            references.add("Ticker ID " + tickerId + ": " + tickerValue);
+            tickerCount++;
+        }
+        
         return references;
+    }
+    
+    /**
+     * NEU: Test-Methode für Zahlenformat-Normalisierung.
+     * Kann für Unit-Tests verwendet werden.
+     * 
+     * @param testString Test-String zum Normalisieren
+     * @return Normalisierter String
+     */
+    public String testNormalizeDecimalFormat(String testString) {
+        return normalizeDecimalFormat(testString);
     }
 }
