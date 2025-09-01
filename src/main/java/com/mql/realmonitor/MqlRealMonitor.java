@@ -1,6 +1,7 @@
 package com.mql.realmonitor;
 
 import com.mql.realmonitor.config.MqlRealMonitorConfig;
+import com.mql.realmonitor.currency.CurrencyDataLoader;
 import com.mql.realmonitor.downloader.WebDownloader;
 import com.mql.realmonitor.downloader.FavoritesReader;
 import com.mql.realmonitor.parser.HTMLParser;
@@ -21,6 +22,7 @@ import java.util.logging.Level;
  * Orchestriert Download, Parsing und GUI-Updates für MQL5 Signalprovider-Monitoring
  * ALLE CHART-PROBLEME BEHOBEN: Robuste Diagnostik und Fehlerbehandlung aktiviert
  * NEU: Unterstützt konfigurierbaren BASE_PATH über Kommandozeilen-Parameter
+ * ERWEITERT: Automatisches Currency Loading nach Signalprovider-Laden
  */
 public class MqlRealMonitor {
     
@@ -34,6 +36,9 @@ public class MqlRealMonitor {
     private FavoritesReader favoritesReader;
     private ScheduledExecutorService scheduler;
     private volatile boolean isRunning = false;
+    
+    // NEU: Currency Data Loader für automatisches Kurse-Laden
+    private CurrencyDataLoader currencyDataLoader;
     
     /**
      * Standard-Konstruktor mit Default-Pfad
@@ -54,6 +59,7 @@ public class MqlRealMonitor {
     /**
      * VERBESSERT: Initialisiert alle Komponenten des MqlRealMonitor mit korrektem Logging
      * NEU: Unterstützt konfigurierbaren BASE_PATH
+     * ERWEITERT: Initialisiert auch CurrencyDataLoader
      * 
      * @param basePath Der zu verwendende Basis-Pfad oder null für Standard
      */
@@ -62,7 +68,7 @@ public class MqlRealMonitor {
             // KRITISCH: Logging-Level für umfassende Diagnostik setzen
             setupDiagnosticLogging();
             
-            LOGGER.info("=== MQL REAL MONITOR INITIALISIERUNG (VERBESSERT) ===");
+            LOGGER.info("=== MQL REAL MONITOR INITIALISIERUNG (VERBESSERT MIT CURRENCY) ===");
             LOGGER.info("Aktiviere umfassende Diagnostik für Chart-Probleme...");
             
             // NEU: Konfiguration mit optionalem BASE_PATH laden
@@ -81,6 +87,9 @@ public class MqlRealMonitor {
             tickDataWriter = new TickDataWriter(config);
             favoritesReader = new FavoritesReader(config);
             
+            // NEU: Currency Data Loader initialisieren
+            initializeCurrencyDataLoader();
+            
             // GUI initialisieren
             gui = new MqlRealMonitorGUI(this);
             
@@ -91,10 +100,27 @@ public class MqlRealMonitor {
             LOGGER.info("Aktuelle Konfiguration:");
             LOGGER.info("  BASE_PATH: " + config.getBasePath());
             LOGGER.info("  Favoriten-Datei: " + config.getFavoritesFile());
+            LOGGER.info("  Currency Loading: " + (currencyDataLoader != null ? "AKTIVIERT" : "DEAKTIVIERT"));
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler bei der Initialisierung", e);
             throw new RuntimeException("Initialisierung fehlgeschlagen", e);
+        }
+    }
+    
+    /**
+     * NEU: Initialisiert den CurrencyDataLoader für automatisches Kurse-Laden
+     */
+    private void initializeCurrencyDataLoader() {
+        try {
+            LOGGER.info("Initialisiere CurrencyDataLoader...");
+            currencyDataLoader = new CurrencyDataLoader(config);
+            LOGGER.info("CurrencyDataLoader erfolgreich initialisiert");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "CurrencyDataLoader konnte nicht initialisiert werden: " + e.getMessage(), e);
+            currencyDataLoader = null;
+            LOGGER.warning("Currency Loading wird nicht verfügbar sein");
         }
     }
     
@@ -135,7 +161,7 @@ public class MqlRealMonitor {
         }
         
         isRunning = true;
-        LOGGER.info("=== STARTE MQL5 SIGNAL MONITORING (VERBESSERT) ===");
+        LOGGER.info("=== STARTE MQL5 SIGNAL MONITORING (VERBESSERT MIT CURRENCY) ===");
         
         // Ersten Download sofort starten
         scheduler.submit(this::performMonitoringCycle);
@@ -149,7 +175,7 @@ public class MqlRealMonitor {
             TimeUnit.MINUTES
         );
         
-        gui.updateStatus("Monitoring gestartet (DIAGNOSEMODUS) - Intervall: " + config.getIntervalMinutes() + " Minuten");
+        gui.updateStatus("Monitoring gestartet (DIAGNOSEMODUS + CURRENCY) - Intervall: " + config.getIntervalMinutes() + " Minuten");
         LOGGER.info("Monitoring erfolgreich gestartet mit Intervall: " + intervalMinutes + " Minuten");
     }
     
@@ -182,11 +208,12 @@ public class MqlRealMonitor {
     }
     
     /**
-     * Führt einen vollständigen Monitoring-Zyklus durch
+     * ERWEITERT: Führt einen vollständigen Monitoring-Zyklus durch
+     * NEU: Lädt automatisch Währungskurse nach dem Laden aller Signalprovider
      */
     private void performMonitoringCycle() {
         try {
-            LOGGER.info("=== MONITORING-ZYKLUS START ===");
+            LOGGER.info("=== MONITORING-ZYKLUS START (MIT CURRENCY LOADING) ===");
             gui.updateStatus("Lade Favoriten...");
             
             // Favoriten laden
@@ -200,7 +227,7 @@ public class MqlRealMonitor {
             LOGGER.info("Gefundene Favoriten: " + favoriteIds.size());
             gui.updateStatus("Starte Downloads für " + favoriteIds.size() + " Provider...");
             
-            // Downloads durchführen
+            // SCHRITT 1: Downloads für alle Signalprovider durchführen
             for (int i = 0; i < favoriteIds.size(); i++) {
                 String id = favoriteIds.get(i);
                 
@@ -248,14 +275,56 @@ public class MqlRealMonitor {
                 }
             }
             
+            // SCHRITT 2: NEU - Automatisches Currency Loading nach allen Signalprovidernale
+            performAutomaticCurrencyLoading();
+            
             gui.updateStatus("Monitoring-Zyklus abgeschlossen - Nächster in " + 
                            config.getIntervalMinutes() + " Minuten");
-            LOGGER.info("=== MONITORING-ZYKLUS ERFOLGREICH ABGESCHLOSSEN ===");
+            LOGGER.info("=== MONITORING-ZYKLUS ERFOLGREICH ABGESCHLOSSEN (INKL. CURRENCY) ===");
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler im Monitoring-Zyklus", e);
             gui.updateStatus("Fehler: " + e.getMessage());
         }
+    }
+    
+    /**
+     * NEU: Führt automatisches Currency Loading nach dem Laden aller Signalprovider durch
+     */
+    private void performAutomaticCurrencyLoading() {
+        // Prüfen ob Currency Loading verfügbar ist
+        if (currencyDataLoader == null) {
+            LOGGER.info("Currency Loading übersprungen - CurrencyDataLoader nicht verfügbar");
+            return;
+        }
+        
+        try {
+            LOGGER.info("=== AUTOMATISCHES CURRENCY LOADING START ===");
+            gui.updateStatus("Lade Währungskurse von MQL5...");
+            
+            // Currency Loading im aktuellen Thread (bereits im Background)
+            String diagnosis = currencyDataLoader.loadCurrencyRatesWithDiagnosis();
+            
+            // Erfolg prüfen
+            boolean success = !diagnosis.toLowerCase().contains("fehler");
+            
+            if (success) {
+                LOGGER.info("Automatisches Currency Loading erfolgreich abgeschlossen");
+                gui.updateStatus("Währungskurse erfolgreich geladen");
+            } else {
+                LOGGER.warning("Automatisches Currency Loading mit Fehlern: " + diagnosis);
+                gui.updateStatus("Currency Loading: Teilweise erfolgreich");
+            }
+            
+            // Kurze Diagnose loggen (ohne UI-Dialog da automatisch)
+            LOGGER.info("Currency Diagnose: " + diagnosis.replaceAll("\n", " | "));
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim automatischen Currency Loading: " + e.getMessage(), e);
+            gui.updateStatus("Currency Loading: Fehler aufgetreten");
+        }
+        
+        LOGGER.info("=== AUTOMATISCHES CURRENCY LOADING ENDE ===");
     }
     
     /**
@@ -279,6 +348,13 @@ public class MqlRealMonitor {
     }
     
     /**
+     * NEU: Gibt den CurrencyDataLoader zurück
+     */
+    public CurrencyDataLoader getCurrencyDataLoader() {
+        return currencyDataLoader;
+    }
+    
+    /**
      * Prüft ob Monitoring läuft
      */
     public boolean isMonitoringActive() {
@@ -291,6 +367,16 @@ public class MqlRealMonitor {
     public void shutdown() {
         LOGGER.info("=== BEENDE MQL REAL MONITOR ===");
         stopMonitoring();
+        
+        // Currency Data Loader bereinigen
+        if (currencyDataLoader != null) {
+            try {
+                currencyDataLoader.cleanup();
+                LOGGER.info("CurrencyDataLoader bereinigt");
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Fehler beim Bereinigen des CurrencyDataLoader", e);
+            }
+        }
         
         if (gui != null) {
             gui.dispose();
@@ -377,6 +463,7 @@ public class MqlRealMonitor {
         System.out.println("  config\\      - Konfigurationsdateien (favorites.txt, etc.)");
         System.out.println("  Realtick\\download\\  - Heruntergeladene HTML-Dateien");
         System.out.println("  Realtick\\tick\\      - Tick-Daten (CSV-Dateien)");
+        System.out.println("  Realtick\\tick_kurse\\ - Währungskurse (XAUUSD, BTCUSD)");
         
         System.exit(0);
     }
@@ -430,9 +517,10 @@ public class MqlRealMonitor {
             // Initialisiere Logging mit File-Logging für bessere Diagnostik
             MqlUtils.initializeLogging(Level.INFO, true);
             
-            LOGGER.info("=== STARTE MQL REAL MONITOR (VERBESSERTE VERSION) ===");
+            LOGGER.info("=== STARTE MQL REAL MONITOR (VERBESSERTE VERSION MIT CURRENCY) ===");
             LOGGER.info("Version: " + MqlUtils.getVersion());
             LOGGER.info("Diagnostik-Modus: AKTIVIERT für Chart-Debugging");
+            LOGGER.info("Currency Loading: AKTIVIERT für automatisches Kurse-Laden");
             LOGGER.info("Kommandozeilen-Argumente: " + java.util.Arrays.toString(args));
             
             // NEU: Kommandozeilen-Parameter parsen
