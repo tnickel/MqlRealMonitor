@@ -140,6 +140,7 @@ public class MqlRealMonitor {
             Logger.getLogger("com.mql.realmonitor.gui.TickDataFilter").setLevel(Level.INFO);
             Logger.getLogger("com.mql.realmonitor.gui.TickChartWindow").setLevel(Level.INFO);
             Logger.getLogger("com.mql.realmonitor.data.TickDataLoader").setLevel(Level.INFO);
+            Logger.getLogger("com.mql.realmonitor.config.IdTranslationManager").setLevel(Level.WARNING);
             
             // Console Handler auch auf INFO Level setzen
             for (var handler : rootLogger.getHandlers()) {
