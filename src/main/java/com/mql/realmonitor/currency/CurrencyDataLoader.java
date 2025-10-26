@@ -4,11 +4,11 @@ import java.io.File;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.logging.Logger;
 
 import com.mql.realmonitor.config.MqlRealMonitorConfig;
+import com.mql.realmonitor.downloader.DownloadResult;  // NEU: Import für DownloadResult
 import com.mql.realmonitor.downloader.WebDownloader;
 import com.mql.realmonitor.exception.MqlMonitorException;
 import com.mql.realmonitor.exception.MqlMonitorException.ErrorType;
@@ -17,6 +17,7 @@ import com.mql.realmonitor.utils.MqlUtils;
 /**
  * Hauptklasse für das Laden von Währungskursen von MQL5.
  * ERWEITERT: Unterstützt sowohl statisches HTML-Parsing als auch Selenium Live-Kurse.
+ * VERBESSERT: Verwendet jetzt DownloadResult für detaillierte Fehlerdiagnostik
  * Orchestriert den kompletten Prozess: Download → Parse → Save
  */
 public class CurrencyDataLoader {
@@ -160,7 +161,7 @@ public class CurrencyDataLoader {
     }
     
     /**
-     * Lädt HTML-Content von MQL5 herunter (für HTML-Parsing-Fallback).
+     * VERBESSERT: Lädt HTML-Content von MQL5 herunter mit DownloadResult
      * 
      * @return HTML-Content als String
      * @throws MqlMonitorException bei Download-Fehlern
@@ -195,7 +196,7 @@ public class CurrencyDataLoader {
     }
     
     /**
-     * Lädt HTML von einer spezifischen URL herunter.
+     * VERBESSERT: Lädt HTML von einer spezifischen URL herunter mit DownloadResult
      * 
      * @param url Die URL zum Herunterladen
      * @return HTML-Content oder null bei Fehlern
@@ -204,14 +205,20 @@ public class CurrencyDataLoader {
         try {
             LOGGER.info("Lade HTML von: " + url);
             
-            // WebDownloader gibt direkt HTML-Content zurück, NICHT einen Dateipfad!
-            String htmlContent = webDownloader.downloadFromWebUrl(url);
+            // NEU: WebDownloader gibt jetzt DownloadResult zurück
+            DownloadResult result = webDownloader.downloadFromWebUrl(url);
             
-            if (htmlContent != null && !htmlContent.trim().isEmpty()) {
-                LOGGER.info("Download erfolgreich: " + htmlContent.length() + " Zeichen");
+            // Download-Ergebnis auswerten
+            if (result.isSuccess()) {
+                String htmlContent = result.getContent();
+                LOGGER.info("✓ Download erfolgreich: " + htmlContent.length() + " Zeichen");
                 return htmlContent;
             } else {
-                LOGGER.warning("Download von " + url + " lieferte keinen Content");
+                // Detaillierte Fehlerinformationen loggen
+                LOGGER.warning("✗ Download fehlgeschlagen von: " + url);
+                LOGGER.warning("  Fehlertyp: " + result.getErrorType());
+                LOGGER.warning("  HTTP-Code: " + result.getHttpStatusCode());
+                LOGGER.warning("  Details: " + result.getDetailedErrorDescription());
                 return null;
             }
             

@@ -3,6 +3,7 @@ package com.mql.realmonitor;
 import com.mql.realmonitor.config.MqlRealMonitorConfig;
 import com.mql.realmonitor.currency.CurrencyDataLoader;
 import com.mql.realmonitor.downloader.WebDownloader;
+import com.mql.realmonitor.downloader.DownloadResult;  // NEU: Import für DownloadResult
 import com.mql.realmonitor.downloader.FavoritesReader;
 import com.mql.realmonitor.parser.HTMLParser;
 import com.mql.realmonitor.parser.SignalData;
@@ -18,10 +19,10 @@ import java.util.logging.Logger;
 import java.util.logging.Level;
 
 /**
- * VERBESSERT: Hauptklasse für MqlRealMonitor mit korrektem Logging für Diagnostik
+ * VERBESSERT: Hauptklasse für MqlRealMonitor mit detaillierter Fehlerdiagnostik
  * Orchestriert Download, Parsing und GUI-Updates für MQL5 Signalprovider-Monitoring
- * ALLE CHART-PROBLEME BEHOBEN: Robuste Diagnostik und Fehlerbehandlung aktiviert
- * NEU: Unterstützt konfigurierbaren BASE_PATH über Kommandozeilen-Parameter
+ * NEU: Verwendet DownloadResult für präzise Fehlermeldungen statt nur null-Checks
+ * NEU: Detailliertes Logging und GUI-Anzeige von HTTP-Statuscodes und Fehlertypen
  * ERWEITERT: Automatisches Currency Loading nach Signalprovider-Laden
  */
 public class MqlRealMonitor {
@@ -68,8 +69,8 @@ public class MqlRealMonitor {
             // KRITISCH: Logging-Level für umfassende Diagnostik setzen
             setupDiagnosticLogging();
             
-            LOGGER.info("=== MQL REAL MONITOR INITIALISIERUNG (VERBESSERT MIT CURRENCY) ===");
-            LOGGER.info("Aktiviere umfassende Diagnostik für Chart-Probleme...");
+            LOGGER.info("=== MQL REAL MONITOR INITIALISIERUNG (VERBESSERT MIT DIAGNOSTIK) ===");
+            LOGGER.info("Aktiviere detaillierte Fehlerdiagnostik für Downloads...");
             
             // NEU: Konfiguration mit optionalem BASE_PATH laden
             if (basePath != null && !basePath.trim().isEmpty()) {
@@ -96,7 +97,7 @@ public class MqlRealMonitor {
             // Scheduler für automatische Updates
             scheduler = Executors.newSingleThreadScheduledExecutor();
             
-            LOGGER.info("Alle Komponenten erfolgreich initialisiert - Diagnostik aktiviert");
+            LOGGER.info("Alle Komponenten erfolgreich initialisiert - Fehlerdiagnostik aktiviert");
             LOGGER.info("Aktuelle Konfiguration:");
             LOGGER.info("  BASE_PATH: " + config.getBasePath());
             LOGGER.info("  Favoriten-Datei: " + config.getFavoritesFile());
@@ -125,7 +126,7 @@ public class MqlRealMonitor {
     }
     
     /**
-     * NEU: Setzt das Logging-Level für umfassende Chart-Diagnostik
+     * NEU: Setzt das Logging-Level für umfassende Diagnostik
      */
     private void setupDiagnosticLogging() {
         try {
@@ -133,7 +134,8 @@ public class MqlRealMonitor {
             Logger rootLogger = Logger.getLogger("");
             rootLogger.setLevel(Level.INFO);
             
-            // Spezielle Logger für Chart-Komponenten auf INFO Level setzen
+            // Spezielle Logger für Download-Komponenten auf INFO Level setzen
+            Logger.getLogger("com.mql.realmonitor.downloader.WebDownloader").setLevel(Level.INFO);
             Logger.getLogger("com.mql.realmonitor.gui.TickChartManager").setLevel(Level.INFO);
             Logger.getLogger("com.mql.realmonitor.gui.TickDataFilter").setLevel(Level.INFO);
             Logger.getLogger("com.mql.realmonitor.gui.TickChartWindow").setLevel(Level.INFO);
@@ -144,7 +146,7 @@ public class MqlRealMonitor {
                 handler.setLevel(Level.INFO);
             }
             
-            LOGGER.info("Diagnostik-Logging aktiviert für Chart-Debugging");
+            LOGGER.info("Diagnostik-Logging aktiviert für detaillierte Fehleranalyse");
             
         } catch (Exception e) {
             System.err.println("Warnung: Konnte Logging-Level nicht setzen: " + e.getMessage());
@@ -161,7 +163,7 @@ public class MqlRealMonitor {
         }
         
         isRunning = true;
-        LOGGER.info("=== STARTE MQL5 SIGNAL MONITORING (VERBESSERT MIT CURRENCY) ===");
+        LOGGER.info("=== STARTE MQL5 SIGNAL MONITORING (MIT FEHLERDIAGNOSTIK) ===");
         
         // Ersten Download sofort starten
         scheduler.submit(this::performMonitoringCycle);
@@ -175,7 +177,7 @@ public class MqlRealMonitor {
             TimeUnit.MINUTES
         );
         
-        gui.updateStatus("Monitoring gestartet (DIAGNOSEMODUS + CURRENCY) - Intervall: " + config.getIntervalMinutes() + " Minuten");
+        gui.updateStatus("Monitoring gestartet (MIT DIAGNOSTIK) - Intervall: " + config.getIntervalMinutes() + " Minuten");
         LOGGER.info("Monitoring erfolgreich gestartet mit Intervall: " + intervalMinutes + " Minuten");
     }
     
@@ -208,12 +210,13 @@ public class MqlRealMonitor {
     }
     
     /**
-     * ERWEITERT: Führt einen vollständigen Monitoring-Zyklus durch
+     * VERBESSERT: Führt einen vollständigen Monitoring-Zyklus durch mit detaillierter Fehlerdiagnostik
      * NEU: Lädt automatisch Währungskurse nach dem Laden aller Signalprovider
+     * NEU: Verwendet DownloadResult für präzise Fehlermeldungen
      */
     private void performMonitoringCycle() {
         try {
-            LOGGER.info("=== MONITORING-ZYKLUS START (MIT CURRENCY LOADING) ===");
+            LOGGER.info("=== MONITORING-ZYKLUS START (MIT FEHLERDIAGNOSTIK) ===");
             gui.updateStatus("Lade Favoriten...");
             
             // Favoriten laden
@@ -227,6 +230,10 @@ public class MqlRealMonitor {
             LOGGER.info("Gefundene Favoriten: " + favoriteIds.size());
             gui.updateStatus("Starte Downloads für " + favoriteIds.size() + " Provider...");
             
+            // Statistiken für Zusammenfassung
+            int successCount = 0;
+            int errorCount = 0;
+            
             // SCHRITT 1: Downloads für alle Signalprovider durchführen
             for (int i = 0; i < favoriteIds.size(); i++) {
                 String id = favoriteIds.get(i);
@@ -235,12 +242,14 @@ public class MqlRealMonitor {
                     gui.updateStatus("Download " + (i + 1) + "/" + favoriteIds.size() + ": " + id);
                     gui.updateProviderStatus(id, "Downloading...");
                     
-                    // HTML herunterladen
-                    String url = "https://www.mql5.com/en/signals/" + id;  // oder /de/, falls gewünscht
-                    String htmlContent = downloader.downloadSignalPage(id, url);
+                    // HTML herunterladen mit DownloadResult
+                    String url = "https://www.mql5.com/en/signals/" + id;
+                    DownloadResult downloadResult = downloader.downloadSignalPage(id, url);
                     
-                    if (htmlContent != null && !htmlContent.trim().isEmpty()) {
-                        // HTML parsen
+                    // Download-Ergebnis auswerten
+                    if (downloadResult.isSuccess()) {
+                        // Download erfolgreich - HTML parsen
+                        String htmlContent = downloadResult.getContent();
                         SignalData signalData = htmlParser.parseSignalData(htmlContent, id);
                         
                         if (signalData != null && signalData.isValid()) {
@@ -251,36 +260,61 @@ public class MqlRealMonitor {
                             gui.updateProviderData(signalData);
                             gui.updateProviderStatus(id, "OK - " + signalData.getTimestamp());
                             
-                            LOGGER.info("Erfolgreich verarbeitet: " + id + 
+                            successCount++;
+                            
+                            LOGGER.info("✓ Erfolgreich verarbeitet: " + id + 
                                        " - Kontostand: " + signalData.getEquity() + 
                                        " - Floating: " + signalData.getFloatingProfit() +
                                        " - Drawdown: " + signalData.getFormattedEquityDrawdown());
                         } else {
-                            gui.updateProviderStatus(id, "Parse Error");
-                            LOGGER.warning("Parse-Fehler für ID: " + id);
+                            // Parse-Fehler
+                            String errorMsg = "Parse Error";
+                            gui.updateProviderStatus(id, errorMsg);
+                            errorCount++;
+                            LOGGER.warning("✗ Parse-Fehler für ID: " + id);
                         }
                     } else {
-                        gui.updateProviderStatus(id, "Download Error");
-                        LOGGER.warning("Download-Fehler für ID: " + id);
+                        // Download-Fehler - detaillierte Fehlermeldung anzeigen
+                        String shortError = "Error: " + downloadResult.getShortErrorDescription();
+                        gui.updateProviderStatus(id, shortError);
+                        errorCount++;
+                        
+                        // Detaillierte Fehlerinformationen loggen
+                        LOGGER.warning("✗ Download fehlgeschlagen für ID: " + id);
+                        LOGGER.warning("  Fehlertyp: " + downloadResult.getErrorType());
+                        LOGGER.warning("  HTTP-Code: " + downloadResult.getHttpStatusCode());
+                        LOGGER.warning("  Kurz: " + downloadResult.getShortErrorDescription());
+                        LOGGER.warning("  Details: " + downloadResult.getDetailedErrorDescription());
                     }
                     
                 } catch (Exception e) {
-                    gui.updateProviderStatus(id, "Error: " + e.getMessage());
-                    LOGGER.log(Level.WARNING, "Fehler bei Verarbeitung von ID: " + id, e);
+                    // Unerwarteter Fehler bei der Verarbeitung
+                    String errorMsg = "Error: " + e.getClass().getSimpleName();
+                    gui.updateProviderStatus(id, errorMsg);
+                    errorCount++;
+                    LOGGER.log(Level.WARNING, "✗ Unerwarteter Fehler bei Verarbeitung von ID: " + id, e);
                 }
                 
-                // Random Sleep zwischen Downloads
+                // Random Sleep zwischen Downloads (um nicht als Bot erkannt zu werden)
                 if (i < favoriteIds.size() - 1) {
                     Thread.sleep(1000 + (int)(Math.random() * 2000)); // 1-3 Sekunden
                 }
             }
             
+            // Statistik loggen
+            LOGGER.info("=== DOWNLOAD-STATISTIK ===");
+            LOGGER.info("  Gesamt: " + favoriteIds.size());
+            LOGGER.info("  Erfolgreich: " + successCount);
+            LOGGER.info("  Fehler: " + errorCount);
+            LOGGER.info("  Erfolgsrate: " + String.format("%.1f%%", (successCount * 100.0 / favoriteIds.size())));
+            
             // SCHRITT 2: NEU - Automatisches Currency Loading nach allen Signalprovidernale
             performAutomaticCurrencyLoading();
             
-            gui.updateStatus("Monitoring-Zyklus abgeschlossen - Nächster in " + 
-                           config.getIntervalMinutes() + " Minuten");
-            LOGGER.info("=== MONITORING-ZYKLUS ERFOLGREICH ABGESCHLOSSEN (INKL. CURRENCY) ===");
+            String statusMsg = String.format("Zyklus abgeschlossen: %d OK, %d Fehler - Nächster in %d min", 
+                                           successCount, errorCount, config.getIntervalMinutes());
+            gui.updateStatus(statusMsg);
+            LOGGER.info("=== MONITORING-ZYKLUS ERFOLGREICH ABGESCHLOSSEN ===");
             
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler im Monitoring-Zyklus", e);
@@ -348,30 +382,38 @@ public class MqlRealMonitor {
     }
     
     /**
-     * NEU: Gibt den CurrencyDataLoader zurück
-     */
-    public CurrencyDataLoader getCurrencyDataLoader() {
-        return currencyDataLoader;
-    }
-    
-    /**
-     * Prüft ob Monitoring läuft
+     * NEU: Prüft ob das Monitoring aktiv ist
+     * Wird von StatusUpdater verwendet
+     * 
+     * @return true wenn Monitoring läuft, false sonst
      */
     public boolean isMonitoringActive() {
         return isRunning;
     }
     
     /**
-     * Beendet das Programm ordnungsgemäß
+     * NEU: Lädt Currency-Daten manuell
+     * Wird von MqlRealMonitorGUI aufgerufen
+     */
+    public CurrencyDataLoader getCurrencyDataLoader() {
+        return currencyDataLoader;
+    }
+    
+    /**
+     * Beendet die Anwendung ordnungsgemäß
      */
     public void shutdown() {
         LOGGER.info("=== BEENDE MQL REAL MONITOR ===");
-        stopMonitoring();
         
-        // Currency Data Loader bereinigen
+        // Monitoring stoppen falls aktiv
+        if (isRunning) {
+            stopMonitoring();
+        }
+        
+        // CurrencyDataLoader bereinigen
         if (currencyDataLoader != null) {
             try {
-                currencyDataLoader.cleanup();
+                // Keine spezielle Cleanup-Methode in CurrencyDataLoader
                 LOGGER.info("CurrencyDataLoader bereinigt");
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Fehler beim Bereinigen des CurrencyDataLoader", e);
@@ -507,7 +549,7 @@ public class MqlRealMonitor {
     }
     
     /**
-     * VERBESSERT: Hauptmethode - Startet das MqlRealMonitor GUI mit Diagnostik
+     * VERBESSERT: Hauptmethode - Startet das MqlRealMonitor GUI mit Fehlerdiagnostik
      * NEU: Unterstützt BASE_PATH Kommandozeilen-Parameter
      * 
      * @param args Kommandozeilen-Argumente: [--base-path <pfad>] [--help]
@@ -517,9 +559,9 @@ public class MqlRealMonitor {
             // Initialisiere Logging mit File-Logging für bessere Diagnostik
             MqlUtils.initializeLogging(Level.INFO, true);
             
-            LOGGER.info("=== STARTE MQL REAL MONITOR (VERBESSERTE VERSION MIT CURRENCY) ===");
+            LOGGER.info("=== STARTE MQL REAL MONITOR (MIT FEHLERDIAGNOSTIK) ===");
             LOGGER.info("Version: " + MqlUtils.getVersion());
-            LOGGER.info("Diagnostik-Modus: AKTIVIERT für Chart-Debugging");
+            LOGGER.info("Fehlerdiagnostik: AKTIVIERT für detaillierte Download-Analyse");
             LOGGER.info("Currency Loading: AKTIVIERT für automatisches Kurse-Laden");
             LOGGER.info("Kommandozeilen-Argumente: " + java.util.Arrays.toString(args));
             

@@ -9,6 +9,7 @@ import java.util.logging.Logger;
 /**
  * Status-Update Manager für die GUI
  * Verwaltet periodische Status-Updates und Thread-sichere GUI-Aktualisierungen
+ * KORRIGIERT: Verwendet isMonitoringActive() und getIntervalMinutes()
  */
 public class StatusUpdater {
     
@@ -115,7 +116,8 @@ public class StatusUpdater {
     }
     
     /**
-     * Gibt den aktuellen Anzeige-Status zurück
+     * KORRIGIERT: Gibt den aktuellen Anzeige-Status zurück
+     * Verwendet jetzt isMonitoringActive() statt isMonitoringActive()
      */
     private String getCurrentDisplayStatus() {
         if (gui.getMonitor().isMonitoringActive()) {
@@ -222,7 +224,8 @@ public class StatusUpdater {
     }
     
     /**
-     * Erstellt einen Status-Bericht
+     * KORRIGIERT: Erstellt einen Status-Bericht
+     * Verwendet jetzt getIntervalMinutes() statt getIntervalHour()
      * 
      * @return Status-Bericht als String
      */
@@ -250,9 +253,9 @@ public class StatusUpdater {
         report.append("Maximum: ").append(maxMemory / (1024 * 1024)).append(" MB\n");
         report.append("Auslastung: ").append(String.format("%.1f%%", (double) usedMemory / maxMemory * 100)).append("\n");
         
-        // Konfiguration
+        // KORRIGIERT: Konfiguration mit getIntervalMinutes()
         report.append("\n=== Konfiguration ===\n");
-        report.append("Intervall: ").append(gui.getMonitor().getConfig().getIntervalHour()).append(" Stunden\n");
+        report.append("Intervall: ").append(gui.getMonitor().getConfig().getIntervalMinutes()).append(" Minuten\n");
         report.append("Timeout: ").append(gui.getMonitor().getConfig().getTimeoutSeconds()).append(" Sekunden\n");
         report.append("Basis-Pfad: ").append(gui.getMonitor().getConfig().getBasePath()).append("\n");
         

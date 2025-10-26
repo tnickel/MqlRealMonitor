@@ -1,6 +1,6 @@
 # MqlRealMonitor - Klassenübersicht
-# Generated: 2025-08-27
-# Version: 1.2.1
+# Generated: 2025-10-26
+# Version: 1.3.0
 #
 # PROJECT DESCRIPTION:
 # MqlRealMonitor ist eine Java-Desktop-Anwendung für das Monitoring von MQL5 Signal-Providern.
@@ -16,6 +16,7 @@
 # - NEU: Wochen- und Monatsgewinn-Berechnung basierend auf historischen Tick-Daten
 # - NEU: Asynchrone Chart-Fenster-Erstellung - behebt 60-Sekunden UI-Blocking
 # - NEU: Currency-Loading für XAUUSD/BTCUSD von MQL5 (v1.2.1)
+# - NEU: Detaillierte Download-Fehlerdiagnostik mit HTTP-Statuscodes (v1.3.0)
 # - Direkter Browser-Link zu MQL5-Signalprovider-Seiten
 # - Wiederverwendbare Chart-Komponenten und modulare GUI-Architektur
 #
@@ -33,6 +34,7 @@
 # - NEU: Automatische Profit-Berechnungen für Wochen- und Monatsgewinne
 # - NEU: Asynchrone Chart-Architektur verhindert UI-Thread-Blocking
 # - NEU: Currency-Funktionalität für Währungskurse (XAUUSD, BTCUSD)
+# - NEU: Strukturierte Download-Fehlerbehandlung mit DownloadResult (v1.3.0)
 # - Robuste Fehlerbehandlung und umfassende Diagnostik
 # - Thread-sichere GUI-Updates und automatische Refresh-Zyklen
 # 
@@ -40,7 +42,7 @@
 # ========================================================================
 
 ## Main Package
-com.mql.realmonitor.MqlRealMonitor | Hauptklasse für MQL5 Signal-Monitoring. Orchestriert Download, Parsing und GUI-Updates für alle Signalprovider.
+com.mql.realmonitor.MqlRealMonitor | Hauptklasse für MQL5 Signal-Monitoring. Orchestriert Download, Parsing und GUI-Updates für alle Signalprovider. VERBESSERT: Verwendet DownloadResult für präzise Fehlermeldungen und Download-Statistiken (v1.3.0).
 
 ## Configuration
 com.mql.realmonitor.config.MqlRealMonitorConfig | Konfigurationsverwaltung für alle konfigurierbaren Parameter, Pfade und Einstellungen. Verwaltet Intervalle in Minuten.
@@ -48,7 +50,7 @@ com.mql.realmonitor.config.IdTranslationManager | translation tabelle id zu Sign
 
 ## Currency Package (NEU in Version 1.2.1)
 com.mql.realmonitor.currency.CurrencyData | Model-Klasse für Währungskursdaten (Symbol, Kurs, Zeitstempel). Unterstützt CSV-Serialisierung für XAUUSD/BTCUSD.
-com.mql.realmonitor.currency.CurrencyDataLoader | Hauptklasse für das Laden von Währungskursen von MQL5. Orchestriert Download, Parse und Save-Prozess für Currency-Daten.
+com.mql.realmonitor.currency.CurrencyDataLoader | Hauptklasse für das Laden von Währungskursen von MQL5. Orchestriert Download, Parse und Save-Prozess für Currency-Daten. VERBESSERT: Nutzt DownloadResult für detaillierte Fehlerdiagnostik (v1.3.0).
 com.mql.realmonitor.currency.CurrencyDataWriter | Writer für Kursdaten in CSV-Dateien im tick_kurse Verzeichnis. Verwaltet Dateierstellung und Append-Operations.
 com.mql.realmonitor.currency.CurrencyParser | Parser für XAUUSD/BTCUSD Kurse aus MQL5 HTML-Content. Verwendet Regex-Patterns für flexibles HTML-Parsing.
 
@@ -57,7 +59,8 @@ com.mql.realmonitor.data.TickDataLoader | Lädt und parst Tick-Daten aus CSV-Dat
 
 ## Download Layer
 com.mql.realmonitor.downloader.FavoritesReader | Liest und verwaltet die favorites.txt Datei mit Signal-IDs. Unterstützt Caching und Validierung.
-com.mql.realmonitor.downloader.WebDownloader | HTTP-Downloader für MQL5 Signalprovider-Seiten und Currency-URLs. Verwaltet Downloads und lokale HTML-Datei-Speicherung.
+com.mql.realmonitor.downloader.WebDownloader | HTTP-Downloader für MQL5 Signalprovider-Seiten und Currency-URLs. Verwaltet Downloads und lokale HTML-Datei-Speicherung. VERBESSERT: Gibt DownloadResult mit HTTP-Statuscode und detaillierten Fehlerinformationen zurück (v1.3.0).
+com.mql.realmonitor.downloader.DownloadResult | NEU: Strukturierte Rückgabe für Download-Operationen. Enthält Erfolgs-Status, Content, HTTP-Statuscode, Fehlertyp und detaillierte Fehlermeldungen für präzise Fehlerdiagnostik (v1.3.0).
 
 ## Exception Handling
 com.mql.realmonitor.exception.MqlMonitorException | Spezifische Exception-Klasse für alle MQL-Fehler. Bietet kategorisierte Fehlertypen und benutzerfreundliche Nachrichten.
@@ -67,7 +70,7 @@ com.mql.realmonitor.gui.MqlRealMonitorGUI | Haupt-GUI-Klasse mit Provider-Tabell
 com.mql.realmonitor.gui.SignalProviderTable | Refactored Provider-Tabelle mit modularer Architektur. ERWEITERT: WeeklyProfit und MonthlyProfit Spalten für Gewinn-Berechnungen.
 com.mql.realmonitor.gui.ProviderTableHelper | Hilfsfunktionen für SignalProviderTable. ERWEITERT: Support für Profit-Spalten mit Farbkodierung und numerischer Sortierung.
 com.mql.realmonitor.gui.SignalProviderContextMenu | Kontextmenü für Provider-Tabelle. ASYNCHRON: Doppelklick-Handler verhindert UI-Blocking. MQL5-Website-Link für Browser-Öffnung.
-com.mql.realmonitor.gui.StatusUpdater | Verwaltet periodische Status-Updates und Thread-sichere GUI-Aktualisierungen. Memory-Monitoring und Laufzeit-Informationen.
+com.mql.realmonitor.gui.StatusUpdater | Verwaltet periodische Status-Updates und Thread-sichere GUI-Aktualisierungen. Memory-Monitoring und Laufzeit-Informationen. KORRIGIERT: Verwendet isMonitoringActive() und getIntervalMinutes() (v1.3.0).
 
 ## GUI Layer - Chart System
 com.mql.realmonitor.gui.ChartImageRenderer | Rendert JFreeCharts zu SWT-Images für beide Charts (Drawdown + Profit). Verwaltet Chart-zu-Image Konvertierung.
@@ -106,7 +109,7 @@ com.mql.realmonitor.utils.PeriodProfitCalculator | Berechnet Wochen- und Monatsg
 # ARCHITECTURE SUMMARY
 # ========================================================================
 
-## Key Architectural Improvements (Version 1.2.1):
+## Key Architectural Improvements (Version 1.3.0):
 - Refactored TickChartWindow: Split into 4 modular classes (Window, Manager, Toolbar, Panels)
 - Reusable Chart Panels: EquityDrawdownChartPanel and ProfitDevelopmentChartPanel can be used in multiple windows
 - Dual Chart System: Both Drawdown and Profit charts managed by unified TickChartManager
@@ -115,6 +118,7 @@ com.mql.realmonitor.utils.PeriodProfitCalculator | Berechnet Wochen- und Monatsg
 - NEU: Profit Analysis: Automatic calculation of weekly and monthly profit percentages
 - NEU: ASYNC ARCHITECTURE: AsyncTickChartWindow verhindert 60-Sekunden UI-Blocking komplett
 - NEU: CURRENCY FUNCTIONALITY: Complete currency data loading system for XAUUSD/BTCUSD from MQL5
+- NEU: DOWNLOAD DIAGNOSTICS: DownloadResult mit HTTP-Statuscodes und strukturierter Fehlerbehandlung (v1.3.0)
 - Robust Data Handling: Improved error handling and diagnostics throughout
 
 ## Package Structure:
@@ -122,12 +126,22 @@ com.mql.realmonitor.utils.PeriodProfitCalculator | Berechnet Wochen- und Monatsg
 - Config: Configuration management
 - Currency: Currency data loading and processing (NEU in v1.2.1)
 - Data: Tick data loading and processing
-- Downloader: Web downloading and favorites management
+- Downloader: Web downloading and favorites management (ERWEITERT: DownloadResult v1.3.0)
 - Exception: Centralized error handling
 - GUI: User interface (core, charts, windows, utilities)
 - Parser: HTML parsing and data models
 - TickData: CSV file writing and reading
 - Utils: General utility functions (including profit calculations)
+
+## Recent Enhancements (Version 1.3.0):
+- NEU: DownloadResult-Klasse für strukturierte Download-Fehlerbehandlung
+- NEU: HTTP-Statuscode-Anzeige in GUI-Status (Error: HTTP 502, Error: HTTP 403, etc.)
+- NEU: Detailliertes Error-Logging mit Fehlertyp, HTTP-Code und Fehlermeldung
+- NEU: Download-Statistiken im Monitoring-Zyklus (Erfolgsrate, Anzahl Erfolge/Fehler)
+- VERBESSERT: WebDownloader gibt DownloadResult statt String/null zurück
+- VERBESSERT: MqlRealMonitor nutzt DownloadResult für präzise Fehlermeldungen
+- VERBESSERT: CurrencyDataLoader mit DownloadResult-Integration
+- KORRIGIERT: StatusUpdater verwendet isMonitoringActive() und getIntervalMinutes()
 
 ## Recent Enhancements (Version 1.2.1):
 - NEU: Currency Package - Komplette Währungskurs-Funktionalität für XAUUSD/BTCUSD
@@ -137,19 +151,6 @@ com.mql.realmonitor.utils.PeriodProfitCalculator | Berechnet Wochen- und Monatsg
 - ERWEITERT: WebDownloader um downloadFromWebUrl() für allgemeine URL-Downloads
 - ERWEITERT: MqlRealMonitorGUI um Currency-Button und Exception-Handling
 - KORRIGIERT: Vollständige Exception-Behandlung für Currency-Initialisierung
-
-## Currency Architecture (NEU in Version 1.2.1):
-```
-User-Klick "Kurse laden" → CurrencyDataLoader.loadCurrencyRatesWithDiagnosis()
-                         ↓
-WebDownloader.downloadFromWebUrl(MQL5_URL) → HTML-Download
-                         ↓
-CurrencyParser.parseRates(htmlContent) → XAUUSD/BTCUSD Extraktion
-                         ↓
-CurrencyDataWriter.writeCurrencyData() → CSV-Speicherung in tick_kurse/
-                         ↓
-Erfolg/Fehler-Dialog → Thread-sichere GUI-Updates
-```
 
 ## Threading-Model (ERWEITERT):
 - UI-Thread: Haupt-GUI, Loading-Fenster, User-Interaktion, Currency-Button-Handling
@@ -163,16 +164,17 @@ Erfolg/Fehler-Dialog → Thread-sichere GUI-Updates
 2. Provider Name
 3. Status
 4. Kontostand
-5. Floating Profit
-6. Equity Drawdown
-7. Gesamtwert
-8. WeeklyProfit (Currency)
-9. MonthlyProfit (Currency)
-10. WeeklyProfit (Percent)
-11. MonthlyProfit (Percent) 
-12. Währung
-13. Letzte Aktualisierung
-14. Änderung
+5. Profit
+6. Floating Profit
+7. Total Value Drawdown
+8. Gesamtwert
+9. Weekly Profit (Currency)
+10. Monthly Profit (Currency)
+11. WeeklyProfit (Percent)
+12. MonthlyProfit (Percent) 
+13. Währung
+14. Letzte Aktualisierung
+15. Änderung
 
 ## Performance Improvements:
 - UI-Blocking: Von 60 Sekunden auf 0ms reduziert
@@ -187,10 +189,11 @@ Erfolg/Fehler-Dialog → Thread-sichere GUI-Updates
 - realtick/download_mql5/ - Download-Cache für MQL5 Currency-HTML-Seiten
 - xauusd.txt, btcusd.txt - CSV-Dateien mit Zeitstempel, Symbol, Kurs
 
-## Total Classes: 31 (war 27 - +4 Currency Classes)
+## Total Classes: 32 (war 31 - +1 DownloadResult)
 ## LOC Reduction: TickChartWindow reduced from >1000 to <100 lines through refactoring
 ## Reusability: Chart panels can now be reused across different windows
 ## NEW: Automated profit calculations for performance tracking
 ## NEW: Complete async architecture eliminates UI blocking
 ## NEW: Background chart creation with user-friendly loading experience
 ## NEW: Currency data loading system for XAUUSD/BTCUSD from MQL5
+## NEW: Structured download error handling with HTTP status codes (v1.3.0)

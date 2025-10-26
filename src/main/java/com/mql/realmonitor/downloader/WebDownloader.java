@@ -4,6 +4,7 @@ import com.mql.realmonitor.config.MqlRealMonitorConfig;
 
 import java.io.*;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,6 +16,9 @@ import java.util.logging.Level;
 /**
  * Web-Downloader für MQL5 Signalprovider-Seiten
  * Verwaltet HTTP-Downloads und lokale HTML-Dateien
+ * 
+ * VERBESSERT: Detaillierte Fehlerdiagnostik mit DownloadResult
+ * NEU: Strukturierte Rückgabe von Download-Status, Content und Fehlerdetails
  */
 public class WebDownloader {
     
@@ -27,50 +31,57 @@ public class WebDownloader {
     }
     
     /**
-     * Lädt eine Signalprovider-Seite herunter und speichert sie lokal
+     * VERBESSERT: Lädt eine Signalprovider-Seite herunter mit detaillierter Fehlerdiagnostik
      * 
      * @param signalId Die ID des Signalproviders
-     * @return Der HTML-Inhalt oder null bei Fehlern
+     * @param url Die URL zum Herunterladen
+     * @return DownloadResult mit Content oder detaillierten Fehlerinformationen
      */
-    public String downloadSignalPage(String signalId, String url) {
+    public DownloadResult downloadSignalPage(String signalId, String url) {
+        // Parameter-Validierung
         if (signalId == null || signalId.trim().isEmpty()) {
             LOGGER.warning("Signal-ID ist leer");
-            return null;
+            return DownloadResult.invalidParameter("Signal-ID ist leer");
         }
         
         if (url == null || url.trim().isEmpty()) {
-            LOGGER.warning("URL ist leer");
-            return null;
+            LOGGER.warning("URL ist leer für Signal-ID: " + signalId);
+            return DownloadResult.invalidParameter("URL ist leer");
         }
         
         try {
-            LOGGER.info("Lade Seite: " + signalId + " von " + url);
+            LOGGER.info("=== DOWNLOAD START: " + signalId + " ===");
+            LOGGER.info("URL: " + url);
             
-            // HTML-Inhalt herunterladen
-            String htmlContent = downloadFromUrl(url);
+            // Download durchführen
+            DownloadResult result = downloadFromUrl(url);
             
-            if (htmlContent != null && !htmlContent.trim().isEmpty()) {
-                LOGGER.info("Download erfolgreich: " + signalId + " (" + htmlContent.length() + " Zeichen)");
-                return htmlContent;
+            // Ergebnis auswerten und loggen
+            if (result.isSuccess()) {
+                LOGGER.info("✓ Download erfolgreich: " + signalId + 
+                           " (" + result.getContent().length() + " Zeichen)");
             } else {
-                LOGGER.warning("Leerer HTML-Inhalt für: " + signalId);
-                return null;
+                LOGGER.warning("✗ Download fehlgeschlagen: " + signalId);
+                LOGGER.warning("  Fehlertyp: " + result.getErrorType());
+                LOGGER.warning("  HTTP-Code: " + result.getHttpStatusCode());
+                LOGGER.warning("  Details: " + result.getErrorMessage());
             }
             
+            return result;
+            
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Fehler beim Download von: " + signalId, e);
-            return null;
+            LOGGER.log(Level.WARNING, "✗ Unerwarteter Fehler beim Download von: " + signalId, e);
+            return DownloadResult.exception(e, url);
         }
     }
     
     /**
-     * Lädt Inhalt von einer URL herunter
-     * ERWEITERT: Mit Anti-Cache Headers für aktuelle Kursdaten
+     * VERBESSERT: Lädt Inhalt von einer URL herunter mit detaillierter Fehlerbehandlung
      * 
      * @param urlString Die URL zum Herunterladen
-     * @return Der Inhalt als String oder null bei Fehlern
+     * @return DownloadResult mit Content oder Fehlerdetails
      */
-    private String downloadFromUrl(String urlString) throws IOException {
+    private DownloadResult downloadFromUrl(String urlString) {
         HttpURLConnection connection = null;
         
         try {
@@ -89,19 +100,19 @@ public class WebDownloader {
             connection.setRequestProperty("Accept-Encoding", "gzip, deflate");
             connection.setRequestProperty("Connection", "keep-alive");
             
-            // NEU: Anti-Cache Headers für aktuelle Kursdaten
+            // Anti-Cache Headers für aktuelle Daten
             connection.setRequestProperty("Cache-Control", "no-cache, no-store, must-revalidate");
             connection.setRequestProperty("Pragma", "no-cache");
             connection.setRequestProperty("Expires", "0");
             
-            // NEU: Zusätzliche Headers um nicht wie Bot zu wirken
+            // Zusätzliche Headers um nicht wie Bot zu wirken
             connection.setRequestProperty("Upgrade-Insecure-Requests", "1");
             connection.setRequestProperty("Sec-Fetch-Dest", "document");
             connection.setRequestProperty("Sec-Fetch-Mode", "navigate");
             connection.setRequestProperty("Sec-Fetch-Site", "none");
             connection.setRequestProperty("Sec-Fetch-User", "?1");
             
-            // NEU: Random Delay um nicht wie Bot zu wirken (nur für Currency-URLs)
+            // Random Delay für Currency-URLs
             if (urlString.contains("mql5.com") && urlString.contains("quotes")) {
                 try {
                     Thread.sleep(1000 + (int)(Math.random() * 2000)); // 1-3 Sekunden
@@ -112,26 +123,67 @@ public class WebDownloader {
             }
             
             // Verbindung herstellen
+            LOGGER.fine("Verbinde zu: " + urlString);
             connection.connect();
             
+            // HTTP-Response-Code prüfen
             int responseCode = connection.getResponseCode();
+            LOGGER.info("HTTP Response Code: " + responseCode + " für " + urlString);
             
             if (responseCode == HttpURLConnection.HTTP_OK) {
+                // Content lesen
                 String content = readResponseContent(connection);
+                
+                // Content-Validierung
+                if (content == null || content.trim().isEmpty()) {
+                    LOGGER.warning("Leerer Content trotz HTTP 200 OK");
+                    return DownloadResult.emptyContent(urlString);
+                }
                 
                 // Debug-Logging für Currency-URLs
                 if (urlString.contains("mql5.com") && urlString.contains("quotes")) {
-                    LOGGER.info("Currency-URL erfolgreich geladen: " + urlString);
-                    LOGGER.info("Content-Länge: " + (content != null ? content.length() : 0) + " Zeichen");
+                    LOGGER.info("Currency-URL erfolgreich geladen");
+                    LOGGER.info("Content-Länge: " + content.length() + " Zeichen");
                     LOGGER.info("Response Headers: Cache-Control=" + connection.getHeaderField("Cache-Control"));
                     LOGGER.info("Response Headers: Last-Modified=" + connection.getHeaderField("Last-Modified"));
                 }
                 
-                return content;
+                return DownloadResult.success(content);
+                
             } else {
-                LOGGER.warning("HTTP-Fehler " + responseCode + " für URL: " + urlString);
-                return null;
+                // HTTP-Fehler mit detailliertem Logging
+                String responseMessage = connection.getResponseMessage();
+                LOGGER.warning("HTTP-Fehler: " + responseCode + " " + responseMessage);
+                LOGGER.warning("URL: " + urlString);
+                
+                // Versuche Error-Stream zu lesen für mehr Details
+                try {
+                    InputStream errorStream = connection.getErrorStream();
+                    if (errorStream != null) {
+                        String errorBody = new BufferedReader(new InputStreamReader(errorStream))
+                            .lines().limit(5).reduce("", (a, b) -> a + b + "\n");
+                        if (!errorBody.isEmpty()) {
+                            LOGGER.warning("Error Response Body (first 5 lines): " + errorBody);
+                        }
+                    }
+                } catch (Exception e) {
+                    // Ignoriere Fehler beim Lesen des Error-Streams
+                }
+                
+                return DownloadResult.httpError(responseCode, urlString);
             }
+            
+        } catch (SocketTimeoutException e) {
+            LOGGER.log(Level.WARNING, "Timeout beim Download von: " + urlString, e);
+            return DownloadResult.timeout(urlString);
+            
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "IOException beim Download von: " + urlString, e);
+            return DownloadResult.exception(e, urlString);
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Unerwartete Exception beim Download von: " + urlString, e);
+            return DownloadResult.exception(e, urlString);
             
         } finally {
             if (connection != null) {
@@ -311,33 +363,33 @@ public class WebDownloader {
     }
     
     /**
-     * Lädt Inhalt von einer beliebigen URL herunter (öffentliche Methode)
+     * VERBESSERT: Lädt Inhalt von einer beliebigen URL herunter mit DownloadResult
      * 
      * @param url Die URL zum Herunterladen
-     * @return HTML-Content oder null bei Fehlern
+     * @return DownloadResult mit Content oder Fehlerdetails
      */
-    public String downloadFromWebUrl(String url) {
+    public DownloadResult downloadFromWebUrl(String url) {
         if (url == null || url.trim().isEmpty()) {
             LOGGER.warning("URL ist leer");
-            return null;
+            return DownloadResult.invalidParameter("URL ist leer");
         }
         
         try {
             LOGGER.info("Lade URL: " + url);
             
-            String htmlContent = downloadFromUrl(url);
+            DownloadResult result = downloadFromUrl(url);
             
-            if (htmlContent != null && !htmlContent.trim().isEmpty()) {
-                LOGGER.info("URL erfolgreich geladen: " + htmlContent.length() + " Zeichen");
-                return htmlContent;
+            if (result.isSuccess()) {
+                LOGGER.info("URL erfolgreich geladen: " + result.getContent().length() + " Zeichen");
             } else {
-                LOGGER.warning("Leerer HTML-Inhalt von URL: " + url);
-                return null;
+                LOGGER.warning("Download fehlgeschlagen: " + result.getDetailedErrorDescription());
             }
+            
+            return result;
             
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Fehler beim Download der URL: " + url, e);
-            return null;
+            return DownloadResult.exception(e, url);
         }
     }
 }
