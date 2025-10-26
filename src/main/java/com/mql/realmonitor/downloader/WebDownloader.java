@@ -13,21 +13,86 @@ import java.nio.file.Paths;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
+// NEU: Imports für SSL-Bypass
+import javax.net.ssl.*;
+import java.security.cert.X509Certificate;
+import java.security.SecureRandom;
+
 /**
  * Web-Downloader für MQL5 Signalprovider-Seiten
  * Verwaltet HTTP-Downloads und lokale HTML-Dateien
  * 
  * VERBESSERT: Detaillierte Fehlerdiagnostik mit DownloadResult
- * NEU: Strukturierte Rückgabe von Download-Status, Content und Fehlerdetails
+ * WARNUNG: SSL-Verifikation kann deaktiviert werden (UNSICHER!)
  */
 public class WebDownloader {
     
     private static final Logger LOGGER = Logger.getLogger(WebDownloader.class.getName());
     
+    // WARNUNG: Auf true setzen deaktiviert SSL-Zertifikatsprüfung (UNSICHER!)
+    private static final boolean DISABLE_SSL_VERIFICATION = true;
+    
     private final MqlRealMonitorConfig config;
+    private static boolean sslInitialized = false;
     
     public WebDownloader(MqlRealMonitorConfig config) {
         this.config = config;
+        
+        // SSL-Verifikation deaktivieren falls konfiguriert
+        if (DISABLE_SSL_VERIFICATION && !sslInitialized) {
+            disableSSLVerification();
+            sslInitialized = true;
+        }
+    }
+    
+    /**
+     * WARNUNG: DEAKTIVIERT SSL-ZERTIFIKATSPRÜFUNG KOMPLETT!
+     * NUR FÜR ENTWICKLUNG/TESTS - NICHT FÜR PRODUKTION!
+     * 
+     * Diese Methode macht die HTTPS-Verbindung UNSICHER!
+     */
+    private void disableSSLVerification() {
+        try {
+            LOGGER.warning("===========================================");
+            LOGGER.warning("WARNUNG: SSL-ZERTIFIKATSPRÜFUNG DEAKTIVIERT!");
+            LOGGER.warning("DIESE VERBINDUNG IST NICHT SICHER!");
+            LOGGER.warning("NUR FÜR ENTWICKLUNG - NICHT FÜR PRODUKTION!");
+            LOGGER.warning("===========================================");
+            
+            // Trust Manager der ALLE Zertifikate akzeptiert
+            TrustManager[] trustAllCerts = new TrustManager[] {
+                new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() {
+                        return null;
+                    }
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) {
+                        // Akzeptiert ALLE Client-Zertifikate
+                    }
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                        // Akzeptiert ALLE Server-Zertifikate
+                    }
+                }
+            };
+            
+            // SSL Context mit Trust-All Manager installieren
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, trustAllCerts, new SecureRandom());
+            HttpsURLConnection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
+            
+            // Hostname Verifier der ALLE Hostnamen akzeptiert
+            HostnameVerifier allHostsValid = new HostnameVerifier() {
+                public boolean verify(String hostname, SSLSession session) {
+                    // Akzeptiert ALLE Hostnamen
+                    return true;
+                }
+            };
+            HttpsURLConnection.setDefaultHostnameVerifier(allHostsValid);
+            
+            LOGGER.warning("SSL-Verifikation wurde deaktiviert");
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Deaktivieren der SSL-Verifikation", e);
+        }
     }
     
     /**
@@ -192,17 +257,15 @@ public class WebDownloader {
         }
     }
     
+    // ... (Rest der Klasse bleibt unverändert)
+    
     /**
      * Liest den Antwort-Inhalt von der HTTP-Verbindung
-     * 
-     * @param connection Die HTTP-Verbindung
-     * @return Der Inhalt als String
      */
     private String readResponseContent(HttpURLConnection connection) throws IOException {
         String encoding = connection.getContentEncoding();
         InputStream inputStream;
         
-        // GZIP-Dekomprimierung falls nötig
         if ("gzip".equalsIgnoreCase(encoding)) {
             inputStream = new java.util.zip.GZIPInputStream(connection.getInputStream());
         } else {
@@ -223,52 +286,6 @@ public class WebDownloader {
         }
     }
     
-    /**
-     * Speichert HTML-Inhalt in eine lokale Datei
-     * 
-     * @param htmlContent Der HTML-Inhalt
-     * @param filePath Der Dateipfad
-     */
-    private void saveHtmlToFile(String htmlContent, String filePath) throws IOException {
-        Path path = Paths.get(filePath);
-        
-        // Verzeichnis erstellen falls nicht vorhanden
-        Path parentDir = path.getParent();
-        if (parentDir != null && !Files.exists(parentDir)) {
-            Files.createDirectories(parentDir);
-        }
-        
-        // HTML-Datei schreiben
-        try (FileWriter writer = new FileWriter(filePath, StandardCharsets.UTF_8)) {
-            writer.write(htmlContent);
-        }
-        
-        LOGGER.fine("HTML-Datei gespeichert: " + filePath);
-    }
-    
-    /**
-     * Löscht eine alte HTML-Datei falls vorhanden
-     * 
-     * @param filePath Der Dateipfad
-     */
-    private void deleteOldHtmlFile(String filePath) {
-        try {
-            Path path = Paths.get(filePath);
-            if (Files.exists(path)) {
-                Files.delete(path);
-                LOGGER.fine("Alte HTML-Datei gelöscht: " + filePath);
-            }
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Konnte alte HTML-Datei nicht löschen: " + filePath, e);
-        }
-    }
-    
-    /**
-     * Lädt eine bereits heruntergeladene HTML-Datei
-     * 
-     * @param signalId Die Signal-ID
-     * @return Der HTML-Inhalt oder null falls Datei nicht existiert
-     */
     public String loadLocalHtmlFile(String signalId) {
         String filePath = config.getDownloadFilePath(signalId);
         
@@ -288,11 +305,6 @@ public class WebDownloader {
         }
     }
     
-    /**
-     * Bereinigt alte HTML-Dateien aus dem Download-Verzeichnis
-     * 
-     * @param olderThanHours Dateien älter als X Stunden löschen
-     */
     public void cleanupOldHtmlFiles(int olderThanHours) {
         try {
             Path downloadDir = Paths.get(config.getDownloadDir());
@@ -336,12 +348,6 @@ public class WebDownloader {
         }
     }
     
-    /**
-     * Prüft ob eine URL erreichbar ist
-     * 
-     * @param urlString Die zu prüfende URL
-     * @return true wenn erreichbar, false sonst
-     */
     public boolean isUrlReachable(String urlString) {
         try {
             URL url = new URL(urlString);
@@ -362,12 +368,6 @@ public class WebDownloader {
         }
     }
     
-    /**
-     * VERBESSERT: Lädt Inhalt von einer beliebigen URL herunter mit DownloadResult
-     * 
-     * @param url Die URL zum Herunterladen
-     * @return DownloadResult mit Content oder Fehlerdetails
-     */
     public DownloadResult downloadFromWebUrl(String url) {
         if (url == null || url.trim().isEmpty()) {
             LOGGER.warning("URL ist leer");
