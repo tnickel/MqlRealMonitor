@@ -159,6 +159,9 @@ public class SignalProviderContextMenu {
         // NEU: MQL5 Website öffnen - GANZ OBEN für bessere Sichtbarkeit
         createMql5WebsiteMenuItem(contextMenu, table);
         
+        // NEU: Drawdown Analyzer öffnen
+        createDrawdownAnalyzerMenuItem(contextMenu, table);
+        
         new MenuItem(contextMenu, SWT.SEPARATOR);
         
         // Bestehende Menü-Items
@@ -198,6 +201,56 @@ public class SignalProviderContextMenu {
         });
         
         LOGGER.info("MQL5 Website-Menüeintrag erstellt");
+    }
+    
+    /**
+     * NEU: Erstellt das "Drawdown Analyzer" Menü-Item
+     */
+    private void createDrawdownAnalyzerMenuItem(Menu contextMenu, Table table) {
+        MenuItem ddItem = new MenuItem(contextMenu, SWT.PUSH);
+        ddItem.setText("📉 Drawdown Analyzer öffnen");
+        ddItem.setToolTipText("Öffnet den webbasierten Drawdown Analyzer für dieses Signal");
+        
+        ddItem.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                openDrawdownAnalyzer(table);
+            }
+        });
+        
+        LOGGER.info("Drawdown Analyzer Menüeintrag erstellt");
+    }
+    
+    /**
+     * NEU: Öffnet den Drawdown Analyzer für das ausgewählte Signal
+     */
+    private void openDrawdownAnalyzer(Table table) {
+        TableItem[] selectedItems = table.getSelection();
+        
+        if (selectedItems.length == 0) {
+            showInfoMessage("Keine Auswahl", "Bitte wählen Sie einen Signalprovider aus.");
+            return;
+        }
+        
+        if (selectedItems.length > 1) {
+            showInfoMessage("Mehrfachauswahl", 
+                          "Bitte wählen Sie nur einen Signalprovider aus, um dessen Drawdown Analyzer zu öffnen.");
+            return;
+        }
+        
+        TableItem selectedItem = selectedItems[0];
+        String signalId = selectedItem.getText(ProviderTableHelper.COL_SIGNAL_ID);
+        String providerName = selectedItem.getText(ProviderTableHelper.COL_PROVIDER_NAME);
+        
+        try {
+            LOGGER.info("=== ÖFFNE DRAWDOWN ANALYZER für Signal: " + signalId + " ===");
+            parentGui.getToolbarManager().openDrawdownAnalyzer(signalId, providerName);
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen des Drawdown Analyzers für Signal: " + signalId, e);
+            showErrorMessage("Fehler beim Öffnen", 
+                           "Der Drawdown Analyzer konnte für Signal " + signalId + " nicht geöffnet werden:\n\n" + 
+                           e.getMessage());
+        }
     }
     
     /**

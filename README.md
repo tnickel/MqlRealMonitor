@@ -3,6 +3,9 @@ Einziger Nachteil in Claude ist. Die Projektgrösse ist in Claude für Privatnut
 
 # 📊 MqlRealMonitor - Projektübersicht
 
+> [!NOTE]
+> **Repository-Pfad:** Dieses Projekt wurde nach `D:\git\MQL\MqlRealmonitor` verschoben (vorher: `D:\git\MqlRealmonitor`).
+
 ## 🎯 **Was macht das Projekt?**
 
 **MqlRealMonitor** ist eine professionelle Java-Anwendung zur **automatischen Überwachung von MQL5 Signalprovider-Konten**. Das System lädt regelmäßig HTML-Seiten von MQL5.com herunter, extrahiert Kontostand und Floating Profit-Daten und stellt diese in einer übersichtlichen GUI dar.

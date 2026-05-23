@@ -1,5 +1,9 @@
 package com.mql.realmonitor.gui;
 
+import java.io.File;
+import java.io.PrintWriter;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -63,7 +67,7 @@ public class MqlToolbarManager {
     public void createToolbar() {
         Composite toolbar = new Composite(shell, SWT.NONE);
         toolbar.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
-        toolbar.setLayout(new GridLayout(16, false)); // 16 Spalten für alle Buttons
+        toolbar.setLayout(new GridLayout(18, false)); // 18 Spalten für alle Buttons
         
         // Monitoring-Buttons
         createMonitoringButtons(toolbar);
@@ -152,6 +156,18 @@ public class MqlToolbarManager {
             @Override
             public void widgetSelected(SelectionEvent e) {
                 openChartOverview();
+            }
+        });
+        
+        // NEU: Drawdown Analyzer Button
+        Button ddAnalyzerButton = new Button(parent, SWT.PUSH);
+        ddAnalyzerButton.setText("📉 Drawdown Analyzer");
+        ddAnalyzerButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        ddAnalyzerButton.setToolTipText("Öffnet den webbasierten Drawdown Analyzer für das ausgewählte Signal");
+        ddAnalyzerButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                openDrawdownAnalyzerForSelected();
             }
         });
     }
@@ -449,6 +465,146 @@ public class MqlToolbarManager {
         }
         if (intervalText != null && !intervalText.isDisposed()) {
             intervalText.setEnabled(!isMonitoring);
+        }
+    }
+    
+    /**
+     * Öffnet den Drawdown Analyzer für das in der Tabelle ausgewählte Signal
+     */
+    private void openDrawdownAnalyzerForSelected() {
+        try {
+            LOGGER.info("=== DRAWDOWN ANALYZER ÜBER TOOLBAR AUSGELÖST ===");
+            
+            if (gui.getProviderTable() == null) {
+                gui.showError("Fehler", "Signalprovider-Tabelle nicht verfügbar.");
+                return;
+            }
+            
+            org.eclipse.swt.widgets.Table table = gui.getProviderTable().getTable();
+            if (table == null || table.isDisposed()) {
+                gui.showError("Fehler", "Tabelle nicht verfügbar.");
+                return;
+            }
+            
+            org.eclipse.swt.widgets.TableItem[] selectedItems = table.getSelection();
+            if (selectedItems.length == 0) {
+                gui.showInfo("Keine Auswahl", "Bitte wählen Sie einen Signalprovider aus der Tabelle aus.");
+                return;
+            }
+            
+            org.eclipse.swt.widgets.TableItem item = selectedItems[0];
+            String signalId = item.getText(ProviderTableHelper.COL_SIGNAL_ID);
+            String providerName = item.getText(ProviderTableHelper.COL_PROVIDER_NAME);
+            
+            openDrawdownAnalyzer(signalId, providerName);
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen des Drawdown Analyzers", e);
+            gui.showError("Fehler", "Drawdown Analyzer konnte nicht geöffnet werden: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Öffnet den Drawdown Analyzer für die angegebene Signal-ID
+     */
+    public void openDrawdownAnalyzer(String signalId, String providerName) {
+        try {
+            LOGGER.info("Erstelle Drawdown-Daten für Signal: " + signalId);
+            
+            String tickFilePath = gui.getMonitor().getConfig().getTickFilePath(signalId);
+            File tickFile = new File(tickFilePath);
+            
+            if (!tickFile.exists()) {
+                gui.showInfo("Keine Tick-Daten", 
+                    "Es wurden noch keine historischen Daten für das Signal " + signalId + " gespeichert.\n\n" +
+                    "Das Monitoring muss mindestens einmal erfolgreich gelaufen sein, um Tick-Daten zu erfassen.");
+                return;
+            }
+            
+            // Lade Ticks
+            com.mql.realmonitor.data.TickDataLoader.TickDataSet dataSet = 
+                com.mql.realmonitor.data.TickDataLoader.loadTickData(tickFilePath, signalId);
+            
+            if (dataSet == null || dataSet.getTicks().isEmpty()) {
+                gui.showInfo("Keine Ticks geladen", "Die Tick-Datei ist leer oder konnte nicht gelesen werden.");
+                return;
+            }
+            
+            // HTML-Datei prüfen
+            File htmlFile = new File("doc/drawdown/index.html");
+            if (!htmlFile.exists()) {
+                gui.showError("Fehler", "Drawdown Analyzer HTML-Datei nicht gefunden unter:\n" + 
+                               htmlFile.getAbsolutePath() + "\n\n" +
+                               "Bitte stellen Sie sicher, dass der Ordner 'doc/drawdown' im Projektverzeichnis vorhanden ist.");
+                return;
+            }
+            
+            // Generiere data.js
+            String strategyJson = String.format("{\n  \"strategyName\": \"%s\",\n  \"projectName\": \"MqlRealMonitor\"\n}", providerName);
+            
+            StringBuilder ordersJson = new StringBuilder();
+            ordersJson.append("[\n");
+            java.util.List<com.mql.realmonitor.data.TickDataLoader.TickData> ticks = dataSet.getTicks();
+            
+            if (!ticks.isEmpty()) {
+                // Erster Tick als Basis
+                com.mql.realmonitor.data.TickDataLoader.TickData firstTick = ticks.get(0);
+                long timeMs = firstTick.getTimestamp().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                ordersJson.append(String.format(java.util.Locale.US, 
+                    "  { \"Type\": 0, \"CloseTime\": %d, \"ProfitLoss\": 0.0, \"Balance\": %.2f }", 
+                    timeMs, firstTick.getEquity()));
+                
+                // Weitere Ticks als Differenzen (virtuelle Trades)
+                for (int i = 1; i < ticks.size(); i++) {
+                    com.mql.realmonitor.data.TickDataLoader.TickData prev = ticks.get(i - 1);
+                    com.mql.realmonitor.data.TickDataLoader.TickData curr = ticks.get(i);
+                    double change = curr.getEquity() - prev.getEquity();
+                    long currTimeMs = curr.getTimestamp().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    ordersJson.append(",\n");
+                    ordersJson.append(String.format(java.util.Locale.US, 
+                        "  { \"Type\": 0, \"CloseTime\": %d, \"ProfitLoss\": %.2f, \"Balance\": %.2f }", 
+                        currTimeMs, change, curr.getEquity()));
+                }
+            }
+            ordersJson.append("\n]");
+            
+            String dataJsContent = String.format("window.strategyData = %s;\nwindow.ordersData = %s;\n", 
+                                                 strategyJson, ordersJson.toString());
+            
+            // In data.js schreiben
+            File dataJsFile = new File("doc/drawdown/data.js");
+            try (PrintWriter writer = new PrintWriter(new BufferedWriter(new FileWriter(dataJsFile)))) {
+                writer.print(dataJsContent);
+            }
+            
+            LOGGER.info("Drawdown-Daten erfolgreich geschrieben nach: " + dataJsFile.getAbsolutePath());
+            
+            // HTML-Datei im Webbrowser öffnen
+            if (java.awt.Desktop.isDesktopSupported()) {
+                java.awt.Desktop.getDesktop().browse(htmlFile.toURI());
+                LOGGER.info("Drawdown Analyzer im Standard-Browser geöffnet");
+                gui.updateStatus("Drawdown Analyzer für " + providerName + " geöffnet");
+            } else {
+                // Fallback-Methode aus Kontextmenü kopieren
+                String os = System.getProperty("os.name").toLowerCase();
+                ProcessBuilder processBuilder;
+                String url = htmlFile.toURI().toString();
+                
+                if (os.contains("win")) {
+                    processBuilder = new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url);
+                } else if (os.contains("mac")) {
+                    processBuilder = new ProcessBuilder("open", url);
+                } else {
+                    processBuilder = new ProcessBuilder("xdg-open", url);
+                }
+                processBuilder.start();
+                LOGGER.info("Drawdown Analyzer mit Fallback OS-Kommando geöffnet");
+                gui.updateStatus("Drawdown Analyzer geöffnet (OS Fallback)");
+            }
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Generieren der Drawdown-Daten oder Öffnen des Browsers", e);
+            gui.showError("Fehler", "Drawdown Analyzer konnte nicht gestartet werden:\n" + e.getMessage());
         }
     }
     

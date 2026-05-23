@@ -18,6 +18,17 @@ import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.Text;
+import org.eclipse.swt.widgets.MessageBox;
+
+import com.mql.realmonitor.downloader.WebDownloader;
+import com.mql.realmonitor.downloader.DownloadResult;
+import com.mql.realmonitor.downloader.FavoritesReader;
+import com.mql.realmonitor.config.IdTranslationManager;
+
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Manager für Add/Delete Signal Funktionalität.
@@ -32,6 +43,7 @@ public class MqlSignalManager {
     // Signal-Komponenten
     private Button deleteSignalButton;
     private Button addSignalButton;
+    private Button addTop10Button;
     
     public MqlSignalManager(MqlRealMonitorGUI gui) {
         this.gui = gui;
@@ -66,7 +78,19 @@ public class MqlSignalManager {
             }
         });
         
-        LOGGER.info("Signal-Buttons (Add, Delete) erstellt");
+        // Add Top 10 Button
+        addTop10Button = new Button(parent, SWT.PUSH);
+        addTop10Button.setText("🏆 Top 10 MT4/MT5");
+        addTop10Button.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        addTop10Button.setToolTipText("Fügt die 10 besten MQL4 und MQL5 Strategien hinzu");
+        addTop10Button.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                addTop10Signals();
+            }
+        });
+        
+        LOGGER.info("Signal-Buttons (Add, Delete, Top10) erstellt");
         
         // Tabellen-Selection Listener einrichten (verzögert)
         gui.getDisplay().timerExec(1000, () -> {
@@ -466,11 +490,195 @@ public class MqlSignalManager {
             // Buttons werden automatisch durch SWT disposed
             deleteSignalButton = null;
             addSignalButton = null;
+            addTop10Button = null;
             
             LOGGER.info("SignalManager bereinigt");
             
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Fehler beim Bereinigen des SignalManagers", e);
         }
+    }
+
+    /**
+     * Lädt die 10 besten MQL4 und MQL5 Strategien von MQL5.com herunter und fügt sie hinzu.
+     */
+    private void addTop10Signals() {
+        if (addTop10Button == null || addTop10Button.isDisposed()) {
+            return;
+        }
+
+        // Button während des Vorgangs deaktivieren
+        addTop10Button.setEnabled(false);
+        addTop10Button.setText("Lädt...");
+        gui.updateStatus("Lade Top 10 MT4/MT5 Strategien...");
+
+        new Thread(() -> {
+            int addedCount = 0;
+            int skippedCount = 0;
+            int failedCount = 0;
+            
+            StringBuilder summaryText = new StringBuilder();
+            summaryText.append("Ergebnis des Top 10 Imports:\n\n");
+
+            try {
+                WebDownloader downloader = new WebDownloader(gui.getMonitor().getConfig());
+                FavoritesReader favoritesReader = new FavoritesReader(gui.getMonitor().getConfig());
+                IdTranslationManager translationManager = gui.getProviderTable().getIdTranslationManager();
+                
+                // 1. MetaTrader 5 Top 10
+                summaryText.append("--- MetaTrader 5 ---\n");
+                String mt5Url = "https://www.mql5.com/de/signals/mt5/list?orderby=subscribers";
+                DownloadResult mt5Result = downloader.downloadFromWebUrl(mt5Url);
+                if (mt5Result.isSuccess()) {
+                    Map<String, String> mt5Signals = parseTopSignals(mt5Result.getContent());
+                    int processed = 0;
+                    for (Map.Entry<String, String> entry : mt5Signals.entrySet()) {
+                        String id = entry.getKey();
+                        String name = entry.getValue();
+                        
+                        if (favoritesReader.containsSignalId(id)) {
+                            skippedCount++;
+                            summaryText.append("• ").append(name).append(" (").append(id).append("): Bereits vorhanden\n");
+                        } else {
+                            boolean success = favoritesReader.addSignal(id, "1");
+                            if (success) {
+                                if (translationManager != null) {
+                                    translationManager.addOrUpdateMapping(id, name);
+                                }
+                                addedCount++;
+                                summaryText.append("• ").append(name).append(" (").append(id).append("): Hinzugefügt (Klasse 1)\n");
+                            } else {
+                                failedCount++;
+                                summaryText.append("• ").append(name).append(" (").append(id).append("): Hinzufügen fehlgeschlagen\n");
+                            }
+                        }
+                        processed++;
+                        if (processed >= 10) break;
+                    }
+                    if (processed == 0) {
+                        summaryText.append("Keine Strategien auf MT5-Seite gefunden.\n");
+                    }
+                } else {
+                    summaryText.append("Fehler beim Herunterladen der MT5-Liste: ").append(mt5Result.getErrorMessage()).append("\n");
+                    LOGGER.warning("Fehler beim Herunterladen der MT5-Liste: " + mt5Result.getDetailedErrorDescription());
+                }
+
+                summaryText.append("\n");
+
+                // 2. MetaTrader 4 Top 10
+                summaryText.append("--- MetaTrader 4 ---\n");
+                String mt4Url = "https://www.mql5.com/de/signals/mt4/list?orderby=subscribers";
+                DownloadResult mt4Result = downloader.downloadFromWebUrl(mt4Url);
+                if (mt4Result.isSuccess()) {
+                    Map<String, String> mt4Signals = parseTopSignals(mt4Result.getContent());
+                    int processed = 0;
+                    for (Map.Entry<String, String> entry : mt4Signals.entrySet()) {
+                        String id = entry.getKey();
+                        String name = entry.getValue();
+                        
+                        if (favoritesReader.containsSignalId(id)) {
+                            skippedCount++;
+                            summaryText.append("• ").append(name).append(" (").append(id).append("): Bereits vorhanden\n");
+                        } else {
+                            boolean success = favoritesReader.addSignal(id, "1");
+                            if (success) {
+                                if (translationManager != null) {
+                                    translationManager.addOrUpdateMapping(id, name);
+                                }
+                                addedCount++;
+                                summaryText.append("• ").append(name).append(" (").append(id).append("): Hinzugefügt (Klasse 1)\n");
+                            } else {
+                                failedCount++;
+                                summaryText.append("• ").append(name).append(" (").append(id).append("): Hinzufügen fehlgeschlagen\n");
+                            }
+                        }
+                        processed++;
+                        if (processed >= 10) break;
+                    }
+                    if (processed == 0) {
+                        summaryText.append("Keine Strategien auf MT4-Seite gefunden.\n");
+                    }
+                } else {
+                    summaryText.append("Fehler beim Herunterladen der MT4-Liste: ").append(mt4Result.getErrorMessage()).append("\n");
+                    LOGGER.warning("Fehler beim Herunterladen der MT4-Liste: " + mt4Result.getDetailedErrorDescription());
+                }
+
+                summaryText.append("\nZusammenfassung:\n");
+                summaryText.append("Hinzugefügt: ").append(addedCount).append("\n");
+                summaryText.append("Bereits vorhanden: ").append(skippedCount).append("\n");
+                if (failedCount > 0) {
+                    summaryText.append("Fehlgeschlagen: ").append(failedCount).append("\n");
+                }
+
+            } catch (Exception ex) {
+                LOGGER.log(Level.SEVERE, "Fehler beim Hinzufügen der Top 10 Strategien", ex);
+                summaryText.append("\nSchwerwiegender Fehler beim Import: ").append(ex.getMessage()).append("\n");
+            }
+
+            // UI-Thread aktualisieren
+            final int finalAdded = addedCount;
+            gui.getDisplay().asyncExec(() -> {
+                if (!addTop10Button.isDisposed()) {
+                    addTop10Button.setEnabled(true);
+                    addTop10Button.setText("🏆 Top 10 MT4/MT5");
+                }
+                
+                gui.updateStatus("Top 10 Import abgeschlossen. Hinzugefügt: " + finalAdded);
+
+                // Tabelle aktualisieren, wenn neue Favoriten hinzugefügt wurden
+                if (finalAdded > 0 && gui.getProviderTable() != null) {
+                    gui.getProviderTable().refreshFavoriteClasses();
+                    gui.getProviderTable().refreshProviderNames();
+                    // Manuellen Refresh auslösen um neue Daten zu laden
+                    gui.getDisplay().timerExec(1000, () -> {
+                        gui.getMonitor().manualRefresh();
+                    });
+                }
+
+                // Ergebnis anzeigen
+                MessageBox box = new MessageBox(gui.getShell(), SWT.ICON_INFORMATION | SWT.OK);
+                box.setText("Top 10 Import");
+                box.setMessage(summaryText.toString());
+                box.open();
+            });
+        }).start();
+    }
+
+    /**
+     * Parst die Signal-IDs und Namen aus dem HTML-Inhalt.
+     */
+    private Map<String, String> parseTopSignals(String html) {
+        Map<String, String> signals = new LinkedHashMap<>();
+        if (html == null || html.isEmpty()) {
+            return signals;
+        }
+
+        Pattern pattern = Pattern.compile("data-id=\"(\\d+)\"\\s+data-name=\"([^\"]+)\"");
+        Matcher matcher = pattern.matcher(html);
+
+        while (matcher.find()) {
+            String id = matcher.group(1);
+            String name = matcher.group(2);
+            // HTML-Entities dekodieren
+            name = unescapeHtml(name);
+            if (!signals.containsKey(id)) {
+                signals.put(id, name);
+            }
+        }
+
+        return signals;
+    }
+
+    /**
+     * Einfaches HTML-Entity Decoding
+     */
+    private String unescapeHtml(String text) {
+        if (text == null) return null;
+        return text.replace("&amp;", "&")
+                   .replace("&quot;", "\"")
+                   .replace("&apos;", "'")
+                   .replace("&#39;", "'")
+                   .replace("&lt;", "<")
+                   .replace("&gt;", ">");
     }
 }
