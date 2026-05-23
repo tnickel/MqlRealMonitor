@@ -48,6 +48,7 @@ public class ProviderTableHelper {
     public static final int COL_CURRENCY = 13;            // Währung (verschoben von 12 zu 13)
     public static final int COL_LAST_UPDATE = 14;         // Letzte Aktualisierung (verschoben von 13 zu 14)
     public static final int COL_CHANGE = 15;              // Änderung (verschoben von 14 zu 15)
+    public static final int COL_SUBSCRIBERS = 16;         // NEU: Abonnenten
     
     // DEPRECATED: Alte Konstante für Rückwärtskompatibilität
     @Deprecated
@@ -295,11 +296,12 @@ public class ProviderTableHelper {
      * @return Vergleichsresultat
      */
     public int compareTableText(String text1, String text2, int columnIndex) {
-        // Für numerische Spalten versuche numerische Sortierung (ERWEITERT: Monthly Profit Currency)
+        // Für numerische Spalten versuche numerische Sortierung (ERWEITERT: Monthly Profit Currency, Subscribers)
         if (columnIndex == COL_EQUITY || columnIndex == COL_PROFIT || columnIndex == COL_FLOATING || 
             columnIndex == COL_TOTAL_VALUE_DRAWDOWN || columnIndex == COL_TOTAL ||
             columnIndex == COL_WEEKLY_PROFIT_CURRENCY || columnIndex == COL_MONTHLY_PROFIT_CURRENCY ||
-            columnIndex == COL_WEEKLY_PROFIT || columnIndex == COL_MONTHLY_PROFIT) {  // NEU: Monthly Profit Currency
+            columnIndex == COL_WEEKLY_PROFIT || columnIndex == COL_MONTHLY_PROFIT ||
+            columnIndex == COL_SUBSCRIBERS) {  // NEU: Monthly Profit Currency
             try {
                 // Extrahiere Zahlen aus formatiertem Text
                 double num1 = extractNumber(text1);
@@ -330,12 +332,12 @@ public class ProviderTableHelper {
             }
         }
         
-        // NEU: Spezielle Behandlung für Profit-Spalten (N/A Werte am Ende) (ERWEITERT: Monthly Profit Currency)
+        // NEU: Spezielle Behandlung für Profit-Spalten (N/A Werte am Ende) (ERWEITERT: Monthly Profit Currency, Subscribers)
         if (columnIndex == COL_PROFIT || columnIndex == COL_WEEKLY_PROFIT_CURRENCY || 
             columnIndex == COL_MONTHLY_PROFIT_CURRENCY || columnIndex == COL_WEEKLY_PROFIT || 
-            columnIndex == COL_MONTHLY_PROFIT) {
-            boolean text1NA = (text1 == null || text1.trim().isEmpty() || text1.equals("N/A"));
-            boolean text2NA = (text2 == null || text2.trim().isEmpty() || text2.equals("N/A"));
+            columnIndex == COL_MONTHLY_PROFIT || columnIndex == COL_SUBSCRIBERS) {
+            boolean text1NA = (text1 == null || text1.trim().isEmpty() || text1.equals("N/A") || text1.equals("-"));
+            boolean text2NA = (text2 == null || text2.trim().isEmpty() || text2.equals("N/A") || text2.equals("-"));
             
             if (text1NA && text2NA) return 0;
             if (text1NA) return 1;  // N/A Werte nach hinten
@@ -470,6 +472,7 @@ public class ProviderTableHelper {
         String monthlyProfitCurrency = item.getText(COL_MONTHLY_PROFIT_CURRENCY); // NEU
         String weeklyProfit = item.getText(COL_WEEKLY_PROFIT);
         String monthlyProfit = item.getText(COL_MONTHLY_PROFIT);
+        String subscribers = item.getText(COL_SUBSCRIBERS); // NEU
         SignalData signalData = lastSignalData.get(signalId);
         
         StringBuilder details = new StringBuilder();
@@ -487,6 +490,7 @@ public class ProviderTableHelper {
         details.append("Monatsgewinn (Währung): ").append(monthlyProfitCurrency).append("\n"); // NEU
         details.append("Wochengewinn (%): ").append(weeklyProfit).append("\n");
         details.append("Monatsgewinn (%): ").append(monthlyProfit).append("\n");
+        details.append("Abonnenten: ").append(subscribers).append("\n"); // NEU
         details.append("Währung: ").append(item.getText(COL_CURRENCY)).append("\n");
         details.append("Letzte Aktualisierung: ").append(item.getText(COL_LAST_UPDATE)).append("\n");
         details.append("Änderung: ").append(item.getText(COL_CHANGE)).append("\n");
@@ -591,6 +595,7 @@ public class ProviderTableHelper {
                 String monthlyProfitCurrency = item.getText(COL_MONTHLY_PROFIT_CURRENCY); // NEU
                 String weeklyProfit = item.getText(COL_WEEKLY_PROFIT);
                 String monthlyProfit = item.getText(COL_MONTHLY_PROFIT);
+                String subscribers = item.getText(COL_SUBSCRIBERS); // NEU
                 
                 // Nur gültige Provider hinzufügen
                 if (signalId != null && !signalId.trim().isEmpty() && 
@@ -599,7 +604,7 @@ public class ProviderTableHelper {
                     
                     ProviderInfo info = new ProviderInfo(signalId, providerName, status, favoriteClass, 
                                                         profit, totalValueDrawdown, weeklyProfitCurrency,
-                                                        monthlyProfitCurrency, weeklyProfit, monthlyProfit);
+                                                        monthlyProfitCurrency, weeklyProfit, monthlyProfit, subscribers);
                     providerInfos.add(info);
                     
                     LOGGER.fine("Provider-Info extrahiert: " + signalId + " (" + providerName + 
@@ -634,10 +639,11 @@ public class ProviderTableHelper {
         public final String monthlyProfitCurrency; // NEU
         public final String weeklyProfit;
         public final String monthlyProfit;
+        public final String subscribers; // NEU
         
         public ProviderInfo(String signalId, String providerName, String status, String favoriteClass, 
                            String profit, String totalValueDrawdown, String weeklyProfitCurrency,
-                           String monthlyProfitCurrency, String weeklyProfit, String monthlyProfit) {
+                           String monthlyProfitCurrency, String weeklyProfit, String monthlyProfit, String subscribers) {
             this.signalId = signalId;
             this.providerName = providerName;
             this.status = status;
@@ -648,6 +654,7 @@ public class ProviderTableHelper {
             this.monthlyProfitCurrency = monthlyProfitCurrency;
             this.weeklyProfit = weeklyProfit;
             this.monthlyProfit = monthlyProfit;
+            this.subscribers = subscribers;
         }
         
         @Override
@@ -657,7 +664,8 @@ public class ProviderTableHelper {
                    "', profit='" + profit + "', totalValueDrawdown='" + totalValueDrawdown +
                    "', weeklyProfitCurrency='" + weeklyProfitCurrency +
                    "', monthlyProfitCurrency='" + monthlyProfitCurrency +
-                   "', weeklyProfit='" + weeklyProfit + "', monthlyProfit='" + monthlyProfit + "'}";
+                   "', weeklyProfit='" + weeklyProfit + "', monthlyProfit='" + monthlyProfit + 
+                   "', subscribers='" + subscribers + "'}";
         }
     }
 }

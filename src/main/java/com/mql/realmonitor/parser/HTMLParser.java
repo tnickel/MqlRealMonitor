@@ -31,9 +31,16 @@ public class HTMLParser {
     private static final String PROVIDER_NAME_PATTERN = 
         "<div\\s+class=[\"']s-line-card__title[\"']>([^<]+)</div>";
     
-    // Pattern für JavaScript description Array Format
+    // NEU: Pattern für JavaScript description Array Format
     private static final String DESCRIPTION_ARRAY_PATTERN = 
         "description:\\s*\\[\\s*'([^']*)'\\s*,\\s*'([^']*)'\\s*\\]";
+        
+    // NEU: Patterns für Abonnenten-Extraktion
+    private static final String SUBSCRIBERS_PATTERN_1 = 
+        "class=[\"'][^\"']*subscribers[^\"']*[\"']>\\s*<span[^>]*>\\s*</span>\\s*<span[^>]*>(\\d+)</span>";
+        
+    private static final String SUBSCRIBERS_PATTERN_2 = 
+        "(?:Abonnenten|Subscribers):\\s*</div>\\s*<div[^>]*>\\s*(\\d+)\\s*</div>";
     
     // Alternative Pattern für verschiedene Sprach-/Format-Varianten
     private static final String[] ALTERNATIVE_KONTOSTAND_PATTERNS = {
@@ -74,6 +81,8 @@ public class HTMLParser {
     private final Pattern floatingProfitPattern;
     private final Pattern profitPattern;  // NEU
     private final Pattern providerNamePattern;  // NEU
+    private final Pattern subscribersPattern1; // NEU
+    private final Pattern subscribersPattern2; // NEU
     private final Pattern descriptionArrayPattern;
     private final Pattern[] alternativeKontostandPatterns;
     private final Pattern[] alternativeFloatingPatterns;
@@ -86,6 +95,8 @@ public class HTMLParser {
         floatingProfitPattern = Pattern.compile(FLOATING_PROFIT_PATTERN, Pattern.CASE_INSENSITIVE);
         profitPattern = Pattern.compile(PROFIT_PATTERN, Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
         providerNamePattern = Pattern.compile(PROVIDER_NAME_PATTERN, Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+        subscribersPattern1 = Pattern.compile(SUBSCRIBERS_PATTERN_1, Pattern.CASE_INSENSITIVE);
+        subscribersPattern2 = Pattern.compile(SUBSCRIBERS_PATTERN_2, Pattern.CASE_INSENSITIVE);
         descriptionArrayPattern = Pattern.compile(DESCRIPTION_ARRAY_PATTERN, Pattern.CASE_INSENSITIVE);
         
         // Alternative Pattern kompilieren
@@ -273,6 +284,39 @@ public class HTMLParser {
     }
     
     /**
+     * NEU: Extrahiert die Anzahl der Abonnenten aus dem HTML
+     * 
+     * @param htmlContent Der HTML-Inhalt
+     * @param signalId Die Signal-ID für Logging
+     * @return Die Anzahl der Abonnenten, oder 0 falls nicht gefunden
+     */
+    private int extractSubscribers(String htmlContent, String signalId) {
+        try {
+            // Pattern 1 versuchen
+            Matcher matcher = subscribersPattern1.matcher(htmlContent);
+            if (matcher.find()) {
+                int subs = Integer.parseInt(matcher.group(1).trim());
+                LOGGER.info("Abonnenten gefunden (Pattern 1): " + subs + " für Signal: " + signalId);
+                return subs;
+            }
+            
+            // Pattern 2 versuchen
+            matcher = subscribersPattern2.matcher(htmlContent);
+            if (matcher.find()) {
+                int subs = Integer.parseInt(matcher.group(1).trim());
+                LOGGER.info("Abonnenten gefunden (Pattern 2): " + subs + " für Signal: " + signalId);
+                return subs;
+            }
+            
+            LOGGER.fine("Abonnenten nicht gefunden für Signal: " + signalId);
+            return 0;
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Extrahieren der Abonnenten für Signal: " + signalId, e);
+            return 0;
+        }
+    }
+    
+    /**
      * ERWEITERT: Parst das JavaScript description Array Format mit Profit
      * Format: description:['Kontostand: 53 745.30 HKD','Floating Profit: 0.00 HKD']
      * Profit wird separat aus dem HTML extrahiert
@@ -309,12 +353,16 @@ public class HTMLParser {
             // NEU: Profit aus dem HTML extrahieren (nicht aus description Array)
             double profit = extractProfit(htmlContent, equityPair.currency);
             
+            // NEU: Abonnenten extrahieren
+            int subscribers = extractSubscribers(htmlContent, signalId);
+            
             SignalData result = new SignalData(
                 signalId,
                 providerName,
                 equityPair.value,
                 floatingPair.value,
                 profit,  // NEU: Profit hinzugefügt
+                subscribers, // NEU: Abonnenten hinzugefügt
                 equityPair.currency,
                 LocalDateTime.now()
             );
@@ -356,12 +404,16 @@ public class HTMLParser {
         // NEU: Profit extrahieren
         double profit = extractProfit(htmlContent, equityPair.currency);
         
+        // NEU: Abonnenten extrahieren
+        int subscribers = extractSubscribers(htmlContent, signalId);
+        
         SignalData result = new SignalData(
             signalId,
             providerName,
             equityPair.value,
             floatingPair.value,
             profit,  // NEU: Profit hinzugefügt
+            subscribers, // NEU: Abonnenten hinzugefügt
             equityPair.currency,
             LocalDateTime.now()
         );

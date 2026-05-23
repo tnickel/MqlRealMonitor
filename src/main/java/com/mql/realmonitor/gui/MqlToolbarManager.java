@@ -505,6 +505,162 @@ public class MqlToolbarManager {
     }
     
     /**
+     * NEU: Stellt sicher, dass die Drawdown-Dateien im Basisverzeichnis existieren.
+     * Wenn sie fehlen, werden sie aus den Ressourcen des JAR-Archivs extrahiert.
+     */
+    private boolean ensureDrawdownFilesExist() {
+        try {
+            String basePath = gui.getMonitor().getConfig().getBasePath();
+            if (basePath == null || basePath.trim().isEmpty()) {
+                return false;
+            }
+            
+            File docDir = new File(basePath, "doc/drawdown");
+            if (!docDir.exists()) {
+                docDir.mkdirs();
+                LOGGER.info("Erstellte lokales Verzeichnis fuer Drawdown: " + docDir.getAbsolutePath());
+            }
+            
+            File htmlFile = new File(docDir, "index.html");
+            File vueFile = new File(docDir, "vue.global.prod.js");
+            
+            boolean ok = true;
+            
+            if (!htmlFile.exists()) {
+                LOGGER.info("index.html nicht gefunden. Extrahiere aus JAR-Ressourcen...");
+                ok &= extractResource("/doc/drawdown/index.html", htmlFile);
+            }
+            
+            if (!vueFile.exists()) {
+                LOGGER.info("vue.global.prod.js nicht gefunden. Extrahiere aus JAR-Ressourcen...");
+                ok &= extractResource("/doc/drawdown/vue.global.prod.js", vueFile);
+            }
+            
+            return ok && htmlFile.exists() && vueFile.exists();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Sicherstellen der Drawdown-Dateien", e);
+            return false;
+        }
+    }
+    
+    /**
+     * Hilfsmethode zum Extrahieren einer Ressource aus dem Classpath.
+     */
+    private boolean extractResource(String resourcePath, File destFile) {
+        try {
+            File parentDir = destFile.getParentFile();
+            if (parentDir != null && !parentDir.exists()) {
+                parentDir.mkdirs();
+            }
+            
+            try (java.io.InputStream is = MqlToolbarManager.class.getResourceAsStream(resourcePath)) {
+                if (is == null) {
+                    LOGGER.warning("Ressource nicht im JAR gefunden: " + resourcePath);
+                    return false;
+                }
+                
+                try (java.io.OutputStream os = new java.io.FileOutputStream(destFile)) {
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    while ((bytesRead = is.read(buffer)) != -1) {
+                        os.write(buffer, 0, bytesRead);
+                    }
+                }
+                LOGGER.info("Ressource erfolgreich extrahiert nach: " + destFile.getAbsolutePath());
+                return true;
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Fehler beim Extrahieren der Ressource " + resourcePath + " nach " + destFile.getAbsolutePath(), e);
+            return false;
+        }
+    }
+    
+    /**
+     * NEU: Sucht die Drawdown-HTML-Datei an verschiedenen Orten:
+     * 1. Relativ zum Arbeitsverzeichnis (Entwicklungsmodus, verschiedene Tiefen)
+     * 2. Relativ zum Verzeichnis der auszuführenden JAR-Datei (ausgeführter Zustand, verschiedene Tiefen)
+     * 3. Relativ zum konfigurierten BASE_PATH (und dessen Elternverzeichnis)
+     */
+    private File findDrawdownHtmlFile() {
+        // Erst sicherstellen, dass die Dateien im basePath existieren (ggf. aus JAR extrahieren)
+        ensureDrawdownFilesExist();
+        
+        java.util.List<File> searchPaths = new java.util.ArrayList<>();
+        
+        // 1. Relativ zum Arbeitsverzeichnis (verschiedene Tiefen)
+        searchPaths.add(new File("doc/drawdown/index.html"));
+        searchPaths.add(new File("../doc/drawdown/index.html"));
+        searchPaths.add(new File("../../doc/drawdown/index.html"));
+        
+        // 2. Relativ zum Verzeichnis der auszuführenden JAR-Datei
+        try {
+            java.net.URL codeSourceUrl = MqlToolbarManager.class.getProtectionDomain().getCodeSource().getLocation();
+            if (codeSourceUrl != null) {
+                File jarFile;
+                try {
+                    jarFile = new File(codeSourceUrl.toURI());
+                } catch (Exception e) {
+                    jarFile = new File(codeSourceUrl.getPath());
+                }
+                
+                // Wenn es ein Verzeichnis ist (z.B. target/classes), nimm das Elternverzeichnis
+                File jarDir = jarFile.isDirectory() ? jarFile : jarFile.getParentFile();
+                
+                if (jarDir != null) {
+                    searchPaths.add(new File(jarDir, "doc/drawdown/index.html"));
+                    
+                    // Ein Verzeichnis höher prüfen (wichtig z.B. wenn JAR in /bin/ liegt und doc/ parallel dazu ist)
+                    if (jarDir.getParentFile() != null) {
+                        searchPaths.add(new File(jarDir.getParentFile(), "doc/drawdown/index.html"));
+                        
+                        // Zwei Verzeichnisse höher prüfen (z.B. target/classes -> target -> root)
+                        if (jarDir.getParentFile().getParentFile() != null) {
+                            searchPaths.add(new File(jarDir.getParentFile().getParentFile(), "doc/drawdown/index.html"));
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.FINE, "Konnte JAR-Pfad für Drawdown Analyzer nicht bestimmen", e);
+        }
+        
+        // 3. Relativ zum konfigurierten BASE_PATH
+        try {
+            String basePath = gui.getMonitor().getConfig().getBasePath();
+            if (basePath != null && !basePath.trim().isEmpty()) {
+                File baseDir = new File(basePath);
+                searchPaths.add(new File(baseDir, "doc/drawdown/index.html"));
+                if (baseDir.getParentFile() != null) {
+                    searchPaths.add(new File(baseDir.getParentFile(), "doc/drawdown/index.html"));
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.FINE, "Fehler beim Auflösen des BASE_PATH für Drawdown Analyzer", e);
+        }
+        
+        // Suche in allen Pfaden nach der ersten existierenden Datei
+        for (File testFile : searchPaths) {
+            if (testFile.exists()) {
+                try {
+                    File canonical = testFile.getCanonicalFile();
+                    LOGGER.info("Drawdown Analyzer HTML gefunden unter (kanonisch): " + canonical.getAbsolutePath());
+                    return canonical;
+                } catch (Exception e) {
+                    LOGGER.info("Drawdown Analyzer HTML gefunden unter: " + testFile.getAbsolutePath());
+                    return testFile.getAbsoluteFile();
+                }
+            }
+        }
+        
+        // Fallback: liefere den Pfad relativ zum aktuellen Verzeichnis (für Fehlermeldung)
+        try {
+            return new File("doc/drawdown/index.html").getCanonicalFile();
+        } catch (Exception e) {
+            return new File("doc/drawdown/index.html").getAbsoluteFile();
+        }
+    }
+    
+    /**
      * Öffnet den Drawdown Analyzer für die angegebene Signal-ID
      */
     public void openDrawdownAnalyzer(String signalId, String providerName) {
@@ -530,17 +686,20 @@ public class MqlToolbarManager {
                 return;
             }
             
-            // HTML-Datei prüfen
-            File htmlFile = new File("doc/drawdown/index.html");
+            // HTML-Datei über robusten Finder lokalisieren
+            File htmlFile = findDrawdownHtmlFile();
             if (!htmlFile.exists()) {
-                gui.showError("Fehler", "Drawdown Analyzer HTML-Datei nicht gefunden unter:\n" + 
-                               htmlFile.getAbsolutePath() + "\n\n" +
-                               "Bitte stellen Sie sicher, dass der Ordner 'doc/drawdown' im Projektverzeichnis vorhanden ist.");
+                String basePath = gui.getMonitor().getConfig().getBasePath();
+                gui.showError("Fehler", "Drawdown Analyzer HTML-Datei (index.html) konnte an folgenden Orten nicht gefunden werden:\n\n" +
+                               "1. Arbeitsverzeichnis: " + new File("doc/drawdown/index.html").getAbsolutePath() + "\n" +
+                               "2. Basisverzeichnis (basePath): " + new File(basePath, "doc/drawdown/index.html").getAbsolutePath() + "\n" +
+                               "3. Verzeichnis der JAR-Datei\n\n" +
+                               "Bitte stellen Sie sicher, dass der Ordner 'doc/drawdown' an einem dieser Orte existiert.");
                 return;
             }
             
             // Generiere data.js
-            String strategyJson = String.format("{\n  \"strategyName\": \"%s\",\n  \"projectName\": \"MqlRealMonitor\"\n}", providerName);
+            String strategyJson = String.format("{\n  \"strategyName\": \"%s\",\n  \"projectName\": \"MqlRealMonitor\"\n}", escapeJson(providerName));
             
             StringBuilder ordersJson = new StringBuilder();
             ordersJson.append("[\n");
@@ -571,9 +730,10 @@ public class MqlToolbarManager {
             String dataJsContent = String.format("window.strategyData = %s;\nwindow.ordersData = %s;\n", 
                                                  strategyJson, ordersJson.toString());
             
-            // In data.js schreiben
-            File dataJsFile = new File("doc/drawdown/data.js");
-            try (PrintWriter writer = new PrintWriter(new BufferedWriter(new FileWriter(dataJsFile)))) {
+            // In data.js schreiben (im selben Verzeichnis wie index.html) mit UTF-8 Kodierung
+            File dataJsFile = new File(htmlFile.getParentFile(), "data.js");
+            try (PrintWriter writer = new PrintWriter(new BufferedWriter(new java.io.OutputStreamWriter(
+                    new java.io.FileOutputStream(dataJsFile), java.nio.charset.StandardCharsets.UTF_8)))) {
                 writer.print(dataJsContent);
             }
             
@@ -608,6 +768,20 @@ public class MqlToolbarManager {
         }
     }
     
+    /**
+     * Hilfsmethode zum Maskieren von JSON-Sonderzeichen.
+     */
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\b", "\\b")
+                .replace("\f", "\\f")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
     /**
      * Bereinigt Ressourcen beim Herunterfahren
      */

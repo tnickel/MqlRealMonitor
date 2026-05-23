@@ -176,6 +176,14 @@
                     <include>**/*</include>
                 </includes>
             </resource>
+            <resource>
+                <directory>doc/drawdown</directory>
+                <targetPath>doc/drawdown</targetPath>
+                <includes>
+                    <include>index.html</include>
+                    <include>vue.global.prod.js</include>
+                </includes>
+            </resource>
         </resources>
         
         <plugins>

@@ -29,6 +29,7 @@ public class SignalData {
     private final double equity;
     private final double floatingProfit;
     private final double profit; // NEU: Gesamtprofit des Signals
+    private final int subscribers; // NEU: Abonnenten
     private final String currency;
     private final LocalDateTime timestamp;
     
@@ -44,12 +45,13 @@ public class SignalData {
      * @param timestamp Der Zeitstempel der Datenerhebung
      */
     public SignalData(String signalId, String providerName, double equity, double floatingProfit, 
-                     double profit, String currency, LocalDateTime timestamp) {
+                     double profit, int subscribers, String currency, LocalDateTime timestamp) {
         this.signalId = signalId;
         this.providerName = providerName != null ? providerName : "Unbekannt";
         this.equity = equity;
         this.floatingProfit = floatingProfit;
         this.profit = profit;
+        this.subscribers = subscribers;
         this.currency = currency;
         this.timestamp = timestamp;
         
@@ -59,8 +61,17 @@ public class SignalData {
                        ", Equity=" + equity + 
                        ", Floating=" + floatingProfit + 
                        ", Profit=" + profit +
+                       ", Subscribers=" + subscribers +
                        " (Echter Drawdown benötigt Peak-Wert)");
         }
+    }
+    
+    /**
+     * Konstruktor für SignalData mit Profit (ohne Subscribers)
+     */
+    public SignalData(String signalId, String providerName, double equity, double floatingProfit, 
+                     double profit, String currency, LocalDateTime timestamp) {
+        this(signalId, providerName, equity, floatingProfit, profit, 0, currency, timestamp);
     }
     
     /**
@@ -88,6 +99,7 @@ public class SignalData {
         this.equity = other.equity;
         this.floatingProfit = other.floatingProfit;
         this.profit = other.profit;
+        this.subscribers = other.subscribers;
         this.currency = other.currency;
         this.timestamp = newTimestamp;
     }
@@ -112,6 +124,10 @@ public class SignalData {
     
     public double getProfit() { // NEU
         return profit;
+    }
+    
+    public int getSubscribers() { // NEU
+        return subscribers;
     }
     
     public String getCurrency() {
@@ -657,8 +673,8 @@ public class SignalData {
     
     @Override
     public String toString() {
-        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, profit=%.2f, floatingPercent=%.6f%%, currency='%s', time='%s'}", 
-                           signalId, providerName, equity, floatingProfit, profit, getFloatingProfitPercent(), currency, getFormattedTimestamp());
+        return String.format("SignalData{id='%s', name='%s', equity=%.2f, floating=%.2f, profit=%.2f, subscribers=%d, floatingPercent=%.6f%%, currency='%s', time='%s'}", 
+                           signalId, providerName, equity, floatingProfit, profit, subscribers, getFloatingProfitPercent(), currency, getFormattedTimestamp());
     }
     
     @Override

@@ -3,6 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <title>Drawdown Analyzer</title>
+<script>
+window.onerror = function(message, source, lineno, colno, error) {
+  var fallback = document.getElementById('error-fallback');
+  var msgEl = document.getElementById('error-message');
+  if (fallback && msgEl) {
+    fallback.style.display = 'block';
+    msgEl.textContent = message + '\n\nat ' + source + ':' + lineno + ':' + colno + (error ? '\n\n' + error.stack : '');
+  }
+  return false;
+};
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -455,6 +466,10 @@ table.dd-table td.ongoing { color: var(--warning); font-weight: 600; }
 </style>
 </head>
 <body>
+<div id="error-fallback" style="display:none; color:#ef4444; background:#fef2f2; border:1px solid #fee2e2; padding:20px; margin:20px; border-radius:8px; font-family:sans-serif; z-index:9999; position:relative;">
+  <h3 style="margin-top:0;">Drawdown Analyzer - Fehler beim Laden</h3>
+  <p id="error-message" style="white-space:pre-wrap; font-family:monospace; font-size:12px; margin:0;"></p>
+</div>
 <div id="app">
   <header>
     <div class="header-top">
@@ -646,6 +661,7 @@ const NON_TRADING_TYPES = new Set([9, 10, 11]);
 const NOT_DEFINED = -99999999;
 const DAY_MS = 24 * 3600 * 1000;
 
+try {
 createApp({
   setup() {
     const strategy = ref(null);
@@ -662,9 +678,25 @@ createApp({
     const xMode = ref('trades');
     const selectedRange = ref('Alles');
     const selectedDD = ref(null);
-    let resizeObs = null;
     let layout = null;
     let layoutMonthly = null;
+
+    const resizeObs = new ResizeObserver(() => {
+      draw();
+      drawMonthly();
+    });
+
+    watch(chart, (newVal) => {
+      if (newVal && newVal.parentElement) {
+        resizeObs.observe(newVal.parentElement);
+      }
+    });
+
+    watch(monthlyChart, (newVal) => {
+      if (newVal && newVal.parentElement) {
+        resizeObs.observe(newVal.parentElement);
+      }
+    });
 
     const headerTitle = computed(() => {
       if (!strategy.value?.strategyName) return 'Select a strategy...';
@@ -1521,12 +1553,6 @@ createApp({
       }
       
       window.addEventListener('message', handleMessage);
-      resizeObs = new ResizeObserver(() => {
-        draw();
-        drawMonthly();
-      });
-      if (chart.value?.parentElement) resizeObs.observe(chart.value.parentElement);
-      if (monthlyChart.value?.parentElement) resizeObs.observe(monthlyChart.value.parentElement);
       nextTick(() => {
         draw();
         drawMonthly();
@@ -1549,6 +1575,9 @@ createApp({
     };
   }
 }).mount('#app');
+} catch (err) {
+  window.onerror(err.message, window.location.href, 0, 0, err);
+}
 </script>
 </body>
 </html>

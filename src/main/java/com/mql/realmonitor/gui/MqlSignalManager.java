@@ -57,7 +57,7 @@ public class MqlSignalManager {
         deleteSignalButton = new Button(parent, SWT.PUSH);
         deleteSignalButton.setText("🗑️ Löschen");
         deleteSignalButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
-        deleteSignalButton.setToolTipText("Ausgewähltes Signal aus Favoriten löschen");
+        deleteSignalButton.setToolTipText("Ausgewählte(s) Signal(e) aus Favoriten löschen");
         deleteSignalButton.setEnabled(false); // Anfangs deaktiviert
         deleteSignalButton.addSelectionListener(new SelectionAdapter() {
             @Override
@@ -305,7 +305,7 @@ public class MqlSignalManager {
     }
     
     /**
-     * Behandelt das Löschen eines Signals über den Toolbar-Button
+     * Behandelt das Löschen der ausgewählten Signale über den Toolbar-Button
      */
     private void deleteSelectedSignalFromToolbar() {
         try {
@@ -323,12 +323,12 @@ public class MqlSignalManager {
                 return;
             }
             
-            // Prüfen ob genau ein Signal ausgewählt ist
+            // Prüfen ob mindestens ein Signal ausgewählt ist
             SignalProviderContextMenu contextMenu = gui.getProviderTable().getContextMenu();
             if (!contextMenu.hasSignalSelectedForDeletion(table)) {
                 String selectionInfo = contextMenu.getSelectedSignalInfo(table);
                 gui.showInfo("Ungültige Auswahl", 
-                       "Bitte wählen Sie genau ein Signal zum Löschen aus.\n\nAktueller Status: " + selectionInfo);
+                       "Bitte wählen Sie mindestens ein Signal zum Löschen aus.\n\nAktueller Status: " + selectionInfo);
                 return;
             }
             
@@ -397,7 +397,7 @@ public class MqlSignalManager {
         
         try {
             boolean hasValidSelection = false;
-            String tooltipText = "Ausgewähltes Signal aus Favoriten löschen";
+            String tooltipText = "Ausgewählte(s) Signal(e) aus Favoriten löschen";
             
             if (gui.getProviderTable() != null) {
                 Table table = gui.getProviderTable().getTable();

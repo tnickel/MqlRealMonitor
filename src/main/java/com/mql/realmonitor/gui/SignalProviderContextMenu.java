@@ -278,104 +278,118 @@ public class SignalProviderContextMenu {
         TableItem[] selectedItems = table.getSelection();
         
         if (selectedItems.length == 0) {
-            showInfoMessage("Keine Auswahl", "Bitte wählen Sie ein Signal aus, das aus den Favoriten gelöscht werden soll.");
+            showInfoMessage("Keine Auswahl", "Bitte wählen Sie mindestens ein Signal aus, das aus den Favoriten gelöscht werden soll.");
             return;
         }
-        
-        if (selectedItems.length > 1) {
-            showInfoMessage("Mehrfachauswahl", 
-                          "Bitte wählen Sie nur ein Signal aus. Mehrfachlöschung ist aus Sicherheitsgründen nicht erlaubt.");
-            return;
-        }
-        
-        TableItem selectedItem = selectedItems[0];
-        String signalId = selectedItem.getText(ProviderTableHelper.COL_SIGNAL_ID);
-        String providerName = selectedItem.getText(ProviderTableHelper.COL_PROVIDER_NAME);
-        String favoriteClass = selectedItem.getText(ProviderTableHelper.COL_FAVORITE_CLASS);
         
         try {
-            LOGGER.info("=== DELETE SIGNAL REQUEST für Signal: " + signalId + " ===");
+            LOGGER.info("=== DELETE SIGNALS REQUEST für " + selectedItems.length + " Signale ===");
             
             // Bestätigungsdialog anzeigen
-            if (!showDeleteConfirmationDialog(signalId, providerName, favoriteClass)) {
+            if (!showDeleteConfirmationDialog(selectedItems)) {
                 LOGGER.info("Benutzer hat das Löschen abgebrochen");
                 return;
             }
             
             // Status-Update für User-Feedback
-            updateProviderStatus.accept(signalId + ":Wird aus Favoriten gelöscht...");
+            updateProviderStatus.accept("Ausgewählte Signale werden gelöscht...");
             
-            // FavoritesReader holen und Signal löschen
+            // FavoritesReader holen und Signale löschen
             com.mql.realmonitor.downloader.FavoritesReader favoritesReader = 
                 new com.mql.realmonitor.downloader.FavoritesReader(parentGui.getMonitor().getConfig());
             
-            boolean deleteSuccess = favoritesReader.removeSignal(signalId);
+            java.util.List<String> signalIds = new java.util.ArrayList<>();
+            for (TableItem item : selectedItems) {
+                signalIds.add(item.getText(ProviderTableHelper.COL_SIGNAL_ID));
+            }
+            
+            boolean deleteSuccess = favoritesReader.removeSignals(signalIds);
             
             if (deleteSuccess) {
-                LOGGER.info("Signal erfolgreich aus favorites.txt gelöscht: " + signalId);
+                LOGGER.info("Signale erfolgreich aus favorites.txt gelöscht: " + signalIds);
                 
                 // Erfolgs-Dialog anzeigen
-                showSuccessMessage("Signal gelöscht", 
-                                 "Das Signal wurde erfolgreich aus den Favoriten entfernt:\n\n" +
-                                 "Signal ID: " + signalId + "\n" +
-                                 "Provider: " + providerName + "\n" +
-                                 "Favoritenklasse: " + favoriteClass + "\n\n" +
-                                 "Das Signal wird beim nächsten Neustart nicht mehr geladen.\n" +
-                                 "Die Tick-Daten bleiben erhalten.");
+                StringBuilder successMsg = new StringBuilder();
+                successMsg.append("Folgende Signale wurden erfolgreich aus den Favoriten entfernt:\n\n");
+                for (TableItem item : selectedItems) {
+                    successMsg.append("• ").append(item.getText(ProviderTableHelper.COL_SIGNAL_ID))
+                              .append(" (").append(item.getText(ProviderTableHelper.COL_PROVIDER_NAME)).append(")\n");
+                }
+                successMsg.append("\nDie Signale werden beim nächsten Neustart nicht mehr geladen.\n");
+                successMsg.append("Die Tick-Daten bleiben erhalten.");
                 
-                // Zeile aus Tabelle entfernen
-                removeFromMapping.accept(signalId, selectedItem);
-                selectedItem.dispose();
+                showSuccessMessage("Signale gelöscht", successMsg.toString());
+                
+                // Zeilen aus Tabelle entfernen
+                for (TableItem item : selectedItems) {
+                    String signalId = item.getText(ProviderTableHelper.COL_SIGNAL_ID);
+                    removeFromMapping.accept(signalId, item);
+                    item.dispose();
+                }
                 
                 // Haupt-GUI über Änderung informieren (für eventuelles Refresh)
-                updateProviderStatus.accept("FAVORITES_CHANGED:Signal " + signalId + " gelöscht");
+                updateProviderStatus.accept("FAVORITES_CHANGED:Signale gelöscht");
                 
             } else {
-                LOGGER.severe("Fehler beim Löschen des Signals aus favorites.txt: " + signalId);
+                LOGGER.severe("Fehler beim Löschen der Signale aus favorites.txt: " + signalIds);
                 
                 showErrorMessage("Löschfehler", 
-                               "Das Signal konnte nicht aus den Favoriten gelöscht werden:\n\n" +
-                               "Signal ID: " + signalId + "\n" +
-                               "Provider: " + providerName + "\n\n" +
+                               "Die Signale konnten nicht aus den Favoriten gelöscht werden.\n\n" +
                                "Mögliche Ursachen:\n" +
-                               "• Signal nicht in favorites.txt gefunden\n" +
+                               "• Signale nicht in favorites.txt gefunden\n" +
                                "• Datei ist schreibgeschützt\n" +
                                "• Unzureichende Berechtigungen\n\n" +
                                "Prüfen Sie die Logs für Details.");
                 
-                updateProviderStatus.accept(signalId + ":Löschfehler");
+                updateProviderStatus.accept("Löschfehler");
             }
             
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Unerwarteter Fehler beim Löschen des Signals: " + signalId, e);
+            LOGGER.log(Level.SEVERE, "Unerwarteter Fehler beim Löschen der Signale", e);
             
             showErrorMessage("Schwerwiegender Fehler", 
-                           "Unerwarteter Fehler beim Löschen des Signals:\n\n" +
-                           "Signal ID: " + signalId + "\n" +
+                           "Unerwarteter Fehler beim Löschen der Signale:\n\n" +
                            "Fehler: " + e.getMessage() + "\n\n" +
-                           "Das Signal wurde möglicherweise nicht gelöscht.");
+                           "Die Signale wurden möglicherweise nicht gelöscht.");
             
-            updateProviderStatus.accept(signalId + ":Schwerer Fehler");
+            updateProviderStatus.accept("Schwerer Fehler");
         }
     }
     
     /**
      * NEU: Zeigt Bestätigungsdialog vor dem Löschen eines Signals
      */
-    private boolean showDeleteConfirmationDialog(String signalId, String providerName, String favoriteClass) {
+    private boolean showDeleteConfirmationDialog(TableItem[] selectedItems) {
         MessageBox confirmBox = new MessageBox(parentGui.getShell(), 
                                              SWT.ICON_WARNING | SWT.YES | SWT.NO | SWT.APPLICATION_MODAL);
-        confirmBox.setText("Signal aus Favoriten löschen");
+        confirmBox.setText("Signale aus Favoriten löschen");
         
         StringBuilder message = new StringBuilder();
-        message.append("⚠️ WARNUNG: Signal dauerhaft aus Favoriten löschen?\n\n");
-        message.append("Das folgende Signal wird DAUERHAFT aus der favorites.txt entfernt:\n\n");
-        message.append("📊 Signal ID: ").append(signalId).append("\n");
-        message.append("👤 Provider: ").append(providerName).append("\n");
-        message.append("🏷️ Favoritenklasse: ").append(favoriteClass).append("\n\n");
+        if (selectedItems.length == 1) {
+            TableItem selectedItem = selectedItems[0];
+            String signalId = selectedItem.getText(ProviderTableHelper.COL_SIGNAL_ID);
+            String providerName = selectedItem.getText(ProviderTableHelper.COL_PROVIDER_NAME);
+            String favoriteClass = selectedItem.getText(ProviderTableHelper.COL_FAVORITE_CLASS);
+            
+            message.append("⚠️ WARNUNG: Signal dauerhaft aus Favoriten löschen?\n\n");
+            message.append("Das folgende Signal wird DAUERHAFT aus der favorites.txt entfernt:\n\n");
+            message.append("📊 Signal ID: ").append(signalId).append("\n");
+            message.append("👤 Provider: ").append(providerName).append("\n");
+            message.append("🏷️ Favoritenklasse: ").append(favoriteClass).append("\n\n");
+        } else {
+            message.append("⚠️ WARNUNG: ").append(selectedItems.length).append(" Signale dauerhaft aus Favoriten löschen?\n\n");
+            message.append("Die folgenden Signale werden DAUERHAFT aus der favorites.txt entfernt:\n\n");
+            for (TableItem item : selectedItems) {
+                String signalId = item.getText(ProviderTableHelper.COL_SIGNAL_ID);
+                String providerName = item.getText(ProviderTableHelper.COL_PROVIDER_NAME);
+                String favoriteClass = item.getText(ProviderTableHelper.COL_FAVORITE_CLASS);
+                message.append("• ").append(signalId).append(" (").append(providerName).append(", Klasse ").append(favoriteClass).append(")\n");
+            }
+            message.append("\n");
+        }
         
         message.append("❗ WICHTIGE HINWEISE:\n");
-        message.append("• Das Signal wird beim nächsten Start NICHT mehr geladen\n");
+        message.append("• Die Signale werden beim nächsten Start NICHT mehr geladen\n");
         message.append("• Eine Backup-Datei wird automatisch erstellt\n");
         message.append("• Die Tick-Daten bleiben erhalten\n");
         message.append("• Diese Aktion kann nur durch manuelles Editieren rückgängig gemacht werden\n\n");
@@ -386,7 +400,7 @@ public class SignalProviderContextMenu {
         
         int result = confirmBox.open();
         
-        LOGGER.info("Delete-Bestätigungsdialog Ergebnis für Signal " + signalId + ": " + 
+        LOGGER.info("Delete-Bestätigungsdialog Ergebnis für " + selectedItems.length + " Signale: " + 
                    (result == SWT.YES ? "BESTÄTIGT" : "ABGEBROCHEN"));
         
         return result == SWT.YES;
@@ -425,7 +439,7 @@ public class SignalProviderContextMenu {
         }
         
         TableItem[] selectedItems = table.getSelection();
-        return selectedItems.length == 1; // Genau ein Signal muss ausgewählt sein
+        return selectedItems.length >= 1; // Jetzt mindestens ein Signal ausgewählt
     }
     
     /**
@@ -444,7 +458,7 @@ public class SignalProviderContextMenu {
         }
         
         if (selectedItems.length > 1) {
-            return selectedItems.length + " Signale ausgewählt (nur Einzelauswahl erlaubt)";
+            return selectedItems.length + " Signale ausgewählt";
         }
         
         TableItem item = selectedItems[0];

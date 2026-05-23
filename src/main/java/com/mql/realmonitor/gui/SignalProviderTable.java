@@ -56,7 +56,8 @@ public class SignalProviderTable {
         "MonthlyProfit",       // Spalte 12 (verschoben von 11 zu 12)
         "Währung",             // Spalte 13 (verschoben von 12 zu 13)
         "Letzte Aktualisierung", // Spalte 14 (verschoben von 13 zu 14)
-        "Änderung"             // Spalte 15 (verschoben von 14 zu 15)
+        "Änderung",            // Spalte 15 (verschoben von 14 zu 15)
+        "Abonnenten"           // Spalte 16 (NEU)
     };
     
     private static final int[] COLUMN_WIDTHS = {
@@ -75,7 +76,8 @@ public class SignalProviderTable {
         100,  // MonthlyProfit (verschoben)
         70,   // Währung (verschoben)
         150,  // Letzte Aktualisierung (verschoben)
-        120   // Änderung (verschoben)
+        120,  // Änderung (verschoben)
+        100   // Abonnenten (NEU)
     };
     
     // Komponenten
@@ -548,6 +550,7 @@ public class SignalProviderTable {
         item.setText(ProviderTableHelper.COL_CURRENCY, signalData.getCurrency());
         item.setText(ProviderTableHelper.COL_LAST_UPDATE, signalData.getFormattedTimestamp());
         item.setText(ProviderTableHelper.COL_CHANGE, changeText);
+        item.setText(ProviderTableHelper.COL_SUBSCRIBERS, String.valueOf(signalData.getSubscribers())); // NEU
         
         // NEU: Tooltips für Profit Currency Spalten setzen
         if (profitResult.hasWeeklyData()) {
@@ -692,6 +695,7 @@ public class SignalProviderTable {
         item.setText(ProviderTableHelper.COL_CURRENCY, "");
         item.setText(ProviderTableHelper.COL_LAST_UPDATE, "");
         item.setText(ProviderTableHelper.COL_CHANGE, "");
+        item.setText(ProviderTableHelper.COL_SUBSCRIBERS, "-"); // NEU
         
         // Farben über Helper setzen
         Color statusColor = tableHelper.getStatusColor(initialStatus);

@@ -135,17 +135,48 @@ public class FavoritesReader {
      * @param signalId Die zu entfernende Signal-ID
      * @return true wenn erfolgreich entfernt, false bei Fehlern
      */
+    /**
+     * NEU: Entfernt eine Signal-ID aus der favorites.txt Datei
+     * Delegates to removeSignals for consistency.
+     * 
+     * @param signalId Die zu entfernende Signal-ID
+     * @return true wenn erfolgreich entfernt, false bei Fehlern
+     */
     public boolean removeSignal(String signalId) {
         if (signalId == null || signalId.trim().isEmpty()) {
             LOGGER.warning("Keine Signal-ID zum Entfernen angegeben");
             return false;
         }
+        return removeSignals(Collections.singletonList(signalId));
+    }
+
+    /**
+     * NEU: Entfernt mehrere Signal-IDs aus der favorites.txt Datei in einer einzigen Operation (effizienter)
+     * 
+     * @param signalIds Die zu entfernenden Signal-IDs
+     * @return true wenn mindestens ein Signal erfolgreich entfernt wurde, false bei Fehlern oder leeren Parametern
+     */
+    public boolean removeSignals(Collection<String> signalIds) {
+        if (signalIds == null || signalIds.isEmpty()) {
+            LOGGER.warning("Keine Signal-IDs zum Entfernen angegeben");
+            return false;
+        }
         
-        String trimmedSignalId = signalId.trim();
+        Set<String> trimmedSignalIds = new HashSet<>();
+        for (String id : signalIds) {
+            if (id != null) {
+                trimmedSignalIds.add(id.trim());
+            }
+        }
+        
+        if (trimmedSignalIds.isEmpty()) {
+            return false;
+        }
+        
         String favoritesFile = config.getFavoritesFile();
         
         try {
-            LOGGER.info("=== ENTFERNE SIGNAL AUS FAVORITES: " + trimmedSignalId + " ===");
+            LOGGER.info("=== ENTFERNE MEHRERE SIGNALE AUS FAVORITES: " + trimmedSignalIds + " ===");
             
             Path filePath = Paths.get(favoritesFile);
             
@@ -156,17 +187,24 @@ public class FavoritesReader {
             
             // Aktuelle Favoriten laden
             List<String> currentFavorites = readFavorites();
-            Map<String, String> currentClasses = readFavoritesWithClasses();
             
-            // Prüfen ob Signal überhaupt vorhanden ist
-            if (!currentFavorites.contains(trimmedSignalId)) {
-                LOGGER.warning("Signal " + trimmedSignalId + " nicht in Favoriten gefunden");
+            // Prüfen ob überhaupt eines der Signale vorhanden ist
+            boolean anyFound = false;
+            for (String trimmedSignalId : trimmedSignalIds) {
+                if (currentFavorites.contains(trimmedSignalId)) {
+                    anyFound = true;
+                    break;
+                }
+            }
+            
+            if (!anyFound) {
+                LOGGER.warning("Keines der angegebenen Signale in Favoriten gefunden");
                 return false;
             }
             
-            // Datei Zeile für Zeile lesen und ohne das zu löschende Signal neu schreiben
+            // Datei Zeile für Zeile lesen und ohne die zu löschenden Signale neu schreiben
             List<String> newLines = new ArrayList<>();
-            boolean signalFound = false;
+            int signalsFoundCount = 0;
             
             try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
                 String line;
@@ -189,18 +227,18 @@ public class FavoritesReader {
                         lineSignalId = line.trim();
                     }
                     
-                    // Zeile beibehalten wenn es nicht das zu löschende Signal ist
-                    if (!lineSignalId.equals(trimmedSignalId)) {
+                    // Zeile beibehalten wenn es nicht eines der zu löschenden Signale ist
+                    if (!trimmedSignalIds.contains(lineSignalId)) {
                         newLines.add(line);
                     } else {
-                        signalFound = true;
+                        signalsFoundCount++;
                         LOGGER.info("Signal-Zeile gefunden und wird entfernt (Zeile " + lineNumber + "): " + line);
                     }
                 }
             }
             
-            if (!signalFound) {
-                LOGGER.warning("Signal " + trimmedSignalId + " nicht in Datei gefunden (trotz Cache)");
+            if (signalsFoundCount == 0) {
+                LOGGER.warning("Keine der Signal-IDs in Datei gefunden (trotz Cache)");
                 return false;
             }
             
@@ -217,13 +255,13 @@ public class FavoritesReader {
             // Cache aktualisieren
             refreshCache();
             
-            LOGGER.info("=== SIGNAL ERFOLGREICH AUS FAVORITES ENTFERNT: " + trimmedSignalId + " ===");
+            LOGGER.info("=== SIGNALE ERFOLGREICH AUS FAVORITES ENTFERNT: " + trimmedSignalIds + " ===");
             LOGGER.info("Neue Anzahl Favoriten: " + readFavorites().size());
             
             return true;
             
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Fehler beim Entfernen des Signals " + trimmedSignalId + " aus " + favoritesFile, e);
+            LOGGER.log(Level.SEVERE, "Fehler beim Entfernen der Signale " + trimmedSignalIds + " aus " + favoritesFile, e);
             return false;
         }
     }
