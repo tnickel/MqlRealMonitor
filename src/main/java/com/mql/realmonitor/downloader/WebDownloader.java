@@ -201,7 +201,11 @@ public class WebDownloader {
                 
                 // Content-Validierung
                 if (content == null || content.trim().isEmpty()) {
-                    LOGGER.warning("Leerer Content trotz HTTP 200 OK");
+                    LOGGER.warning("Leerer Content trotz HTTP 200 OK für URL: " + urlString + " - Versuche curl Fallback...");
+                    DownloadResult curlResult = downloadWithCurl(urlString);
+                    if (curlResult.isSuccess()) {
+                        return curlResult;
+                    }
                     return DownloadResult.emptyContent(urlString);
                 }
                 
@@ -218,8 +222,12 @@ public class WebDownloader {
             } else {
                 // HTTP-Fehler mit detailliertem Logging
                 String responseMessage = connection.getResponseMessage();
-                LOGGER.warning("HTTP-Fehler: " + responseCode + " " + responseMessage);
-                LOGGER.warning("URL: " + urlString);
+                LOGGER.warning("HTTP-Fehler: " + responseCode + " " + responseMessage + " für URL: " + urlString + " - Versuche curl Fallback...");
+                
+                DownloadResult curlResult = downloadWithCurl(urlString);
+                if (curlResult.isSuccess()) {
+                    return curlResult;
+                }
                 
                 // Versuche Error-Stream zu lesen für mehr Details
                 try {
@@ -239,21 +247,83 @@ public class WebDownloader {
             }
             
         } catch (SocketTimeoutException e) {
-            LOGGER.log(Level.WARNING, "Timeout beim Download von: " + urlString, e);
+            LOGGER.log(Level.WARNING, "Timeout beim Download von: " + urlString + " - Versuche curl Fallback...", e);
+            DownloadResult curlResult = downloadWithCurl(urlString);
+            if (curlResult.isSuccess()) {
+                return curlResult;
+            }
             return DownloadResult.timeout(urlString);
             
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "IOException beim Download von: " + urlString, e);
+            LOGGER.log(Level.WARNING, "IOException beim Download von: " + urlString + " - Versuche curl Fallback...", e);
+            DownloadResult curlResult = downloadWithCurl(urlString);
+            if (curlResult.isSuccess()) {
+                return curlResult;
+            }
             return DownloadResult.exception(e, urlString);
             
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Unerwartete Exception beim Download von: " + urlString, e);
+            LOGGER.log(Level.WARNING, "Unerwartete Exception beim Download von: " + urlString + " - Versuche curl Fallback...", e);
+            DownloadResult curlResult = downloadWithCurl(urlString);
+            if (curlResult.isSuccess()) {
+                return curlResult;
+            }
             return DownloadResult.exception(e, urlString);
             
         } finally {
             if (connection != null) {
                 connection.disconnect();
             }
+        }
+    }
+
+    /**
+     * Fallback-Download unter Verwendung des systemweiten curl.exe.
+     * Dient dem Umgehen von TLS-Fingerprinting-Sperren bei HttpsURLConnection.
+     */
+    private DownloadResult downloadWithCurl(String urlString) {
+        try {
+            LOGGER.info("Starte curl-Fallback für: " + urlString);
+            java.util.List<String> command = new java.util.ArrayList<>();
+            command.add("curl.exe");
+            command.add("-s"); // silent
+            command.add("-L"); // follow redirects
+            command.add("--compressed"); // gzip/deflate decompress
+            command.add("-A"); // user agent
+            command.add(config.getUserAgent() != null ? config.getUserAgent() : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            
+            int timeoutSeconds = config.getTimeoutSeconds();
+            if (timeoutSeconds > 0) {
+                command.add("-m"); // max time
+                command.add(String.valueOf(timeoutSeconds));
+            }
+            
+            command.add(urlString);
+            
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(false);
+            Process process = pb.start();
+            
+            StringBuilder content = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    content.append(line).append("\n");
+                }
+            }
+            
+            int exitCode = process.waitFor();
+            if (exitCode == 0 && content.length() > 0) {
+                LOGGER.info("✓ Curl-Fallback erfolgreich (" + content.length() + " Zeichen) für: " + urlString);
+                return DownloadResult.success(content.toString());
+            } else {
+                LOGGER.warning("✗ Curl-Fallback fehlgeschlagen mit Exit Code: " + exitCode + ", Länge: " + content.length() + " für: " + urlString);
+                return DownloadResult.invalidParameter("Curl failed with exit code " + exitCode + " or empty content");
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "✗ Fehler bei Ausführung des Curl-Fallbacks für: " + urlString, e);
+            return DownloadResult.exception(e, urlString);
         }
     }
     
