@@ -45,6 +45,9 @@ public class TickChartManager {
     // Provider-Informationen
     private final String signalId;
     private final String providerName;
+
+    // NEU: Config für das Laden der Trade-Historie (Chart-Overlay); kann null sein
+    private final com.mql.realmonitor.config.MqlRealMonitorConfig config;
     
     // REDUZIERT: Weniger Datenpunkte für schnelleres Rendering
     private static final int MAX_DATA_POINTS = 100;  // Reduziert von 200 auf 100
@@ -62,10 +65,21 @@ public class TickChartManager {
      * Konstruktor
      */
     public TickChartManager(String signalId, String providerName) {
+        this(signalId, providerName, null);
+    }
+
+    /**
+     * NEU: Konstruktor mit Config — aktiviert das Overlay der MQL5-Trade-Historie
+     * (graue Kurve) im Profit-Chart
+     */
+    public TickChartManager(String signalId, String providerName,
+                            com.mql.realmonitor.config.MqlRealMonitorConfig config) {
         this.signalId = signalId;
         this.providerName = providerName;
-        
-        LOGGER.info("TickChartManager erstellt für Signal: " + signalId + " (" + providerName + ")");
+        this.config = config;
+
+        LOGGER.info("TickChartManager erstellt für Signal: " + signalId + " (" + providerName + ")"
+                + (config != null ? " mit Trade-Historie-Overlay" : ""));
     }
     
     /**
@@ -380,7 +394,17 @@ public class TickChartManager {
         // Dataset erstellen
         TimeSeriesCollection dataset = new TimeSeriesCollection();
         dataset.addSeries(totalValueDrawdownSeries);
-        
+
+        // NEU: Historien-Drawdown (grau) — Konto-Entwicklung aus dem
+        // MQL5-Trade-Export, damit man sieht wie weit es im schlimmsten
+        // Fall runterging (Run-up der Ein-/Auszahlungen inklusive)
+        TimeSeries historyDrawdownSeries = buildHistoryDrawdownSeries();
+        if (historyDrawdownSeries != null) {
+            dataset.addSeries(historyDrawdownSeries);
+            LOGGER.info("HISTORIE-DRAWDOWN-OVERLAY: " + historyDrawdownSeries.getItemCount()
+                    + " Punkte hinzugefügt");
+        }
+
         // Chart erstellen oder aktualisieren
         if (drawdownChart == null) {
             drawdownChart = createDrawdownChartInstance(dataset, showDiagnoseTag, timeScale);
@@ -389,19 +413,22 @@ public class TickChartManager {
             // Bestehenden Chart aktualisieren
             XYPlot plot = drawdownChart.getXYPlot();
             plot.setDataset(dataset);
-            
+
             // Titel aktualisieren
             String timeScaleLabel = (timeScale != null) ? timeScale.getLabel() : "ALL";
             String diagnoseTag = showDiagnoseTag ? " [DIAGNOSE #0]" : "";
-            drawdownChart.setTitle("Total Value Drawdown (%) - EQUITY+FLOATING - " + signalId + 
+            drawdownChart.setTitle("Total Value Drawdown (%) - EQUITY+FLOATING - " + signalId +
                                   " (" + providerName + ") - " + timeScaleLabel + diagnoseTag);
-            
+
             // ERWEITERT: X-Achse korrekt kalibrieren mit neuer Formatierung
             configureDateAxisEnhanced(plot, optimizedData, timeScale);
-            
+
             LOGGER.info("Bestehender Drawdown-Chart aktualisiert");
         }
-        
+
+        // NEU: X-Achse auf die Historie erweitern (sonst außerhalb sichtbar)
+        extendAxisRangeForHistory(drawdownChart.getXYPlot(), historyDrawdownSeries);
+
         LOGGER.info("EQUITY DRAWDOWN CHART ERFOLGREICH ERSTELLT/AKTUALISIERT (Erweiterte X-Achse, Optimierte Performance)");
     }
     
@@ -483,6 +510,14 @@ public class TickChartManager {
         TimeSeriesCollection dataset = new TimeSeriesCollection();
         dataset.addSeries(realizedProfitSeries);  // KORRIGIERT: Relative Profit-Werte
         dataset.addSeries(totalProfitSeries);     // KORRIGIERT: Relative Total-Profit-Werte
+
+        // NEU: MQL5-Trade-Historie als GRAUE Kurve überlagern (aus Realtick\trades)
+        TimeSeries historySeries = buildHistorySeries(optimizedData, timeScale);
+        if (historySeries != null) {
+            dataset.addSeries(historySeries);
+            LOGGER.info("HISTORIE-OVERLAY: " + historySeries.getItemCount()
+                    + " historische Datenpunkte aus MQL5-Trade-Export hinzugefügt");
+        }
         
         // Chart erstellen oder aktualisieren
         if (profitChart == null) {
@@ -505,9 +540,135 @@ public class TickChartManager {
             LOGGER.info("Bestehender Profit-Chart aktualisiert (mit relativen Profit-Werten)");
         }
         
-        LOGGER.info("PROFIT DEVELOPMENT CHART ERFOLGREICH ERSTELLT/AKTUALISIERT (Erweiterte X-Achse, Relative Profit-Werte, Optimierte Performance)");
-    }
+            LOGGER.info("PROFIT DEVELOPMENT CHART ERFOLGREICH ERSTELLT/AKTUALISIERT (Erweiterte X-Achse, Relative Profit-Werte, Optimierte Performance)");
+
+            // NEU (FIX 21.09.2026): X-Achse auf die Historie erweitern.
+            // configureDateAxisEnhanced clippt die Achse auf das Tick-Fenster —
+            // die graue Historie (Monate/Jahre) läge dann komplett außerhalb
+            // des sichtbaren Bereichs (Serie in der Legende, aber unsichtbar).
+            extendAxisRangeForHistory(profitChart.getXYPlot(), historySeries);
+        }
     
+    /**
+     * NEU: Baut die Serie der MQL5-Trade-Historie für den Profit-Chart.
+     *
+     * Quelle: Realtick\trades\{id}_equity.csv — die GEWINNKURVE (nur
+     * kumulierte Trade-Profits, ohne Ein-/Auszahlungen), erzeugt vom
+     * "Trades laden"-Button. Sie wird ROH gezeichnet (0 am Signal-Start
+     * bis zum aktuellen Gesamtprofit) — eine echte Gewinnkurve.
+     *
+     * FIX 21.09.2026: keine Anker-Verschiebung mehr und kein Clipping —
+     * die Kurve zeigt die vollständige Historie.
+     *
+     * @return TimeSeries oder null wenn keine Historie/Config vorhanden
+     */
+    private TimeSeries buildHistorySeries(List<TickDataLoader.TickData> optimizedData, TimeScale timeScale) {
+        if (config == null || optimizedData == null || optimizedData.isEmpty()) {
+            return null;
+        }
+
+        List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint> curve =
+                com.mql.realmonitor.mql5.TradeHistoryManager.readEquityCurve(config, signalId);
+        if (curve.isEmpty()) {
+            LOGGER.fine("Keine Trade-Historie für " + signalId + " vorhanden (Trades laden?)");
+            return null;
+        }
+
+        TimeSeries series = new TimeSeries("Historie (MQL5)");
+        series.setMaximumItemCount(10000);
+        int added = 0;
+        for (com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint p : curve) {
+            try {
+                Date timestamp = Date.from(p.getTime().atZone(ZoneId.systemDefault()).toInstant());
+                series.addOrUpdate(new Millisecond(timestamp), p.getCumulatedProfit());
+                added++;
+            } catch (Exception e) {
+                LOGGER.fine("Historie-Punkt übersprungen: " + e.getMessage());
+            }
+        }
+        if (added == 0) {
+            return null;
+        }
+        LOGGER.info("HISTORIE-OVERLAY (Gewinnkurve): " + added + " Punkte gezeichnet");
+        return series;
+    }
+
+    /**
+     * NEU: Baut die Historien-Drawdown-Serie für den Drawdown-Chart (oben).
+     *
+     * Quelle: Realtick\trades\{id}_trading.csv — die TRADING-KURVE aus dem
+     * MQL5-Trade-Export (Startkapital + Netto-Profits; Ein-/Auszahlungen
+     * nach Handelsbeginn sind herausgerechnet, sie erzeugen sonst
+     * Schein-Drawdowns). Laufender Peak + Drawdown in Prozent — dieselbe
+     * Formel wie bei den Tick-Daten. So sieht man im selben Diagramm, wie
+     * weit es historisch im schlimmsten Fall runterging.
+     *
+     * @return TimeSeries oder null wenn keine Trading-Kurve vorhanden
+     */
+    private TimeSeries buildHistoryDrawdownSeries() {
+        if (config == null) {
+            return null;
+        }
+
+        List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint> curve =
+                com.mql.realmonitor.mql5.TradeHistoryManager.readTradingCurve(config, signalId);
+        if (curve.isEmpty()) {
+            return null;
+        }
+
+        TimeSeries series = new TimeSeries("Historie-Drawdown (%)");
+        series.setMaximumItemCount(10000);
+        double runningPeak = Double.NEGATIVE_INFINITY;
+        int added = 0;
+        for (com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint p : curve) {
+            double value = p.getCumulatedProfit();
+            if (value > runningPeak) {
+                runningPeak = value;
+            }
+            double drawdownPercent = 0.0;
+            if (runningPeak > 0) {
+                drawdownPercent = ((value - runningPeak) / runningPeak) * 100.0;
+            }
+            try {
+                Date timestamp = Date.from(p.getTime().atZone(ZoneId.systemDefault()).toInstant());
+                series.addOrUpdate(new Millisecond(timestamp), drawdownPercent);
+                added++;
+            } catch (Exception e) {
+                LOGGER.fine("Historie-Drawdown-Punkt übersprungen: " + e.getMessage());
+            }
+        }
+        if (added == 0) {
+            return null;
+        }
+        LOGGER.info("HISTORIE-DRAWDOWN: " + added + " Punkte gezeichnet");
+        return series;
+    }
+
+    /**
+     * NEU: Erweitert die X-Achse des Plots auf den Zeitraum einer Zusatz-Serie
+     * (configureDateAxisEnhanced clippt auf das Tick-Fenster — die Historie
+     * läge sonst komplett außerhalb des sichtbaren Bereichs).
+     */
+    private void extendAxisRangeForHistory(XYPlot plot, TimeSeries historySeries) {
+        if (historySeries == null || historySeries.getItemCount() == 0) {
+            return;
+        }
+        try {
+            DateAxis axis = (DateAxis) plot.getDomainAxis();
+            org.jfree.data.Range current = axis.getRange();
+            double lower = current.getLowerBound();
+            double upper = current.getUpperBound();
+            Date first = historySeries.getTimePeriod(0).getStart();
+            Date last = historySeries.getTimePeriod(historySeries.getItemCount() - 1).getEnd();
+            lower = Math.min(lower, first.getTime());
+            upper = Math.max(upper, last.getTime());
+            axis.setRange(new org.jfree.data.Range(lower, upper));
+            LOGGER.info("X-Achse auf Historie erweitert: " + first + " bis " + last);
+        } catch (Exception e) {
+            LOGGER.warning("Konnte X-Achse nicht auf Historie erweitern: " + e.getMessage());
+        }
+    }
+
     /**
      * Erstellt eine neue Drawdown-Chart-Instanz
      * OPTIMIERT: Anti-Aliasing deaktiviert für bessere Performance
@@ -525,6 +686,9 @@ public class TickChartManager {
         XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer(true, false);
         renderer.setSeriesPaint(0, Color.RED);
         renderer.setSeriesStroke(0, new BasicStroke(2.0f));
+        // NEU: Historien-Drawdown (grau) — komplett aus dem MQL5-Trade-Export
+        renderer.setSeriesPaint(1, new Color(128, 128, 128));
+        renderer.setSeriesStroke(1, new BasicStroke(1.8f));
         
         XYPlot plot = new XYPlot(dataset, timeAxis, valueAxis, renderer);
         plot.setBackgroundPaint(Color.WHITE);
@@ -580,24 +744,28 @@ public class TickChartManager {
         
         // KORRIGIERT: Renderer mit Linien UND Shapes (Punkte) für DIAGNOSE #2 Darstellung
         XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer(true, true);  // true, true = Linien + Shapes
-        
-        // Farben für die beiden Serien
-        renderer.setSeriesPaint(0, new Color(0, 128, 0)); // Dunkelgrün für Realized Profit
-        renderer.setSeriesPaint(1, new Color(255, 215, 0)); // Gold für Total Profit
-        
+
+        // Farben für die Serien
+        renderer.setSeriesPaint(0, new Color(0, 128, 0));   // Dunkelgrün für Realized Profit
+        renderer.setSeriesPaint(1, new Color(204, 153, 0)); // NEU: DUNKLES Gelb für Open Equity (Gesamtwert) - besser erkennbar
+        renderer.setSeriesPaint(2, new Color(128, 128, 128)); // NEU: GRAU für MQL5-Trade-Historie
+
         // Linienstärke
         renderer.setSeriesStroke(0, new BasicStroke(2.0f));
-        renderer.setSeriesStroke(1, new BasicStroke(2.0f));
-        
+        renderer.setSeriesStroke(1, new BasicStroke(2.5f));   // Open Equity etwas kräftiger
+        renderer.setSeriesStroke(2, new BasicStroke(1.8f));   // Historie als durchgehende graue Linie
+
         // EXPLIZIT: Shapes (Punkte) aktivieren für beide Serien (wie DIAGNOSE #2)
         renderer.setSeriesShapesVisible(0, true);  // Grüne Punkte für Realized Profit
-        renderer.setSeriesShapesVisible(1, true);  // Gelbe Punkte für Total Profit
+        renderer.setSeriesShapesVisible(1, true);  // Dunkelgelbe Punkte für Open Equity
+        renderer.setSeriesShapesVisible(2, false); // Historie: nur Linie (viele Punkte)
         renderer.setSeriesLinesVisible(0, true);   // Grüne Linie
-        renderer.setSeriesLinesVisible(1, true);   // Gelbe Linie
-        
+        renderer.setSeriesLinesVisible(1, true);   // Dunkelgelbe Linie
+        renderer.setSeriesLinesVisible(2, true);   // Graue Historien-Linie
+
         // KORREKTE Shape-Größe für bessere Sichtbarkeit (wie DIAGNOSE #2)
         renderer.setSeriesShape(0, new java.awt.geom.Ellipse2D.Double(-3, -3, 6, 6)); // Realized Profit
-        renderer.setSeriesShape(1, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Total Profit (etwas größer)
+        renderer.setSeriesShape(1, new java.awt.geom.Ellipse2D.Double(-4, -4, 8, 8)); // Open Equity (etwas größer)
         
         XYPlot plot = new XYPlot(dataset, timeAxis, valueAxis, renderer);
         plot.setBackgroundPaint(Color.WHITE);

@@ -242,6 +242,10 @@ public class ProviderTableHelper {
         
         if (lowerStatus.contains("ok") || lowerStatus.contains("erfolg") || lowerStatus.contains("geladen")) {
             return parentGui.getGreenColor();
+        } else if (lowerStatus.contains("nicht mehr verfügbar")) {
+            // NEU: Signal bei MQL5 gelöscht - grau statt rot (kein Verbindungsproblem,
+            // das Signal selbst ist weg; Tick-Daten bleiben historisch erhalten)
+            return parentGui.getGrayColor();
         } else if (lowerStatus.contains("error") || lowerStatus.contains("fehler")) {
             return parentGui.getRedColor();
         } else if (lowerStatus.contains("loading") || lowerStatus.contains("downloading") || lowerStatus.contains("lädt")) {

@@ -234,6 +234,7 @@ public class MqlRealMonitor {
             // Statistiken für Zusammenfassung
             int successCount = 0;
             int errorCount = 0;
+            int notAvailableCount = 0;
             
             // SCHRITT 1: Downloads für alle Signalprovider durchführen
             for (int i = 0; i < favoriteIds.size(); i++) {
@@ -276,7 +277,20 @@ public class MqlRealMonitor {
                         }
                     } else {
                         // Download-Fehler - detaillierte Fehlermeldung anzeigen
-                        String shortError = "Error: " + downloadResult.getShortErrorDescription();
+                        String shortError;
+                        
+                        // NEU: HTTP 404 = Signal bei MQL5 gelöscht/nicht mehr verfügbar.
+                        // Klar markieren statt generischem Fehler (Tick-Daten bleiben
+                        // erhalten, nur die laufende Überwachung hat keine Quelle mehr).
+                        if ("HTTP_ERROR".equals(downloadResult.getErrorType())
+                                && downloadResult.getHttpStatusCode() == 404) {
+                            shortError = "⚠️ Signal nicht mehr verfügbar (HTTP 404)";
+                            notAvailableCount++;
+                            LOGGER.warning("✗ Signal " + id + " existiert bei MQL5 nicht mehr (HTTP 404) - in Tabelle markiert");
+                        } else {
+                            shortError = "Error: " + downloadResult.getShortErrorDescription();
+                        }
+                        
                         gui.updateProviderStatus(id, shortError);
                         errorCount++;
                         
@@ -307,13 +321,18 @@ public class MqlRealMonitor {
             LOGGER.info("  Gesamt: " + favoriteIds.size());
             LOGGER.info("  Erfolgreich: " + successCount);
             LOGGER.info("  Fehler: " + errorCount);
+            if (notAvailableCount > 0) {
+                LOGGER.info("  Davon nicht mehr verfügbar (HTTP 404): " + notAvailableCount);
+            }
             LOGGER.info("  Erfolgsrate: " + String.format("%.1f%%", (successCount * 100.0 / favoriteIds.size())));
             
             // SCHRITT 2: NEU - Automatisches Currency Loading nach allen Signalprovidernale
             performAutomaticCurrencyLoading();
             
-            String statusMsg = String.format("Zyklus abgeschlossen: %d OK, %d Fehler - Nächster in %d min", 
-                                           successCount, errorCount, config.getIntervalMinutes());
+            String statusMsg = String.format("Zyklus abgeschlossen: %d OK, %d Fehler%s - Nächster in %d min", 
+                                           successCount, errorCount,
+                                           notAvailableCount > 0 ? " (davon " + notAvailableCount + " Signal(e) nicht mehr verfügbar)" : "",
+                                           config.getIntervalMinutes());
             gui.updateStatus(statusMsg);
             LOGGER.info("=== MONITORING-ZYKLUS ERFOLGREICH ABGESCHLOSSEN ===");
             

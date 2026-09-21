@@ -222,6 +222,17 @@ public class WebDownloader {
             } else {
                 // HTTP-Fehler mit detailliertem Logging
                 String responseMessage = connection.getResponseMessage();
+                
+                // NEU: HTTP 404 = Seite existiert nicht mehr (vom Server bestätigt).
+                // curl-Fallback bewusst NICHT versuchen: Das Signal ist gelöscht,
+                // kein Anti-Bot-Problem — und curl würde die 404-Fehlerseite als
+                // Content liefern und den klaren Statuscode verschleiern.
+                if (responseCode == 404) {
+                    LOGGER.warning("HTTP 404 für URL: " + urlString
+                        + " - Signal vermutlich gelöscht, kein curl-Fallback");
+                    return DownloadResult.httpError(404, urlString);
+                }
+                
                 LOGGER.warning("HTTP-Fehler: " + responseCode + " " + responseMessage + " für URL: " + urlString + " - Versuche curl Fallback...");
                 
                 DownloadResult curlResult = downloadWithCurl(urlString);
@@ -287,6 +298,7 @@ public class WebDownloader {
             java.util.List<String> command = new java.util.ArrayList<>();
             command.add("curl.exe");
             command.add("-s"); // silent
+            command.add("-f"); // NEU: fail bei HTTP >= 400 - Fehlerseiten sind kein Erfolg
             command.add("-L"); // follow redirects
             command.add("--compressed"); // gzip/deflate decompress
             command.add("-A"); // user agent

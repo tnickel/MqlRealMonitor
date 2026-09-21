@@ -52,6 +52,7 @@ public class MqlRealMonitorGUI {
     
     // UI Komponenten
     private Label statusLabel;
+    private Label kiScannerStatusLabel;
     private Label countLabel;
     
     // Manager-Klassen (modular)
@@ -193,11 +194,76 @@ public class MqlRealMonitorGUI {
      * Erstellt alle GUI-Komponenten (delegiert an Manager)
      */
     private void createWidgets() {
+        createMenuBar();
+
         // Toolbar wird vom ToolbarManager erstellt
         toolbarManager.createToolbar();
-        
+
         createProviderTable();
         createStatusBar();
+    }
+
+    /**
+     * NEU: Menüleiste (Datei / Einstellungen) — der zentrale Konfigurationsbereich
+     */
+    private void createMenuBar() {
+        org.eclipse.swt.widgets.Menu menuBar = new org.eclipse.swt.widgets.Menu(shell, SWT.BAR);
+        shell.setMenuBar(menuBar);
+
+        // ---- Datei
+        org.eclipse.swt.widgets.MenuItem fileHeader = new org.eclipse.swt.widgets.MenuItem(menuBar, SWT.CASCADE);
+        fileHeader.setText("&Datei");
+        org.eclipse.swt.widgets.Menu fileMenu = new org.eclipse.swt.widgets.Menu(shell, SWT.DROP_DOWN);
+        fileHeader.setMenu(fileMenu);
+
+        org.eclipse.swt.widgets.MenuItem exitItem = new org.eclipse.swt.widgets.MenuItem(fileMenu, SWT.PUSH);
+        exitItem.setText("Beenden");
+        exitItem.addSelectionListener(new org.eclipse.swt.events.SelectionAdapter() {
+            @Override
+            public void widgetSelected(org.eclipse.swt.events.SelectionEvent e) {
+                shell.close();
+            }
+        });
+
+        // ---- Einstellungen
+        org.eclipse.swt.widgets.MenuItem settingsHeader = new org.eclipse.swt.widgets.MenuItem(menuBar, SWT.CASCADE);
+        settingsHeader.setText("&Einstellungen");
+        org.eclipse.swt.widgets.Menu settingsMenu = new org.eclipse.swt.widgets.Menu(shell, SWT.DROP_DOWN);
+        settingsHeader.setMenu(settingsMenu);
+
+        org.eclipse.swt.widgets.MenuItem configItem = new org.eclipse.swt.widgets.MenuItem(settingsMenu, SWT.PUSH);
+        configItem.setText("Konfiguration...");
+        configItem.setToolTipText("MQL5-Zugang (Trade-Historie), KiScanner-Verbindung, Monitoring-Intervall u. a.");
+        configItem.addSelectionListener(new org.eclipse.swt.events.SelectionAdapter() {
+            @Override
+            public void widgetSelected(org.eclipse.swt.events.SelectionEvent e) {
+                openSettingsDialog();
+            }
+        });
+
+        new org.eclipse.swt.widgets.MenuItem(settingsMenu, SWT.SEPARATOR);
+
+        org.eclipse.swt.widgets.MenuItem summaryItem = new org.eclipse.swt.widgets.MenuItem(settingsMenu, SWT.PUSH);
+        summaryItem.setText("Konfiguration anzeigen");
+        summaryItem.addSelectionListener(new org.eclipse.swt.events.SelectionAdapter() {
+            @Override
+            public void widgetSelected(org.eclipse.swt.events.SelectionEvent e) {
+                showInfo("Aktuelle Konfiguration", monitor.getConfig().getConfigSummary());
+            }
+        });
+    }
+
+    /**
+     * NEU: Öffnet den Einstellungs-Dialog
+     */
+    private void openSettingsDialog() {
+        try {
+            MqlSettingsDialog dialog = new MqlSettingsDialog(this);
+            dialog.openDialog();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen des Einstellungsdialogs", e);
+            showError("Fehler", "Konnte Einstellungen nicht öffnen: " + e.getMessage());
+        }
     }
     
     /**
@@ -218,19 +284,75 @@ public class MqlRealMonitorGUI {
     private void createStatusBar() {
         Composite statusBar = new Composite(shell, SWT.NONE);
         statusBar.setLayoutData(new GridData(SWT.FILL, SWT.BOTTOM, true, false));
-        statusBar.setLayout(new GridLayout(2, false));
-        
+        statusBar.setLayout(new GridLayout(3, false));
+
         // Status Label
         statusLabel = new Label(statusBar, SWT.NONE);
         statusLabel.setText("Bereit");
         statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         statusLabel.setFont(statusFont);
-        
+
+        // NEU: KiScanner-Verbindungsstatus (wird bei Button-Klick aktualisiert)
+        kiScannerStatusLabel = new Label(statusBar, SWT.NONE);
+        kiScannerStatusLabel.setText("● KiScanner: nicht geprüft");
+        kiScannerStatusLabel.setLayoutData(new GridData(SWT.RIGHT, SWT.CENTER, false, false));
+        kiScannerStatusLabel.setFont(statusFont);
+        kiScannerStatusLabel.setForeground(display.getSystemColor(SWT.COLOR_GRAY));
+        kiScannerStatusLabel.setToolTipText("Verbindung zum MqlKiScanner REST-Server - "
+                + "wird beim Klick auf den KiScanner-Button geprüft (URL/Token: MqlRealMonitorConfig.txt)");
+
         // Count Label
         countLabel = new Label(statusBar, SWT.NONE);
         countLabel.setText("Provider: 0");
         countLabel.setLayoutData(new GridData(SWT.RIGHT, SWT.CENTER, false, false));
         countLabel.setFont(statusFont);
+    }
+
+    /**
+     * NEU: Aktualisiert den KiScanner-Verbindungsstatus in der Statusleiste.
+     * Die Verbindung wird bewusst nur bei Button-Klick geprüft (kein periodischer Ping).
+     *
+     * @param state "ok" = verbunden, "error" = nicht erreichbar, "checking" = Verbinde..., "unknown" = noch nicht geprüft
+     * @param detail Optionaler Detail-Text für den Tooltip (z. B. Fehlerursache)
+     */
+    public void updateKiScannerConnectionState(String state, String detail) {
+        if (display.isDisposed() || kiScannerStatusLabel == null || kiScannerStatusLabel.isDisposed()) {
+            return;
+        }
+
+        display.asyncExec(() -> {
+            if (kiScannerStatusLabel.isDisposed()) {
+                return;
+            }
+
+            String zeitstempel = java.time.LocalTime.now()
+                    .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"));
+
+            switch (state == null ? "unknown" : state) {
+                case "ok":
+                    kiScannerStatusLabel.setText("● KiScanner: Verbunden (" + zeitstempel + ")");
+                    kiScannerStatusLabel.setForeground(display.getSystemColor(SWT.COLOR_DARK_GREEN));
+                    kiScannerStatusLabel.setToolTipText("MqlKiScanner erreichbar - letzter Abruf " + zeitstempel);
+                    break;
+                case "error":
+                    kiScannerStatusLabel.setText("● KiScanner: Offline");
+                    kiScannerStatusLabel.setForeground(display.getSystemColor(SWT.COLOR_RED));
+                    kiScannerStatusLabel.setToolTipText(detail != null && !detail.isEmpty()
+                            ? detail
+                            : "MqlKiScanner nicht erreichbar - läuft die Streamlit-App?");
+                    break;
+                case "checking":
+                    kiScannerStatusLabel.setText("● KiScanner: Verbinde...");
+                    kiScannerStatusLabel.setForeground(display.getSystemColor(SWT.COLOR_DARK_YELLOW));
+                    kiScannerStatusLabel.setToolTipText("Verbindung wird geprüft...");
+                    break;
+                default:
+                    kiScannerStatusLabel.setText("● KiScanner: nicht geprüft");
+                    kiScannerStatusLabel.setForeground(display.getSystemColor(SWT.COLOR_GRAY));
+                    kiScannerStatusLabel.setToolTipText("Verbindung wird beim Klick auf den KiScanner-Button geprüft");
+                    break;
+            }
+        });
     }
     
     /**

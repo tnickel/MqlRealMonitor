@@ -410,6 +410,107 @@ public class FavoritesReader {
     }
     
     /**
+     * NEU: Aktualisiert die Favoritenklasse eines vorhandenen Signals.
+     * 
+     * Wird vom KiScanner-Import verwendet, um die Klasse an die aktuelle
+     * Scanner-Ampel anzugleichen (grün = 1, gelb = 2). Das Signal muss
+     * bereits vorhanden sein; die Zeile wird in-place umgeschrieben,
+     * vorher wird ein Backup erstellt.
+     * 
+     * @param signalId Die Signal-ID
+     * @param favoriteClass Die neue Favoritenklasse (1-10)
+     * @return true wenn die Klasse geändert wurde, false wenn nicht nötig/Fehler
+     */
+    public boolean updateSignalClass(String signalId, String favoriteClass) {
+        if (signalId == null || signalId.trim().isEmpty()
+                || favoriteClass == null || !isValidFavoriteClass(favoriteClass)) {
+            LOGGER.warning("updateSignalClass: ungültige Parameter (" + signalId + ", " + favoriteClass + ")");
+            return false;
+        }
+        
+        String trimmedSignalId = signalId.trim();
+        String newClass = favoriteClass.trim();
+        String favoritesFile = config.getFavoritesFile();
+        
+        try {
+            // Aktuelle Klasse laden (aktualisiert auch den Cache)
+            Map<String, String> classes = readFavoritesWithClasses();
+            String currentClass = classes.get(trimmedSignalId);
+            
+            if (currentClass == null) {
+                LOGGER.warning("updateSignalClass: Signal " + trimmedSignalId
+                    + " hat keine Klasse in favorites.txt");
+                return false;
+            }
+            if (currentClass.equals(newClass)) {
+                LOGGER.fine("updateSignalClass: Klasse unverändert " + trimmedSignalId
+                    + " = " + newClass);
+                return false;
+            }
+            
+            Path filePath = Paths.get(favoritesFile);
+            if (!Files.exists(filePath)) {
+                return false;
+            }
+            
+            LOGGER.info("=== AKTUALISIERE FAVORITENKLASSE: " + trimmedSignalId
+                + " " + currentClass + " -> " + newClass + " ===");
+            
+            // Datei Zeile für Zeile umschreiben (nur die Ziel-Zeile ändern)
+            List<String> newLines = new ArrayList<>();
+            boolean changed = false;
+            
+            try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String lineSignalId;
+                    if (line.trim().isEmpty() || line.trim().startsWith("#") || line.trim().startsWith("//")) {
+                        newLines.add(line);
+                        continue;
+                    }
+                    if (line.contains(":")) {
+                        lineSignalId = line.split(":", 2)[0].trim();
+                    } else {
+                        lineSignalId = line.trim();
+                    }
+                    
+                    if (lineSignalId.equals(trimmedSignalId)) {
+                        newLines.add(trimmedSignalId + ":" + newClass);
+                        changed = true;
+                    } else {
+                        newLines.add(line);
+                    }
+                }
+            }
+            
+            if (!changed) {
+                LOGGER.warning("updateSignalClass: Zeile für " + trimmedSignalId
+                    + " trotz Cache nicht gefunden");
+                return false;
+            }
+            
+            createBackupFile(favoritesFile);
+            
+            try (FileWriter writer = new FileWriter(favoritesFile, StandardCharsets.UTF_8)) {
+                for (String line : newLines) {
+                    writer.write(line + "\n");
+                }
+            }
+            
+            refreshCache();
+            
+            LOGGER.info("=== FAVORITENKLASSE AKTUALISIERT: " + trimmedSignalId
+                + " = " + newClass + " ===");
+            return true;
+            
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Aktualisieren der Favoritenklasse von "
+                + trimmedSignalId, e);
+            return false;
+        }
+    }
+    
+    /**
      * NEU: Gibt eine Liste aller Backup-Dateien zurück
      * 
      * @return Liste der Backup-Datei-Pfade

@@ -124,10 +124,13 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
      */
     private void initializeHelperClasses() {
         LOGGER.info("PHASE 2: Initialisiere Helfer-Klassen...");
-        
-        this.chartManager = new TickChartManager(signalId, providerName);
+
+        // NEU: Config mitgeben — aktiviert das Trade-Historie-Overlay (graue Kurve)
+        this.chartManager = new TickChartManager(signalId, providerName,
+                parentGui != null && parentGui.getMonitor() != null
+                        ? parentGui.getMonitor().getConfig() : null);
         this.imageRenderer = new ChartImageRenderer(display);
-        
+
         LOGGER.info("PHASE 2 abgeschlossen");
     }
     

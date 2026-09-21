@@ -626,7 +626,10 @@ public class SignalProviderTable {
         item.setText(ProviderTableHelper.COL_STATUS, status);
         
         // NEU: Bei Fehlerstatus Provider-Namen aus ID-Translation aktualisieren falls verfügbar
-        if (status != null && (status.toLowerCase().contains("fehler") || status.toLowerCase().contains("error"))) {
+        // ERWEITERT: Auch bei "Signal nicht mehr verfügbar" (HTTP 404) - Name bleibt erkennbar
+        if (status != null && (status.toLowerCase().contains("fehler")
+                || status.toLowerCase().contains("error")
+                || status.toLowerCase().contains("nicht mehr verfügbar"))) {
             String knownProviderName = getProviderNameForSignal(signalId);
             if (!knownProviderName.equals("Unbekannt")) {
                 item.setText(ProviderTableHelper.COL_PROVIDER_NAME, knownProviderName);

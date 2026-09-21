@@ -13,10 +13,13 @@
 # - Tick-Daten-Speicherung in CSV-Format für historische Analyse
 # - Dual-Chart-System: Equity Drawdown Chart (%) + Profit Development Chart
 # - Provider-Tabelle mit Live-Updates und Chart-Übersicht für alle Provider
-# - NEU: Wochen- und Monatsgewinn-Berechnung basierend auf historischen Tick-Daten
-# - NEU: Asynchrone Chart-Fenster-Erstellung - behebt 60-Sekunden UI-Blocking
-# - NEU: Currency-Loading für XAUUSD/BTCUSD von MQL5 (v1.2.1)
-# - NEU: Detaillierte Download-Fehlerdiagnostik mit HTTP-Statuscodes (v1.3.0)
+# - Wochen- und Monatsgewinn-Berechnung basierend auf historischen Tick-Daten
+# - Asynchrone Chart-Fenster-Erstellung - behebt 60-Sekunden UI-Blocking
+# - Currency-Loading für XAUUSD/BTCUSD von MQL5 (v1.2.1)
+# - Detaillierte Download-Fehlerdiagnostik mit HTTP-Statuscodes (v1.3.0)
+# - NEU (v1.4.0): KiScanner-Integration - Button "🤖 KiScanner" holt die
+#   Signalliste per REST vom MqlKiScanner (D:\git\MQL\MqlKiScanner) und
+#   überwacht ausschließlich Signale mit Gesamt-Ampel GRÜN oder GELB
 # - Direkter Browser-Link zu MQL5-Signalprovider-Seiten
 # - Wiederverwendbare Chart-Komponenten und modulare GUI-Architektur
 #
@@ -45,8 +48,24 @@
 com.mql.realmonitor.MqlRealMonitor | Hauptklasse für MQL5 Signal-Monitoring. Orchestriert Download, Parsing und GUI-Updates für alle Signalprovider. VERBESSERT: Verwendet DownloadResult für präzise Fehlermeldungen und Download-Statistiken (v1.3.0).
 
 ## Configuration
-com.mql.realmonitor.config.MqlRealMonitorConfig | Konfigurationsverwaltung für alle konfigurierbaren Parameter, Pfade und Einstellungen. Verwaltet Intervalle in Minuten.
+com.mql.realmonitor.config.MqlRealMonitorConfig | Konfigurationsverwaltung für alle konfigurierbaren Parameter, Pfade und Einstellungen. Verwaltet Intervalle in Minuten. NEU (v1.4.0): kiscannerBaseUrl für das MqlKiScanner REST-Interface (Default http://127.0.0.1:8611), buildet /api/v1/signals?ampel=gruen,gelb.
 com.mql.realmonitor.config.IdTranslationManager | translation tabelle id zu Signalprovidername
+
+## KiScanner Integration (NEU in Version 1.4.0)
+com.mql.realmonitor.kiscanner.KiScannerClient | REST-Client für das schreibgeschützte MqlKiScanner-Interface (GET /api/v1/signals?ampel=gruen,gelb). Direktes HttpURLConnection mit präziser 401/404/500-Behandlung (kein curl-Fallback - der würde HTTP-Statuscodes verschlucken). Filtert clientseitig defensiv nochmal auf grün/gelb. JSON-Parsing via Jackson.
+com.mql.realmonitor.kiscanner.KiScannerSignal | Model-Klasse für ein Scanner-Signal (signalId, name, platform, ampel als ASCII-Kürzel + Emoji, score, urteil, kurzfassung). isGruenOderGelb() entscheidet über die Übernahme.
+com.mql.realmonitor.kiscanner.KiScannerFetchResult | Strukturiertes Abruf-Ergebnis (Erfolg, gefilterte Signalliste, Gesamtzahl, Fehlermeldung, HTTP-Status).
+
+## Simulator (NEU in Version 1.4.2)
+com.mql.realmonitor.simulator.SimulatorEngine | Simulator "Was wäre jede Strategie ab Datum X mit Startkapital Y gewesen?": simuliert je Signal die Equity aus dem MQL5-Trade-Export mit Lot-Skalierung aufs Sim-Konto (Compounding je Trade wie beim echten MT5-Signal-Kopieren: Faktor simKonto/realKonto), Ein-/Auszahlungen herausgerechnet. mergePortfolio() summiert alle Kurven auf gemeinsamer Zeitachse (Step-Funktion) zur Portfolio-Kurve. Sortiert beste zuerst.
+com.mql.realmonitor.gui.SimulatorWindow | Scrollbares Simulator-Fenster (Button "📊 Simulator"): je Strategie ein Equity-Chart (grün=Gewinn, rot=Verlust, grau=keine Historie; "keine Trades seit Startdatum" flach), unten das PORTFOLIO (alle vereint). Charts werden im Hintergrund gerendert und nacheinander eingeblendet. Startdatum/Startkapital kommen aus der Config (Einstellungsdialog).
+
+## MQL5 Trade-Historie (NEU in Version 1.4.1)
+com.mql.realmonitor.mql5.Mql5Credentials | Verwaltung der MQL5-Zugangsdaten in {CONFIG_DIR}\mql5_credentials.properties - AUSSERHALB des Git-Repositories. Passwort wird nie geloggt.
+com.mql.realmonitor.mql5.Mql5Session | MQL5-HTTP-Session mit Selenium-Chrome-Login (Cookie-Ernte), gedrosselten GETs (2-4 s, Backoff bei 429/503, Abbruch bei 403) und Trade-Export je Signal (MT5: /export/positions, MT4: /export/history). hasValidHttpSession() prüft OHNE Browser, ob der HTTP-Weg lohnt - Diagnose 21.09.2026: MQL5 akzeptiert geerntete Cookies per HTTP derzeit nicht mehr.
+com.mql.realmonitor.mql5.Mql5BrowserExporter | Robuster Export-Weg (Muster: MqlKiScanner browser_session.export_positions_via_browser): EIN Chrome mit persistentem Profil + Download-Staging für den kompletten Lauf; Login einmal (Formular nur falls nötig), je Signal Export-URL öffnen und CSV-Download abwarten; positions/history-Fallback inkl. 404-Erkennung über ausbleibenden Download. AutoCloseable (Chrome quit).
+com.mql.realmonitor.mql5.EquityCurveBuilder | Rekonstruiert ZWEI Kurven aus dem Trade-Export: die GEWINNKURVE (nur kumulierte Trade-Profits, ohne Ein-/Auszahlungen - für den Profit-Chart) und die KONTO-KURVE (inkl. Balance-Zeilen - für den Drawdown). Parst beide Export-Formate (MT5-Positionen 11 Spalten, Profit=Idx 10; MT4-Orderbuch 13 Spalten, Profit=Idx 11), überspringt die MT4-Summenzeile und stornierte Pending-Orders, toleriert BOM und Tausendertrennzeichen; Balance-Zeilen haben keine Close-Spalte (Zeit = Spalte 0).
+com.mql.realmonitor.mql5.TradeHistoryManager | Orchestriert "Trades laden": Cache-Prüfung VOR dem Login (24 h), dann HTTP-Weg falls Session gültig, sonst Browser-Export über Mql5BrowserExporter (3-6 s Pause zwischen Signalen). Speichert Realtick\trades\{id}_positions.csv + {id}_equity.csv.
 
 ## Currency Package (NEU in Version 1.2.1)
 com.mql.realmonitor.currency.CurrencyData | Model-Klasse für Währungskursdaten (Symbol, Kurs, Zeitstempel). Unterstützt CSV-Serialisierung für XAUUSD/BTCUSD.
@@ -66,7 +85,9 @@ com.mql.realmonitor.downloader.DownloadResult | NEU: Strukturierte Rückgabe fü
 com.mql.realmonitor.exception.MqlMonitorException | Spezifische Exception-Klasse für alle MQL-Fehler. Bietet kategorisierte Fehlertypen und benutzerfreundliche Nachrichten.
 
 ## GUI Layer - Core
-com.mql.realmonitor.gui.MqlRealMonitorGUI | Haupt-GUI-Klasse mit Provider-Tabelle und Toolbar. ERWEITERT: Currency-Button für XAUUSD/BTCUSD Loading (v1.2.1).
+com.mql.realmonitor.gui.MqlRealMonitorGUI | Haupt-GUI-Klasse mit Provider-Tabelle und Toolbar. ERWEITERT: Currency-Button für XAUUSD/BTCUSD Loading (v1.2.1). NEU (v1.4.0): Statusleiste mit KiScanner-Verbindungsanzeige (updateKiScannerConnectionState) - grün "Verbunden (HH:mm:ss)" / rot "Offline" / grau "nicht geprüft", bewusst nur bei Button-Klick geprüft (kein periodischer Ping).
+com.mql.realmonitor.gui.MqlSignalManager | Manager für Add/Delete Signal Funktionalität. Verwaltet: Add Signal Dialog, Delete Signal, den KiScanner-Button (ersetzt die überwachten Signale exklusiv durch die grünen/gelben Scanner-Signale, gleicht Favoritenklasse an die Ampel an) und den Trades-laden-Button (MQL5-Trade-Historie aller Signale, v1.4.1). Sicherheitsnetz: leere Scanner-Liste lässt Favoriten unverändert.
+com.mql.realmonitor.gui.MqlSettingsDialog | NEU (v1.4.1): Einstellungs-Dialog (Menü → Einstellungen → Konfiguration): MQL5-Zugang (separate Datei, außerhalb des Repos), KiScanner-URL/Token, Intervall, Timeout, User-Agent, URL-Template.
 com.mql.realmonitor.gui.SignalProviderTable | Refactored Provider-Tabelle mit modularer Architektur. ERWEITERT: WeeklyProfit und MonthlyProfit Spalten für Gewinn-Berechnungen.
 com.mql.realmonitor.gui.ProviderTableHelper | Hilfsfunktionen für SignalProviderTable. ERWEITERT: Support für Profit-Spalten mit Farbkodierung und numerischer Sortierung.
 com.mql.realmonitor.gui.SignalProviderContextMenu | Kontextmenü für Provider-Tabelle. ASYNCHRON: Doppelklick-Handler verhindert UI-Blocking. MQL5-Website-Link für Browser-Öffnung.

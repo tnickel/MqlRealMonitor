@@ -20,35 +20,42 @@ import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.MessageBox;
 
-import com.mql.realmonitor.downloader.WebDownloader;
-import com.mql.realmonitor.downloader.DownloadResult;
 import com.mql.realmonitor.downloader.FavoritesReader;
 import com.mql.realmonitor.config.IdTranslationManager;
+import com.mql.realmonitor.kiscanner.KiScannerClient;
+import com.mql.realmonitor.kiscanner.KiScannerFetchResult;
+import com.mql.realmonitor.kiscanner.KiScannerSignal;
+import com.mql.realmonitor.mql5.Mql5Credentials;
+import com.mql.realmonitor.mql5.TradeHistoryManager;
 
-import java.util.regex.Pattern;
-import java.util.regex.Matcher;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /**
  * Manager für Add/Delete Signal Funktionalität.
  * Verwaltet: Add Signal Dialog, Delete Signal, Tabellen-Selection Listener
+ * NEU: KiScanner-Import — ersetzt die überwachten Signale durch die
+ * grünen/gelben Signale des MqlKiScanner (REST /api/v1/signals)
+ * NEU: Trades laden — lädt die Trade-Historie aller Signale von MQL5
+ * (Login via Selenium-Chrome, Rate-Limit, Cache 24h)
  */
 public class MqlSignalManager {
-    
+
     private static final Logger LOGGER = Logger.getLogger(MqlSignalManager.class.getName());
-    
+
     private final MqlRealMonitorGUI gui;
-    
+
     // Signal-Komponenten
     private Button deleteSignalButton;
     private Button addSignalButton;
-    private Button addTop10Button;
-    
+    private Button kiScannerButton;
+    private Button tradesButton;
+    private Button simulatorButton;
+
     public MqlSignalManager(MqlRealMonitorGUI gui) {
         this.gui = gui;
     }
-    
+
     /**
      * Erstellt die Signal-Buttons (Add, Delete) in der Toolbar
      */
@@ -65,7 +72,7 @@ public class MqlSignalManager {
                 deleteSelectedSignalFromToolbar();
             }
         });
-        
+
         // Add Signal Button
         addSignalButton = new Button(parent, SWT.PUSH);
         addSignalButton.setText("➕ Hinzufügen");
@@ -77,21 +84,50 @@ public class MqlSignalManager {
                 addNewSignalToFavorites();
             }
         });
-        
-        // Add Top 10 Button
-        addTop10Button = new Button(parent, SWT.PUSH);
-        addTop10Button.setText("🏆 Top 10 MT4/MT5");
-        addTop10Button.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
-        addTop10Button.setToolTipText("Fügt die 10 besten MQL4 und MQL5 Strategien hinzu");
-        addTop10Button.addSelectionListener(new SelectionAdapter() {
+
+        // KiScanner Button: Signale vom MqlKiScanner übernehmen (nur grün/gelb)
+        kiScannerButton = new Button(parent, SWT.PUSH);
+        kiScannerButton.setText("🤖 KiScanner");
+        kiScannerButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        kiScannerButton.setToolTipText("Signalliste vom MqlKiScanner holen: nur GRÜN und GELB bewertete "
+                + "Signale werden angezeigt und überwacht, alle anderen werden entfernt");
+        kiScannerButton.addSelectionListener(new SelectionAdapter() {
             @Override
             public void widgetSelected(SelectionEvent e) {
-                addTop10Signals();
+                importKiScannerSignals();
             }
         });
-        
-        LOGGER.info("Signal-Buttons (Add, Delete, Top10) erstellt");
-        
+
+        // Trades Button: MQL5-Trade-Historie aller Signale laden (für Chart-Overlay)
+        tradesButton = new Button(parent, SWT.PUSH);
+        tradesButton.setText("📜 Trades laden");
+        tradesButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        tradesButton.setToolTipText("Trade-Historie aller Signale von MQL5 laden (benötigt MQL5-Zugang, "
+                + "dauert bei vielen Signalen einige Minuten — bewusst langsam wegen MQL5-Rate-Limit). "
+                + "Die Historie erscheint GRAU im Chart (Doppelklick auf eine Zeile).");
+        tradesButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                refreshTrades();
+            }
+        });
+
+        // Simulator Button: Equity-Simulation aller Strategien ab Startdatum
+        simulatorButton = new Button(parent, SWT.PUSH);
+        simulatorButton.setText("📊 Simulator");
+        simulatorButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        simulatorButton.setToolTipText("Simuliert alle Strategien ab dem Startdatum aus der Konfiguration "
+                + "mit dem Startkapital je Strategie (Lot-Skalierung wie beim Signal-Kopieren). "
+                + "Zeigt die Equity-Kurven im Scroll-Fenster, unten das Portfolio.");
+        simulatorButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                openSimulator();
+            }
+        });
+
+        LOGGER.info("Signal-Buttons (Add, Delete, KiScanner, Trades, Simulator) erstellt");
+
         // Tabellen-Selection Listener einrichten (verzögert)
         gui.getDisplay().timerExec(1000, () -> {
             setupTableSelectionListener();
@@ -490,195 +526,341 @@ public class MqlSignalManager {
             // Buttons werden automatisch durch SWT disposed
             deleteSignalButton = null;
             addSignalButton = null;
-            addTop10Button = null;
-            
+            kiScannerButton = null;
+            tradesButton = null;
+            simulatorButton = null;
+
             LOGGER.info("SignalManager bereinigt");
-            
+
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Fehler beim Bereinigen des SignalManagers", e);
         }
     }
 
     /**
-     * Lädt die 10 besten MQL4 und MQL5 Strategien von MQL5.com herunter und fügt sie hinzu.
+     * NEU: Holt die Signalliste vom MqlKiScanner und übernimmt sie exklusiv.
+     *
+     * Nur Signale mit Gesamt-Ampel GRÜN oder GELB werden übernommen: Sie
+     * ersetzen die komplette favorites.txt (neu hinzufügen, nicht mehr
+     * enthaltene entfernen). Danach wird die Tabelle neu aufgebaut und ein
+     * Refresh ausgelöst — die Werte werden wie üblich als Tick-Daten
+     * gespeichert und überwacht. Die Favoritenklasse richtet sich nach der
+     * Ampel: grün = Klasse 1 (hellgrün), gelb = Klasse 2 (hellgelb).
      */
-    private void addTop10Signals() {
-        if (addTop10Button == null || addTop10Button.isDisposed()) {
+    private void importKiScannerSignals() {
+        if (kiScannerButton == null || kiScannerButton.isDisposed()) {
             return;
         }
 
-        // Button während des Vorgangs deaktivieren
-        addTop10Button.setEnabled(false);
-        addTop10Button.setText("Lädt...");
-        gui.updateStatus("Lade Top 10 MT4/MT5 Strategien...");
+        kiScannerButton.setEnabled(false);
+        kiScannerButton.setText("Lädt...");
+        gui.updateStatus("Hole grüne und gelbe Signale vom MqlKiScanner...");
+        gui.updateKiScannerConnectionState("checking", null);
 
         new Thread(() -> {
-            int addedCount = 0;
-            int skippedCount = 0;
-            int failedCount = 0;
-            
             StringBuilder summaryText = new StringBuilder();
-            summaryText.append("Ergebnis des Top 10 Imports:\n\n");
 
             try {
-                WebDownloader downloader = new WebDownloader(gui.getMonitor().getConfig());
+                KiScannerClient client = new KiScannerClient(gui.getMonitor().getConfig());
+                KiScannerFetchResult result = client.fetchGreenAndYellowSignals();
+
+                if (!result.isSuccess()) {
+                    // Abruf fehlgeschlagen: Favoriten unangetastet lassen
+                    gui.updateKiScannerConnectionState("error", result.getErrorMessage());
+                    gui.getDisplay().asyncExec(() -> {
+                        resetKiScannerButton();
+                        gui.updateStatus("KiScanner-Abruf fehlgeschlagen");
+                        MessageBox box = new MessageBox(gui.getShell(), SWT.ICON_ERROR | SWT.OK);
+                        box.setText("KiScanner-Import fehlgeschlagen");
+                        box.setMessage(result.getErrorMessage());
+                        box.open();
+                    });
+                    return;
+                }
+
+                // Verbindung steht (der Abruf selbst ist der Verbindungstest)
+                gui.updateKiScannerConnectionState("ok", null);
+
+                // NEU: Plattform-Zuordnung (MT4/MT5) dauerhaft speichern — der
+                // Browser-Export probiert dann sofort den richtigen Export-Typ
+                java.util.Map<String, String> platformen = new java.util.LinkedHashMap<>();
+                for (KiScannerSignal signal : result.getSignals()) {
+                    if (signal.getPlatform() != null && !signal.getPlatform().isEmpty()) {
+                        platformen.put(String.valueOf(signal.getSignalId()), signal.getPlatform());
+                    }
+                }
+                TradeHistoryManager.savePlatformMappings(gui.getMonitor().getConfig(), platformen);
+
+                java.util.List<KiScannerSignal> scannerSignale = result.getSignals();
+
+                if (scannerSignale.isEmpty()) {
+                    // Sicherheitsnetz: leere Liste NICHT übernehmen (würde alles löschen)
+                    gui.getDisplay().asyncExec(() -> {
+                        resetKiScannerButton();
+                        gui.updateStatus("KiScanner: keine grünen/gelben Signale");
+                        MessageBox box = new MessageBox(gui.getShell(), SWT.ICON_WARNING | SWT.OK);
+                        box.setText("KiScanner-Import");
+                        box.setMessage("Der MqlKiScanner hat aktuell KEINE Signale mit Ampel grün oder gelb.\n\n"
+                                + "Gesamt in der Scanner-Datenbank: " + result.getTotalCount() + " Signale.\n\n"
+                                + "Die bestehenden Favoriten bleiben unverändert.");
+                        box.open();
+                    });
+                    return;
+                }
+
+                summaryText.append("Vom MqlKiScanner übernommen (nur GRÜN und GELB):\n\n");
+
                 FavoritesReader favoritesReader = new FavoritesReader(gui.getMonitor().getConfig());
                 IdTranslationManager translationManager = gui.getProviderTable().getIdTranslationManager();
-                
-                // 1. MetaTrader 5 Top 10
-                summaryText.append("--- MetaTrader 5 ---\n");
-                String mt5Url = "https://www.mql5.com/de/signals/mt5/list?orderby=subscribers";
-                DownloadResult mt5Result = downloader.downloadFromWebUrl(mt5Url);
-                if (mt5Result.isSuccess()) {
-                    Map<String, String> mt5Signals = parseTopSignals(mt5Result.getContent());
-                    int processed = 0;
-                    for (Map.Entry<String, String> entry : mt5Signals.entrySet()) {
-                        String id = entry.getKey();
-                        String name = entry.getValue();
-                        
-                        if (favoritesReader.containsSignalId(id)) {
-                            skippedCount++;
-                            summaryText.append("• ").append(name).append(" (").append(id).append("): Bereits vorhanden\n");
-                        } else {
-                            boolean success = favoritesReader.addSignal(id, "1");
-                            if (success) {
-                                if (translationManager != null) {
-                                    translationManager.addOrUpdateMapping(id, name);
-                                }
-                                addedCount++;
-                                summaryText.append("• ").append(name).append(" (").append(id).append("): Hinzugefügt (Klasse 1)\n");
-                            } else {
-                                failedCount++;
-                                summaryText.append("• ").append(name).append(" (").append(id).append("): Hinzufügen fehlgeschlagen\n");
-                            }
-                        }
-                        processed++;
-                        if (processed >= 10) break;
-                    }
-                    if (processed == 0) {
-                        summaryText.append("Keine Strategien auf MT5-Seite gefunden.\n");
-                    }
-                } else {
-                    summaryText.append("Fehler beim Herunterladen der MT5-Liste: ").append(mt5Result.getErrorMessage()).append("\n");
-                    LOGGER.warning("Fehler beim Herunterladen der MT5-Liste: " + mt5Result.getDetailedErrorDescription());
+
+                // Scanner-IDs in Original-Reihenfolge sammeln
+                Set<String> scannerIds = new LinkedHashSet<>();
+                for (KiScannerSignal signal : scannerSignale) {
+                    scannerIds.add(String.valueOf(signal.getSignalId()));
                 }
 
-                summaryText.append("\n");
+                // 1. Nicht mehr überwachte Signale entfernen (ein Backup, eine Operation)
+                java.util.List<String> aktuelle = favoritesReader.readFavorites();
+                Set<String> zuEntfernen = new LinkedHashSet<>();
+                for (String id : aktuelle) {
+                    if (!scannerIds.contains(id)) {
+                        zuEntfernen.add(id);
+                    }
+                }
+                int removedCount = 0;
+                if (!zuEntfernen.isEmpty()) {
+                    if (favoritesReader.removeSignals(zuEntfernen)) {
+                        removedCount = zuEntfernen.size();
+                    } else {
+                        LOGGER.warning("Konnte Signale nicht aus Favoriten entfernen: " + zuEntfernen);
+                    }
+                }
 
-                // 2. MetaTrader 4 Top 10
-                summaryText.append("--- MetaTrader 4 ---\n");
-                String mt4Url = "https://www.mql5.com/de/signals/mt4/list?orderby=subscribers";
-                DownloadResult mt4Result = downloader.downloadFromWebUrl(mt4Url);
-                if (mt4Result.isSuccess()) {
-                    Map<String, String> mt4Signals = parseTopSignals(mt4Result.getContent());
-                    int processed = 0;
-                    for (Map.Entry<String, String> entry : mt4Signals.entrySet()) {
-                        String id = entry.getKey();
-                        String name = entry.getValue();
-                        
-                        if (favoritesReader.containsSignalId(id)) {
-                            skippedCount++;
-                            summaryText.append("• ").append(name).append(" (").append(id).append("): Bereits vorhanden\n");
-                        } else {
-                            boolean success = favoritesReader.addSignal(id, "1");
-                            if (success) {
-                                if (translationManager != null) {
-                                    translationManager.addOrUpdateMapping(id, name);
-                                }
-                                addedCount++;
-                                summaryText.append("• ").append(name).append(" (").append(id).append("): Hinzugefügt (Klasse 1)\n");
-                            } else {
-                                failedCount++;
-                                summaryText.append("• ").append(name).append(" (").append(id).append("): Hinzufügen fehlgeschlagen\n");
+                // 2. Fehlende Scanner-Signale hinzufügen; Namen für alle aktualisieren.
+                // Die Favoritenklasse folgt IMMER der Ampel (grün = 1 hellgrün,
+                // gelb = 2 hellgelb) — auch bei bereits vorhandenen Signalen,
+                // damit die Zeilenfarbe der Tabelle der Scanner-Bewertung entspricht.
+                int addedCount = 0;
+                int classUpdatedCount = 0;
+                for (KiScannerSignal signal : scannerSignale) {
+                    String id = String.valueOf(signal.getSignalId());
+                    String ampelKlasse = KiScannerSignal.AMPEL_GRUEN.equals(signal.getAmpel()) ? "1" : "2";
+
+                    if (translationManager != null && !signal.getName().isEmpty()) {
+                        translationManager.addOrUpdateMapping(id, signal.getName());
+                    }
+
+                    if (!aktuelle.contains(id)) {
+                        if (favoritesReader.addSignal(id, ampelKlasse)) {
+                            addedCount++;
+                        }
+                    } else {
+                        // Vorhanden: Klasse auf die Ampel angleichen (z. B. altes
+                        // Klasse-1-Signal das jetzt nur noch gelb ist)
+                        String aktuelleKlasse = favoritesReader.getFavoriteClass(id);
+                        if (aktuelleKlasse != null && !aktuelleKlasse.equals(ampelKlasse)) {
+                            if (favoritesReader.updateSignalClass(id, ampelKlasse)) {
+                                classUpdatedCount++;
                             }
                         }
-                        processed++;
-                        if (processed >= 10) break;
                     }
-                    if (processed == 0) {
-                        summaryText.append("Keine Strategien auf MT4-Seite gefunden.\n");
-                    }
-                } else {
-                    summaryText.append("Fehler beim Herunterladen der MT4-Liste: ").append(mt4Result.getErrorMessage()).append("\n");
-                    LOGGER.warning("Fehler beim Herunterladen der MT4-Liste: " + mt4Result.getDetailedErrorDescription());
+
+                    summaryText.append(signal.getAmpelEmoji()).append(" ")
+                            .append(signal.getName().isEmpty() ? id : signal.getName())
+                            .append(" (").append(id).append(")")
+                            .append("\n");
                 }
+
+                int finalRemovedCount = removedCount;
+                int finalAddedCount = addedCount;
+                int finalClassUpdatedCount = classUpdatedCount;
+                int keptCount = scannerIds.size() - finalAddedCount;
 
                 summaryText.append("\nZusammenfassung:\n");
-                summaryText.append("Hinzugefügt: ").append(addedCount).append("\n");
-                summaryText.append("Bereits vorhanden: ").append(skippedCount).append("\n");
-                if (failedCount > 0) {
-                    summaryText.append("Fehlgeschlagen: ").append(failedCount).append("\n");
+                summaryText.append("Überwacht (grün/gelb): ").append(scannerIds.size()).append("\n");
+                summaryText.append("Neu hinzugefügt: ").append(finalAddedCount).append("\n");
+                summaryText.append("Bereits vorhanden: ").append(keptCount).append("\n");
+                if (finalClassUpdatedCount > 0) {
+                    summaryText.append("Klasse an Ampel angepasst: ").append(finalClassUpdatedCount).append("\n");
                 }
+                summaryText.append("Entfernt (nicht grün/gelb): ").append(finalRemovedCount).append("\n\n");
+                summaryText.append("Hinweis: Die bisher aufgezeichneten Tick-Daten entfernter Signale\n");
+                summaryText.append("bleiben erhalten (Realtick\\tick\\<Signal-ID>.txt) - falls ein Signal\n");
+                summaryText.append("später wieder grün oder gelb wird, läuft die Historie weiter.\n\n");
+                summaryText.append("Die Überwachung startet jetzt für diese Signale.");
+
+                // UI-Thread: Tabelle auf die Scanner-Signale umstellen
+                gui.getDisplay().asyncExec(() -> {
+                    resetKiScannerButton();
+
+                    if (gui.getProviderTable() != null) {
+                        gui.getProviderTable().clearAllProviders();
+                        for (KiScannerSignal signal : scannerSignale) {
+                            gui.getProviderTable().addEmptyProviderEntry(
+                                    String.valueOf(signal.getSignalId()), "Warte auf KiScanner-Daten...");
+                        }
+                        gui.getProviderTable().refreshFavoriteClasses();
+                        gui.getProviderTable().refreshProviderNames();
+                    }
+
+                    gui.updateStatus("KiScanner-Import: " + scannerIds.size()
+                            + " Signale (grün/gelb) - Starte Überwachung...");
+
+                    // Refresh auslösen: lädt alle Signale und schreibt Tick-Daten
+                    gui.getDisplay().timerExec(1000, () -> gui.getMonitor().manualRefresh());
+
+                    MessageBox box = new MessageBox(gui.getShell(), SWT.ICON_INFORMATION | SWT.OK);
+                    box.setText("KiScanner-Import");
+                    box.setMessage(summaryText.toString());
+                    box.open();
+                });
 
             } catch (Exception ex) {
-                LOGGER.log(Level.SEVERE, "Fehler beim Hinzufügen der Top 10 Strategien", ex);
-                summaryText.append("\nSchwerwiegender Fehler beim Import: ").append(ex.getMessage()).append("\n");
+                LOGGER.log(Level.SEVERE, "Fehler beim KiScanner-Import", ex);
+                gui.updateKiScannerConnectionState("error",
+                        "Unerwarteter Fehler: " + ex.getMessage());
+                gui.getDisplay().asyncExec(() -> {
+                    resetKiScannerButton();
+                    gui.updateStatus("KiScanner-Import: Fehler");
+                    MessageBox box = new MessageBox(gui.getShell(), SWT.ICON_ERROR | SWT.OK);
+                    box.setText("KiScanner-Import fehlgeschlagen");
+                    box.setMessage("Unerwarteter Fehler beim Import:\n\n" + ex.getMessage());
+                    box.open();
+                });
             }
-
-            // UI-Thread aktualisieren
-            final int finalAdded = addedCount;
-            gui.getDisplay().asyncExec(() -> {
-                if (!addTop10Button.isDisposed()) {
-                    addTop10Button.setEnabled(true);
-                    addTop10Button.setText("🏆 Top 10 MT4/MT5");
-                }
-                
-                gui.updateStatus("Top 10 Import abgeschlossen. Hinzugefügt: " + finalAdded);
-
-                // Tabelle aktualisieren, wenn neue Favoriten hinzugefügt wurden
-                if (finalAdded > 0 && gui.getProviderTable() != null) {
-                    gui.getProviderTable().refreshFavoriteClasses();
-                    gui.getProviderTable().refreshProviderNames();
-                    // Manuellen Refresh auslösen um neue Daten zu laden
-                    gui.getDisplay().timerExec(1000, () -> {
-                        gui.getMonitor().manualRefresh();
-                    });
-                }
-
-                // Ergebnis anzeigen
-                MessageBox box = new MessageBox(gui.getShell(), SWT.ICON_INFORMATION | SWT.OK);
-                box.setText("Top 10 Import");
-                box.setMessage(summaryText.toString());
-                box.open();
-            });
         }).start();
     }
 
     /**
-     * Parst die Signal-IDs und Namen aus dem HTML-Inhalt.
+     * NEU: Öffnet das Simulator-Fenster (scrollbare Liste mit simulierten
+     * Equity-Kurven je Strategie + Portfolio am Ende)
      */
-    private Map<String, String> parseTopSignals(String html) {
-        Map<String, String> signals = new LinkedHashMap<>();
-        if (html == null || html.isEmpty()) {
-            return signals;
+    private void openSimulator() {
+        try {
+            new SimulatorWindow(gui).open();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen des Simulators", e);
+            gui.showError("Simulator", "Konnte Simulator nicht öffnen: " + e.getMessage());
         }
-
-        Pattern pattern = Pattern.compile("data-id=\"(\\d+)\"\\s+data-name=\"([^\"]+)\"");
-        Matcher matcher = pattern.matcher(html);
-
-        while (matcher.find()) {
-            String id = matcher.group(1);
-            String name = matcher.group(2);
-            // HTML-Entities dekodieren
-            name = unescapeHtml(name);
-            if (!signals.containsKey(id)) {
-                signals.put(id, name);
-            }
-        }
-
-        return signals;
     }
 
     /**
-     * Einfaches HTML-Entity Decoding
+     * NEU: Setzt den KiScanner-Button nach dem Import zurück
      */
-    private String unescapeHtml(String text) {
-        if (text == null) return null;
-        return text.replace("&amp;", "&")
-                   .replace("&quot;", "\"")
-                   .replace("&apos;", "'")
-                   .replace("&#39;", "'")
-                   .replace("&lt;", "<")
-                   .replace("&gt;", ">");
+    private void resetKiScannerButton() {
+        if (kiScannerButton != null && !kiScannerButton.isDisposed()) {
+            kiScannerButton.setEnabled(true);
+            kiScannerButton.setText("🤖 KiScanner");
+        }
     }
+
+    /**
+     * NEU: Lädt die Trade-Historie aller überwachten Signale von MQL5
+     * ("Refresh Trades").
+     *
+     * Ablauf: Login-Check (Zugangsdaten aus den Einstellungen) → für jedes
+     * Signal den Export herunterladen und in Realtick\trades speichern
+     * (Cache 24 h, Rate-Limit 2-4 s je Request — bewusst langsam, sonst
+     * Ärger mit MQL5). Danach erscheint die Historie GRAU im Chart der
+     * jeweiligen Zeile (Doppelklick).
+     */
+    private void refreshTrades() {
+        if (tradesButton == null || tradesButton.isDisposed()) {
+            return;
+        }
+
+        // Zugangsdaten vorher prüfen — mit Hinweis auf die Einstellungen
+        Mql5Credentials credentials = new Mql5Credentials(
+                gui.getMonitor().getConfig().getConfigDir());
+        if (!credentials.isConfigured()) {
+            MessageBox box = new MessageBox(gui.getShell(), SWT.ICON_WARNING | SWT.OK);
+            box.setText("Keine MQL5-Zugangsdaten");
+            box.setMessage("Für den Trade-Historie-Download sind MQL5-Zugangsdaten nötig.\n\n"
+                    + "Bitte unter Menü → Einstellungen → Konfiguration MQL5-Login und "
+                    + "Passwort hinterlegen.\n\n(Keine Sorge: Die Daten werden außerhalb "
+                    + "des Programverzeichnisses gespeichert und nie veröffentlicht.)");
+            box.open();
+            return;
+        }
+
+        tradesButton.setEnabled(false);
+        tradesButton.setText("Lädt...");
+        gui.updateStatus("Lade Trade-Historie von MQL5 (Login)...");
+
+        java.util.List<String> favoriteIds = new FavoritesReader(gui.getMonitor().getConfig()).readFavorites();
+        if (favoriteIds.isEmpty()) {
+            tradesButton.setEnabled(true);
+            tradesButton.setText("📜 Trades laden");
+            gui.updateStatus("Keine Signale in den Favoriten");
+            gui.showInfo("Trades laden", "Keine Signale in den Favoriten vorhanden.");
+            return;
+        }
+
+        final int anzahl = favoriteIds.size();
+
+        new Thread(() -> {
+            StringBuilder summary = new StringBuilder();
+
+            try {
+                TradeHistoryManager manager = new TradeHistoryManager(gui.getMonitor().getConfig());
+                // NEU: Plattform-Zuordnung aus dem KiScanner-Import nutzen —
+                // richtige Export-URL je Signal (MT4: history, MT5: positions)
+                java.util.Map<String, String> platformen =
+                        TradeHistoryManager.readPlatformMappings(gui.getMonitor().getConfig());
+                TradeHistoryManager.RefreshResult result = manager.refreshAll(favoriteIds, platformen,
+                        meldung -> gui.updateStatus(meldung));
+
+                summary.append("Trade-Historie von MQL5 geladen:\n\n");
+                summary.append("Signale: ").append(anzahl).append("\n");
+                summary.append("Neu geladen: ").append(result.successCount - result.cacheCount).append("\n");
+                summary.append("Aus Cache (< 24 h): ").append(result.cacheCount).append("\n");
+                summary.append("Fehler: ").append(result.errorCount).append("\n\n");
+
+                for (TradeHistoryManager.SignalResult r : result.results) {
+                    if (r.success && !r.fromCache) {
+                        summary.append("✓ ").append(r.signalId).append(": ")
+                                .append(r.tradeCount).append(" Trades\n");
+                    } else if (r.fromCache) {
+                        summary.append("⏱ ").append(r.signalId).append(": aus Cache\n");
+                    } else {
+                        summary.append("✗ ").append(r.signalId).append(": ")
+                                .append(r.error != null && r.error.length() > 120
+                                        ? r.error.substring(0, 120) + "..." : r.error).append("\n");
+                    }
+                }
+
+                summary.append("\nDie Historie erscheint GRAU im Chart (Doppelklick auf eine Zeile).");
+
+                gui.getDisplay().asyncExec(() -> {
+                    if (!tradesButton.isDisposed()) {
+                        tradesButton.setEnabled(true);
+                        tradesButton.setText("📜 Trades laden");
+                    }
+                    gui.updateStatus("Trade-Historie geladen: " + result.successCount + " OK, "
+                            + result.errorCount + " Fehler");
+                    MessageBox box = new MessageBox(gui.getShell(),
+                            (result.errorCount > 0 && result.successCount == 0
+                                    ? SWT.ICON_ERROR : SWT.ICON_INFORMATION) | SWT.OK);
+                    box.setText("Trades laden");
+                    box.setMessage(summary.toString());
+                    box.open();
+                });
+
+            } catch (Exception ex) {
+                LOGGER.log(Level.SEVERE, "Fehler beim Laden der Trade-Historie", ex);
+                gui.getDisplay().asyncExec(() -> {
+                    if (!tradesButton.isDisposed()) {
+                        tradesButton.setEnabled(true);
+                        tradesButton.setText("📜 Trades laden");
+                    }
+                    gui.updateStatus("Trades laden: Fehler");
+                    MessageBox box = new MessageBox(gui.getShell(), SWT.ICON_ERROR | SWT.OK);
+                    box.setText("Trades laden fehlgeschlagen");
+                    box.setMessage("Unerwarteter Fehler:\n\n" + ex.getMessage());
+                    box.open();
+                });
+            }
+        }).start();
+    }
+
 }

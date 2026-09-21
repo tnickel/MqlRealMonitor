@@ -27,11 +27,29 @@ public class MqlRealMonitorConfig {
     private static final String DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
     private static final String DEFAULT_URL_TEMPLATE = "https://www.mql5.com/de/signals/%s?source=Site+Signals+Subscriptions#!tab=account";
     
+    // NEU: MqlKiScanner REST-Interface (schreibgeschützt, läuft lokal neben der Streamlit-App)
+    private static final String DEFAULT_KISCANNER_URL = "http://127.0.0.1:8611";
+
+    // NEU: Simulator-Defaults (Startdatum und Startkapital je Strategie)
+    private static final String DEFAULT_SIMULATOR_START_DATE = "2026-09-01";
+    private static final double DEFAULT_SIMULATOR_START_CAPITAL = 10000.0;
+    
     // Konfigurationsvariablen - GEÄNDERT: intervalHour → intervalMinutes
     private int intervalMinutes;
     private int timeoutSeconds;
     private String userAgent;
     private String urlTemplate;
+    
+    // NEU: Base-URL des MqlKiScanner REST-Interface (leer = nicht konfiguriert)
+    private String kiScannerBaseUrl;
+    
+    // NEU: Optionaler Zugriffs-Token für das KiScanner REST-Interface (X-User-Key).
+    // Leer = kein Token nötig. Der Wert wird bewusst NIE geloggt.
+    private String kiScannerToken;
+
+    // NEU: Simulator — Startdatum (yyyy-MM-dd) und Startkapital je Strategie
+    private String simulatorStartDate;
+    private double simulatorStartCapital;
     
     // NEU: Dynamische Pfade basierend auf konfigurierbarem BASE_PATH
     private String basePath;
@@ -40,6 +58,7 @@ public class MqlRealMonitorConfig {
     private String favoritesFile;
     private String downloadDir;
     private String tickDir;
+    private String tradesDir;   // NEU: Trade-Historie von MQL5 (Realtick\trades)
     
     private Properties properties;
     
@@ -86,6 +105,7 @@ public class MqlRealMonitorConfig {
         this.favoritesFile = this.configDir + "\\favorites.txt";
         this.downloadDir = this.basePath + "\\Realtick\\download";
         this.tickDir = this.basePath + "\\Realtick\\tick";
+        this.tradesDir = this.basePath + "\\Realtick\\trades";
         
         LOGGER.info("Pfade neu berechnet:");
         LOGGER.info("  BASE_PATH: " + this.basePath);
@@ -103,6 +123,10 @@ public class MqlRealMonitorConfig {
         this.timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
         this.userAgent = DEFAULT_USER_AGENT;
         this.urlTemplate = DEFAULT_URL_TEMPLATE;
+        this.kiScannerBaseUrl = DEFAULT_KISCANNER_URL;
+        this.kiScannerToken = "";
+        this.simulatorStartDate = DEFAULT_SIMULATOR_START_DATE;
+        this.simulatorStartCapital = DEFAULT_SIMULATOR_START_CAPITAL;
     }
     
     /**
@@ -179,6 +203,32 @@ public class MqlRealMonitorConfig {
         userAgent = properties.getProperty("userAgent", DEFAULT_USER_AGENT);
         urlTemplate = properties.getProperty("urlTemplate", DEFAULT_URL_TEMPLATE);
         
+        // NEU: MqlKiScanner REST-Base-URL (Rückwärtskompatibel: Default, wenn nicht gesetzt)
+        kiScannerBaseUrl = properties.getProperty("kiscannerBaseUrl", DEFAULT_KISCANNER_URL).trim();
+        if (kiScannerBaseUrl.isEmpty()) {
+            kiScannerBaseUrl = DEFAULT_KISCANNER_URL;
+        }
+        
+        // NEU: Optionaler Zugriffs-Token (leer = kein Token)
+        kiScannerToken = properties.getProperty("kiscannerToken", "").trim();
+
+        // NEU: Simulator-Parameter
+        simulatorStartDate = properties.getProperty("simulatorStartDate", DEFAULT_SIMULATOR_START_DATE).trim();
+        if (simulatorStartDate.isEmpty()) {
+            simulatorStartDate = DEFAULT_SIMULATOR_START_DATE;
+        }
+        try {
+            simulatorStartCapital = Double.parseDouble(
+                    properties.getProperty("simulatorStartCapital",
+                            String.valueOf(DEFAULT_SIMULATOR_START_CAPITAL)).trim());
+        } catch (NumberFormatException e) {
+            LOGGER.warning("Ungültiger simulatorStartCapital, verwende Standard: " + DEFAULT_SIMULATOR_START_CAPITAL);
+            simulatorStartCapital = DEFAULT_SIMULATOR_START_CAPITAL;
+        }
+        if (simulatorStartCapital <= 0) {
+            simulatorStartCapital = DEFAULT_SIMULATOR_START_CAPITAL;
+        }
+        
         // NEU: BASE_PATH aus Properties laden (falls dort gespeichert)
         String savedBasePath = properties.getProperty("basePath");
         if (savedBasePath != null && !savedBasePath.equals(basePath)) {
@@ -199,6 +249,16 @@ public class MqlRealMonitorConfig {
         properties.setProperty("timeoutSeconds", String.valueOf(timeoutSeconds));
         properties.setProperty("userAgent", userAgent);
         properties.setProperty("urlTemplate", urlTemplate);
+        
+        // NEU: MqlKiScanner REST-Base-URL speichern
+        properties.setProperty("kiscannerBaseUrl", kiScannerBaseUrl);
+        
+        // NEU: Zugriffs-Token speichern (Wert fließt nur in die Config-Datei, nie ins Log)
+        properties.setProperty("kiscannerToken", kiScannerToken);
+
+        // NEU: Simulator-Parameter speichern
+        properties.setProperty("simulatorStartDate", simulatorStartDate);
+        properties.setProperty("simulatorStartCapital", String.valueOf(simulatorStartCapital));
         
         // NEU: BASE_PATH für Referenz speichern (wird aber nicht beim Laden verwendet)
         properties.setProperty("basePath", basePath);
@@ -231,6 +291,7 @@ public class MqlRealMonitorConfig {
         createDirectoryIfNotExists(configDir);
         createDirectoryIfNotExists(downloadDir);
         createDirectoryIfNotExists(tickDir);
+        createDirectoryIfNotExists(tradesDir);
         createDirectoryIfNotExists(Paths.get(favoritesFile).getParent().toString());
     }
     
@@ -259,6 +320,8 @@ public class MqlRealMonitorConfig {
         LOGGER.info("  Download-Verzeichnis: " + downloadDir);
         LOGGER.info("  Tick-Verzeichnis: " + tickDir);
         LOGGER.info("  Config-Datei: " + configFile);
+        LOGGER.info("  KiScanner REST-URL: " + kiScannerBaseUrl);
+        LOGGER.info("  KiScanner Token: " + (kiScannerToken.isEmpty() ? "nicht gesetzt" : "gesetzt (Wert wird nicht geloggt)"));
         LOGGER.info("===============================");
     }
     
@@ -289,6 +352,111 @@ public class MqlRealMonitorConfig {
     
     public String getUrlTemplate() {
         return urlTemplate;
+    }
+
+    /**
+     * NEU: Setzt das URL-Template (muss "%s" für die Signal-ID enthalten)
+     */
+    public void setUrlTemplate(String urlTemplate) {
+        if (urlTemplate != null && urlTemplate.trim().contains("%s")) {
+            this.urlTemplate = urlTemplate.trim();
+        }
+    }
+    
+    /**
+     * NEU: Gibt die Base-URL des MqlKiScanner REST-Interface zurück
+     * (z. B. http://127.0.0.1:8611)
+     */
+    public String getKiScannerBaseUrl() {
+        return kiScannerBaseUrl;
+    }
+    
+    /**
+     * NEU: Setzt die Base-URL des MqlKiScanner REST-Interface
+     */
+    public void setKiScannerBaseUrl(String url) {
+        if (url != null && !url.trim().isEmpty()) {
+            // Abschließenden Slash entfernen für saubere URL-Komposition
+            this.kiScannerBaseUrl = url.trim().replaceAll("/+$", "");
+        }
+    }
+    
+    /**
+     * NEU: Optionaler Zugriffs-Token für das KiScanner REST-Interface.
+     * Wird als X-User-Key Header gesendet; leer = kein Token.
+     */
+    public String getKiScannerToken() {
+        return kiScannerToken;
+    }
+    
+    public void setKiScannerToken(String token) {
+        this.kiScannerToken = token != null ? token.trim() : "";
+    }
+    
+    /**
+     * NEU: Ist ein KiScanner-Zugriffs-Token konfiguriert?
+     */
+    public boolean hasKiScannerToken() {
+        return kiScannerToken != null && !kiScannerToken.isEmpty();
+    }
+
+    // ------------------------------------------------------------ Simulator
+
+    /**
+     * NEU: Simulator-Startdatum als String (yyyy-MM-dd)
+     */
+    public String getSimulatorStartDate() {
+        return simulatorStartDate;
+    }
+
+    /**
+     * NEU: Simulator-Startdatum geparst; ungültige/leere Werte fallen auf den
+     * ersten des Vormonats zurück (damit startet die GUI immer)
+     */
+    public java.time.LocalDate getSimulatorStartDateParsed() {
+        try {
+            return java.time.LocalDate.parse(simulatorStartDate,
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        } catch (Exception e) {
+            return java.time.LocalDate.now().withDayOfMonth(1).minusMonths(1);
+        }
+    }
+
+    public void setSimulatorStartDate(String date) {
+        if (date != null && date.trim().matches("\\d{4}-\\d{2}-\\d{2}")) {
+            this.simulatorStartDate = date.trim();
+        }
+    }
+
+    /**
+     * NEU: Startkapital je Strategie für den Simulator
+     */
+    public double getSimulatorStartCapital() {
+        return simulatorStartCapital;
+    }
+
+    public void setSimulatorStartCapital(double capital) {
+        if (capital > 0) {
+            this.simulatorStartCapital = capital;
+        }
+    }
+    
+    /**
+     * NEU: Baut die REST-URL für die Signalliste des MqlKiScanner.
+     * Ampel-Filter gruen/gelb serverseitig — der Client filtert zusätzlich
+     * defensiv nochmal selbst.
+     * 
+     * @return URL z. B. http://127.0.0.1:8611/api/v1/signals?ampel=gruen%2Cgelb
+     */
+    public String buildKiScannerSignalsUrl() {
+        return kiScannerBaseUrl + "/api/v1/signals?ampel=gruen,gelb";
+    }
+    
+    /**
+     * NEU: Baut die REST-URL für den Health-Check des MqlKiScanner
+     */
+    public String buildKiScannerHealthUrl() {
+        return kiScannerBaseUrl + "/api/v1/health";
     }
     
     public String getBasePath() {
@@ -337,6 +505,36 @@ public class MqlRealMonitorConfig {
      */
     public String getTickFilePath(String signalId) {
         return tickDir + "\\" + signalId + ".txt";
+    }
+
+    /**
+     * NEU: Gibt das Verzeichnis für die MQL5-Trade-Historie zurück
+     */
+    public String getTradesDir() {
+        return tradesDir;
+    }
+
+    /**
+     * NEU: Pfad zum gespeicherten Trade-Export (Roh-CSV von MQL5)
+     */
+    public String getTradesFilePath(String signalId) {
+        return tradesDir + "\\" + signalId + "_positions.csv";
+    }
+
+    /**
+     * NEU: Pfad zur rekonstruierten Equity-Kurve (aus dem Trade-Export)
+     */
+    public String getEquityCurveFilePath(String signalId) {
+        return tradesDir + "\\" + signalId + "_equity.csv";
+    }
+
+    /**
+     * NEU: Pfad zur Trading-Kurve (Startkapital + Netto-Profits; Ein-/Auszahlungen
+     * nach Handelsbeginn sind herausgerechnet — für die Drawdown-Anzeige
+     * "wie weit geht es im schlimmsten Fall runter")
+     */
+    public String getTradingCurveFilePath(String signalId) {
+        return tradesDir + "\\" + signalId + "_trading.csv";
     }
     
     // Setter-Methoden für Konfigurationsänderungen - GEÄNDERT
@@ -423,6 +621,7 @@ public class MqlRealMonitorConfig {
         summary.append("  Intervall: ").append(intervalMinutes).append(" Minuten\n");
         summary.append("  Timeout: ").append(timeoutSeconds).append(" Sekunden\n");
         summary.append("  Favoriten-Datei: ").append(favoritesFile).append("\n");
+        summary.append("  KiScanner REST-URL: ").append(kiScannerBaseUrl).append("\n");
         summary.append("  Verzeichnisse: config, download, tick alle unter BASE_PATH\n");
         summary.append("  Gültig: ").append(isValid() ? "JA" : "NEIN");
         
