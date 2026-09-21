@@ -49,6 +49,10 @@ public class MqlRealMonitorGUI {
     private Shell shell;
     private SignalProviderTable providerTable;
     private StatusUpdater statusUpdater;
+
+    // NEU: Horizontale Teilung des Hauptbereichs (links Tabelle, rechts Icon-Panel)
+    private org.eclipse.swt.custom.SashForm mainSash;
+    private MqlSidePanel sidePanel;
     
     // UI Komponenten
     private Label statusLabel;
@@ -199,8 +203,27 @@ public class MqlRealMonitorGUI {
         // Toolbar wird vom ToolbarManager erstellt
         toolbarManager.createToolbar();
 
+        // NEU: Hauptbereich geteilt — links Tabelle, rechts Icon-Seitenpanel
+        // (SashForm: die Trennlinie lässt sich nach links/rechts verschieben)
+        mainSash = new org.eclipse.swt.custom.SashForm(shell, SWT.HORIZONTAL);
+        mainSash.SASH_WIDTH = 6;
+        mainSash.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+
         createProviderTable();
+        createSidePanel();
+
+        mainSash.setWeights(new int[] {80, 20});
+
         createStatusBar();
+    }
+
+    /**
+     * NEU: Erstellt das rechte Seitenpanel mit den Icons
+     * (Platzhalter — konkrete Funktionen folgen später)
+     */
+    private void createSidePanel() {
+        sidePanel = new MqlSidePanel(mainSash, this);
+        sidePanel.createContent();
     }
 
     /**
@@ -267,14 +290,14 @@ public class MqlRealMonitorGUI {
     }
     
     /**
-     * Erstellt die Signalprovider-Tabelle
+     * Erstellt die Signalprovider-Tabelle (linke Hälfte des SashForm)
      */
     private void createProviderTable() {
-        Group tableGroup = new Group(shell, SWT.NONE);
+        Group tableGroup = new Group(mainSash, SWT.NONE);
         tableGroup.setText("Signal Provider");
         tableGroup.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         tableGroup.setLayout(new GridLayout(1, false));
-        
+
         providerTable = new SignalProviderTable(tableGroup, this);
     }
     
@@ -628,6 +651,7 @@ public class MqlRealMonitorGUI {
     public MqlToolbarManager getToolbarManager() { return toolbarManager; }
     public MqlCurrencyManager getCurrencyManager() { return currencyManager; }
     public MqlSignalManager getSignalManager() { return signalManager; }
+    public MqlSidePanel getSidePanel() { return sidePanel; }
     
     // Version Information
     public static String getVersion() { return VERSION; }

@@ -35,6 +35,7 @@ import com.mql.realmonitor.simulator.SimulatorEngine.StrategyResult;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Date;
@@ -69,20 +70,49 @@ public class SimulatorWindow {
     private Font titleFont;
     private Font headerFont;
 
+    // Parameter des Laufs (open() ohne Parameter nutzt die globale Config)
+    private String fensterTitel = "Simulator";
+    private java.util.List<String> signalIds;
+    private LocalDate startDatum;
+    private double startKapital;
+
     public SimulatorWindow(MqlRealMonitorGUI gui) {
         this.gui = gui;
     }
 
     /**
-     * Öffnet das Simulator-Fenster (nicht-modal) und startet den Aufbau
-     * im Hintergrund.
+     * Öffnet das Simulator-Fenster mit den globalen Config-Werten über
+     * ALLE Favoriten (Toolbar-Button 📊 Simulator).
      */
     public void open() {
+        open("Alle Strategien",
+                new FavoritesReader(gui.getMonitor().getConfig()).readFavorites(),
+                gui.getMonitor().getConfig().getSimulatorStartDateParsed(),
+                gui.getMonitor().getConfig().getSimulatorStartCapital());
+    }
+
+    /**
+     * NEU: Öffnet das Simulator-Fenster für eine konkrete Signal-Auswahl —
+     * so öffnen die Portfolio-Simulatoren des Seitenpanels ihre Ansicht.
+     *
+     * @param titel      Fenster-/Kopfzeilen-Titel (z. B. Portfolio-Name)
+     * @param signalIds  Die zu simulierenden Signal-IDs
+     * @param start      Startdatum der Simulation
+     * @param kapital    Startkapital je Strategie
+     */
+    public void open(String titel, java.util.List<String> signalIds, LocalDate start, double kapital) {
+        this.fensterTitel = titel != null ? titel : "Simulator";
+        this.signalIds = signalIds;
+        this.startDatum = start;
+        this.startKapital = kapital;
+        doOpen();
+    }
+
+    private void doOpen() {
         Display display = gui.getDisplay();
         shell = new Shell(display, SWT.SHELL_TRIM | SWT.MODELESS);
-        shell.setText("Simulator — ab " + gui.getMonitor().getConfig().getSimulatorStartDate()
-                + " · " + String.format("%.0f", gui.getMonitor().getConfig().getSimulatorStartCapital())
-                + " Startkapital je Strategie");
+        shell.setText("Simulator — " + fensterTitel + " — ab " + startDatum
+                + " · " + String.format("%.0f", startKapital) + " Startkapital je Strategie");
         shell.setSize(1020, 860);
         shell.setLayout(new GridLayout(1, false));
 
@@ -101,9 +131,8 @@ public class SimulatorWindow {
         header.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         header.setLayout(new GridLayout(1, false));
         Label titel = new Label(header, SWT.NONE);
-        titel.setText("Simulator: Jede Strategie startet am "
-                + gui.getMonitor().getConfig().getSimulatorStartDate() + " mit "
-                + String.format("%.0f", gui.getMonitor().getConfig().getSimulatorStartCapital())
+        titel.setText(fensterTitel + ": Jede Strategie startet am " + startDatum + " mit "
+                + String.format("%.0f", startKapital)
                 + " (Lot-Skalierung wie beim Signal-Kopieren)");
         titel.setFont(headerFont);
         titel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
@@ -168,26 +197,24 @@ public class SimulatorWindow {
     private void buildChartsAsync(Display display, ScrolledComposite scrolled) {
         SimulatorEngine engine = new SimulatorEngine(gui.getMonitor().getConfig());
 
-        // Signale + Namen sammeln
-        java.util.List<String> signalIds = new FavoritesReader(gui.getMonitor().getConfig()).readFavorites();
+        java.util.List<String> ids = signalIds != null ? signalIds : java.util.List.of();
         Map<String, String> namen = new LinkedHashMap<>();
         IdTranslationManager translation = gui.getProviderTable() != null
                 ? gui.getProviderTable().getIdTranslationManager() : null;
-        for (String id : signalIds) {
+        for (String id : ids) {
             namen.put(id, translation != null ? translation.getProviderName(id) : id);
         }
 
-        if (signalIds.isEmpty()) {
+        if (ids.isEmpty()) {
             display.asyncExec(() -> {
                 if (!statusLabel.isDisposed()) {
-                    statusLabel.setText("Keine Signale in den Favoriten.");
+                    statusLabel.setText("Keine Signale ausgewählt.");
                 }
             });
             return;
         }
 
-        SimulationResult result = engine.simulate(signalIds, namen,
-                gui.getMonitor().getConfig().getSimulatorStartDateParsed());
+        SimulationResult result = engine.simulate(ids, namen, startDatum);
 
         // Status-Label ersetzen
         display.asyncExec(() -> {
