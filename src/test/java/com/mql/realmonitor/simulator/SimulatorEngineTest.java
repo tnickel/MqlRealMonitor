@@ -166,6 +166,216 @@ class SimulatorEngineTest {
         return r;
     }
 
+    // ------------------------------------------------- Perioden-Gewinn
+
+    @Test
+    void testGewinnSeitAusKurveMisstAbReferenz() {
+        LocalDate wochenStart = SimulatorEngine.aktuellerWochenstart();
+
+        SimulatorEngine.SimulationResult result = new SimulatorEngine.SimulationResult();
+        result.portfolioStartwert = 20_000.0;
+        result.portfolio.add(new EquityPoint(wochenStart.minusDays(3).atTime(10, 0), 20_000.0));
+        result.portfolio.add(new EquityPoint(wochenStart.plusDays(1).atTime(10, 0), 22_000.0));
+        result.portfolio.add(new EquityPoint(wochenStart.plusDays(2).atTime(10, 0), 21_500.0));
+
+        // Basis = letzter Wert vor/am Referenzzeitpunkt (20.000) → +1.500 = +7,5 %
+        double[] w = SimulatorEngine.gewinnSeitAusKurve(result, wochenStart.atStartOfDay());
+        assertEquals(1_500.0, w[0], 1e-9);
+        assertEquals(7.5, w[1], 1e-9);
+    }
+
+    @Test
+    void testGewinnSeitAusKurveDreimonatsReferenz() {
+        LocalDate heute = LocalDate.now();
+
+        SimulatorEngine.SimulationResult result = new SimulatorEngine.SimulationResult();
+        result.portfolioStartwert = 30_000.0;
+        result.portfolio.add(new EquityPoint(heute.minusMonths(4).atStartOfDay(), 25_000.0));
+        result.portfolio.add(new EquityPoint(heute.minusMonths(4).plusDays(1).atStartOfDay(), 26_000.0));
+        result.portfolio.add(new EquityPoint(heute.minusDays(1).atStartOfDay(), 29_000.0));
+
+        // 3M-Start liegt NACH allen Kurvenpunkten? Nein — vor minus 1 Tag:
+        // Basis = letzter Wert <= (heute − 3 Monate) = 26.000 → +3.000 = +11,54 %
+        double[] w = SimulatorEngine.gewinnSeitAusKurve(
+                result, heute.minusMonths(3).atStartOfDay());
+        assertEquals(3_000.0, w[0], 1e-9);
+        assertEquals(3_000.0 / 26_000.0 * 100.0, w[1], 1e-9);
+    }
+
+    @Test
+    void testGewinnSeitAusKurveKurveKomplettNachReferenz() {
+        LocalDate wochenStart = SimulatorEngine.aktuellerWochenstart();
+
+        SimulatorEngine.SimulationResult result = new SimulatorEngine.SimulationResult();
+        result.portfolioStartwert = 10_000.0;
+        result.portfolio.add(new EquityPoint(wochenStart.plusDays(1).atTime(10, 0), 11_000.0));
+
+        // Kein Wert vor dem Referenzzeitpunkt → Basis ist der Portfolio-Startwert
+        double[] w = SimulatorEngine.gewinnSeitAusKurve(result, wochenStart.atStartOfDay());
+        assertEquals(1_000.0, w[0], 1e-9);
+        assertEquals(10.0, w[1], 1e-9);
+    }
+
+    @Test
+    void testGewinnSeitOhneKurveIstNull() {
+        double[] w = SimulatorEngine.gewinnSeitAusKurve(
+                new SimulatorEngine.SimulationResult(), LocalDate.now().atStartOfDay());
+        assertEquals(0.0, w[0], 1e-9);
+        assertEquals(0.0, w[1], 1e-9);
+    }
+
+    @Test
+    void testGewinnSeitAusTicksGewichtetMitStartkapital() {
+        LocalDate wochenStart = SimulatorEngine.aktuellerWochenstart();
+
+        // A: 20.000 am Wochenstart → +5 % = +1.000 | B: 10.000 → −10 % = −1.000
+        List<SimulatorEngine.StrategyResult> strategien = new ArrayList<>();
+        strategien.add(strategie("A", new String[][]{
+                {"2026-09-01T00:00", "20000"},
+                {wochenStart.minusDays(2).atTime(10, 0).toString(), "20000"},
+                {wochenStart.plusDays(1).atTime(10, 0).toString(), "21000"}}));
+        strategien.add(strategie("B", new String[][]{
+                {"2026-09-01T00:00", "10000"},
+                {wochenStart.plusDays(1).atTime(10, 0).toString(), "9000"}}));
+
+        SimulatorEngine.SimulationResult result = new SimulatorEngine.SimulationResult();
+        result.strategien.addAll(strategien);
+        result.portfolio.add(new EquityPoint(wochenStart.minusDays(2).atTime(10, 0), 30_000.0));
+
+        // Wochenstart-Kapitale: A = 20.000 (Punkt vor Sonntag), B = 10.000 (Startkapital)
+        java.util.Map<String, Double> prozente = java.util.Map.of("A", 5.0, "B", -10.0);
+        double[] w = SimulatorEngine.gewinnSeitAusTicks(
+                result, prozente, wochenStart.atStartOfDay());
+        assertEquals(0.0, w[0], 1e-9); // +1.000 − 1.000
+        assertEquals(0.0, w[1], 1e-9); // gegenüber 30.000 Basis
+
+        java.util.Map<String, Double> nurA = java.util.Map.of("A", 5.0);
+        double[] w2 = SimulatorEngine.gewinnSeitAusTicks(
+                result, nurA, wochenStart.atStartOfDay());
+        assertEquals(1_000.0, w2[0], 1e-9); // B ohne Wochendaten zählt mit 0 %
+        assertEquals(10.0 / 3.0, w2[1], 1e-9);
+    }
+
+    // ---------------------------------------------------- Open Equity
+
+    @Test
+    void testOpenEquityKurveVerankertAmErstenTick() {
+        List<EquityPoint> simKurve = new ArrayList<>();
+        simKurve.add(new EquityPoint(LocalDateTime.parse("2026-09-01T00:00"), 10_000.0));
+        simKurve.add(new EquityPoint(LocalDateTime.parse("2026-09-10T12:00"), 11_000.0));
+
+        List<com.mql.realmonitor.data.TickDataLoader.TickData> ticks = new ArrayList<>();
+        ticks.add(new com.mql.realmonitor.data.TickDataLoader.TickData(
+                LocalDateTime.parse("2026-09-20T12:00"), 12_000.0, -50.0, 500.0));
+        ticks.add(new com.mql.realmonitor.data.TickDataLoader.TickData(
+                LocalDateTime.parse("2026-09-21T12:00"), 12_100.0, -200.0, 600.0));
+        ticks.add(new com.mql.realmonitor.data.TickDataLoader.TickData(
+                LocalDateTime.parse("2026-09-22T12:00"), 12_300.0, +150.0, 800.0));
+
+        List<EquityPoint> overlay = SimulatorEngine.openEquityKurve(
+                ticks, simKurve, LocalDateTime.parse("2026-09-01T00:00"));
+
+        // OPTIK-FIX: Trägerpunkt am Sim-Kurven-Ende (10.09, 11.000) verbindet
+        // die Lücke zwischen letztem CLOSED Trade und dem ersten Tick
+        assertEquals(4, overlay.size());
+        assertEquals(LocalDateTime.parse("2026-09-10T12:00"), overlay.get(0).getTime());
+        assertEquals(11_000.0, overlay.get(0).getCumulatedProfit(), 1e-9);
+        // Anker = erster Tick: Overlay startet mit dem Sim-Wert (11.000)
+        // Performance = Profit + Floating: 450 → 400 → 950
+        assertEquals(11_000.0, overlay.get(1).getCumulatedProfit(), 1e-9);
+        // Performance-Delta −50 (Floating-Dip −150) → 10.950
+        assertEquals(10_950.0, overlay.get(2).getCumulatedProfit(), 1e-9);
+        // Performance-Delta +500 (Floating +200 über Anker) → 11.500
+        assertEquals(11_500.0, overlay.get(3).getCumulatedProfit(), 1e-9);
+        assertEquals(LocalDateTime.parse("2026-09-22T12:00"), overlay.get(3).getTime());
+    }
+
+    @Test
+    void testOpenEquityKurveLeerOhneTicksImZeitraum() {
+        List<EquityPoint> simKurve = new ArrayList<>();
+        simKurve.add(new EquityPoint(LocalDateTime.parse("2026-09-01T00:00"), 10_000.0));
+
+        List<com.mql.realmonitor.data.TickDataLoader.TickData> ticks = new ArrayList<>();
+        ticks.add(new com.mql.realmonitor.data.TickDataLoader.TickData(
+                LocalDateTime.parse("2026-08-15T12:00"), 9_000.0, 0.0, 0.0));
+
+        // Alle Ticks VOR dem Simulationsstart → kein Overlay
+        assertTrue(SimulatorEngine.openEquityKurve(
+                ticks, simKurve, LocalDateTime.parse("2026-09-01T00:00")).isEmpty());
+        assertTrue(SimulatorEngine.openEquityKurve(
+                null, simKurve, LocalDateTime.parse("2026-09-01T00:00")).isEmpty());
+    }
+
+    @Test
+    void testMergeKurvenSummiertStepweise() {
+        List<EquityPoint> a = new ArrayList<>();
+        a.add(new EquityPoint(LocalDateTime.parse("2026-09-01T00:00"), 100.0));
+        List<EquityPoint> b = new ArrayList<>();
+        b.add(new EquityPoint(LocalDateTime.parse("2026-09-02T00:00"), 200.0));
+
+        List<EquityPoint> summe = SimulatorEngine.mergeKurven(java.util.List.of(a, b));
+        assertEquals(2, summe.size());
+        assertEquals(100.0, summe.get(0).getCumulatedProfit(), 1e-9); // nur A bekannt
+        assertEquals(300.0, summe.get(1).getCumulatedProfit(), 1e-9); // A + B
+    }
+
+    /**
+     * REGRESSION (User-Report 23.09.2026): Das Portfolio-Open-Equity wurde
+     * vorher nur aus den Overlay-SEGMENTEN gemerged — Strategien trugen vor
+     * ihrem Overlay-Start 0 bei, das Portfolio begann deshalb fälschlich bei
+     * EINEM Sim-Konto (10K) statt bei der Summe aller (30K).
+     */
+    @Test
+    void testPortfolioOpenEquityZaehltAlleStrategienAbSimStart() {
+        LocalDateTime simStart = LocalDateTime.parse("2026-09-01T00:00");
+
+        // A: Sim 10.000, Overlay sagt 11.000 (Floating +1.000) ab 21.09.
+        List<EquityPoint> simA = new ArrayList<>();
+        simA.add(new EquityPoint(simStart, 10_000.0));
+        List<EquityPoint> overlayA = new ArrayList<>();
+        overlayA.add(new EquityPoint(LocalDateTime.parse("2026-09-03T12:00"), 10_000.0)); // Brücke
+        overlayA.add(new EquityPoint(LocalDateTime.parse("2026-09-21T18:00"), 11_000.0));
+        // B und C: Sim 10.000, KEINE Ticks (kein Overlay)
+        List<EquityPoint> simB = new ArrayList<>();
+        simB.add(new EquityPoint(simStart, 10_000.0));
+        List<EquityPoint> simC = new ArrayList<>();
+        simC.add(new EquityPoint(simStart, 10_000.0));
+
+        List<List<EquityPoint>> kurven = new ArrayList<>();
+        kurven.add(SimulatorEngine.vereineKurven(simA, overlayA));
+        kurven.add(SimulatorEngine.vereineKurven(simB, new ArrayList<>()));
+        kurven.add(SimulatorEngine.vereineKurven(simC, null));
+
+        List<EquityPoint> portfolio = SimulatorEngine.mergeKurven(kurven);
+
+        // Ab Sim-Start zählen ALLE drei Konten: 30.000, nicht 10.000
+        assertEquals(30_000.0, portfolio.get(0).getCumulatedProfit(), 1e-9);
+        // Brückenpunkt von A ändert nichts: 3 × 10.000
+        assertEquals(30_000.0, portfolio.get(1).getCumulatedProfit(), 1e-9);
+        // Ab 21.09. trägt A sein Floating: 30.000 + 1.000 = 31.000
+        assertEquals(31_000.0, portfolio.get(portfolio.size() - 1).getCumulatedProfit(), 1e-9);
+    }
+
+    @Test
+    void testVereineKurvenUebergibtAmOverlayStart() {
+        List<EquityPoint> sim = new ArrayList<>();
+        sim.add(new EquityPoint(LocalDateTime.parse("2026-09-01T00:00"), 10_000.0));
+        sim.add(new EquityPoint(LocalDateTime.parse("2026-09-10T12:00"), 11_000.0));
+        List<EquityPoint> overlay = new ArrayList<>();
+        overlay.add(new EquityPoint(LocalDateTime.parse("2026-09-10T12:00"), 11_000.0)); // Brücke
+        overlay.add(new EquityPoint(LocalDateTime.parse("2026-09-21T18:00"), 10_800.0));
+
+        List<EquityPoint> kombiniert = SimulatorEngine.vereineKurven(sim, overlay);
+
+        assertEquals(3, kombiniert.size()); // kein Duplikat am Brückenpunkt
+        assertEquals(10_000.0, kombiniert.get(0).getCumulatedProfit(), 1e-9);
+        assertEquals(11_000.0, kombiniert.get(1).getCumulatedProfit(), 1e-9);
+        assertEquals(10_800.0, kombiniert.get(2).getCumulatedProfit(), 1e-9);
+
+        // Ohne Overlay: reine Sim-Kurve
+        assertEquals(2, SimulatorEngine.vereineKurven(sim, new ArrayList<>()).size());
+    }
+
     // ------------------------------------------------------- Config
 
     @Test

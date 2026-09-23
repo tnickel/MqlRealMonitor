@@ -505,6 +505,67 @@ public class PeriodProfitCalculator {
     }
     
     /**
+     * NEU: Ergebnis einer Perioden-Berechnung (Tag/Woche/Monat/3M/6M/12M)
+     */
+    public static class PeriodResult {
+        public final boolean hasData;
+        public final double percent;
+        public final double currency;
+
+        public PeriodResult(boolean hasData, double percent, double currency) {
+            this.hasData = hasData;
+            this.percent = percent;
+            this.currency = currency;
+        }
+    }
+
+    /**
+     * NEU: Performance-Änderung seit einem beliebigen Referenzzeitpunkt
+     * (Performance = Profit + FloatingProfit, ein-/auszahlungsfrei).
+     * Prozentwert mit Ein-/Auszahlungskorrektur (dieselbe Logik wie der
+     * Wochengewinn der Tabelle). Liegen keine Ticks vor dem Referenzzeitpunkt,
+     * gilt der älteste verfügbare Tick als Basis (Notlösung, hasData = true).
+     *
+     * @param tickFilePath Pfad zur Tick-Datei
+     * @param signalId     Die Signal-ID
+     * @param referenz     Start des Zeitraums (z. B. Tag 00:00, letzter Sonntag, 3 Monate her)
+     * @return PeriodResult (hasData = false, wenn keine/zuwenig Tick-Daten)
+     */
+    public static PeriodResult calculatePeriodProfit(String tickFilePath, String signalId,
+                                                     LocalDateTime referenz) {
+        if (tickFilePath == null || signalId == null || referenz == null) {
+            return new PeriodResult(false, 0.0, 0.0);
+        }
+
+        TickDataSet dataSet = TickDataLoader.loadTickData(tickFilePath, signalId);
+        if (dataSet == null || dataSet.getTickCount() < 2) {
+            return new PeriodResult(false, 0.0, 0.0);
+        }
+
+        List<TickData> ticks = dataSet.getTicks();
+        TickData latestTick = dataSet.getLatestTick();
+        double currentPerformance = latestTick.getProfit() + latestTick.getFloatingProfit();
+
+        PerformanceSearchResult referenzResult =
+                findBestPerformanceForReference(ticks, referenz, "Periodenstart", signalId);
+        if (!referenzResult.hasValidData() || referenzResult.getTimestamp() == null) {
+            return new PeriodResult(false, 0.0, 0.0);
+        }
+
+        double delta = currentPerformance - referenzResult.getPerformance();
+
+        // Prozent mit Ein-/Auszahlungskorrektur (wie Wochengewinn der Tabelle)
+        double percent;
+        TickData referenzTick = findTickForPerformanceResult(ticks, referenzResult);
+        if (referenzTick != null) {
+            percent = DepositWithdrawalDetector.calculateCleanPercentage(delta, ticks, referenzTick);
+        } else {
+            percent = delta / dataSet.getFirstTick().getEquity() * 100.0;
+        }
+        return new PeriodResult(true, percent, delta);
+    }
+
+    /**
      * Hilfsmethode: Findet den TickData für ein PerformanceSearchResult
      */
     private static TickData findTickForPerformanceResult(List<TickData> ticks, PerformanceSearchResult result) {

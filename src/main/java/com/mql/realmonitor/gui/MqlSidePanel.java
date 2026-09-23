@@ -13,13 +13,20 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.MessageBox;
 
+import com.mql.realmonitor.config.IdTranslationManager;
 import com.mql.realmonitor.simulator.PortfolioDefinition;
 import com.mql.realmonitor.simulator.PortfolioStore;
+import com.mql.realmonitor.simulator.SimulatorEngine;
+import com.mql.realmonitor.simulator.SimulatorEngine.SimulationResult;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -28,7 +35,9 @@ import java.util.logging.Logger;
  * Portfolio-Simulatoren.
  *
  * Oben: dynamische Liste — für JEDEM definierten Portfolio-Simulator ein
- * Icon (📊) mit Beschriftung (Name, änderbar über Bearbeiten). Klick auf
+ * Icon (📊) mit Beschriftung (Name, änderbar über Bearbeiten) und einer
+ * Wochen-Gewinn-Zeile (€ + % der laufenden Woche, aus der Portfolio-
+ * Simulation der Trade-Historien, im Hintergrund berechnet). Klick auf
  * ein Icon öffnet die Simulator-Ansicht (scrollbare Equity-Kurven der
  * enthaltenen Signale + Portfolio-Kurve) und wählt das Icon aus.
  *
@@ -42,14 +51,69 @@ public class MqlSidePanel {
     private final Composite parent;
     private final MqlRealMonitorGUI gui;
 
+    /**
+     * NEU: Zeitraum-Auswahl für die Gewinn-Zeilen unter den Portfolio-Icons
+     */
+    private enum Zeitraum {
+        TAG("Tag", "Tag"),
+        WOCHE("Woche", "Woche"),
+        MONAT("Monat", "Monat"),
+        M3("3 Monate", "3M"),
+        M6("6 Monate", "6M"),
+        M12("12 Monate", "12M");
+
+        final String label;    // Text in der Combo
+        final String praefix;  // Präfix der Gewinn-Zeile
+
+        Zeitraum(String label, String praefix) {
+            this.label = label;
+            this.praefix = praefix;
+        }
+
+        /** Start des Zeitraums (jeweiliger Tag 00:00) */
+        java.time.LocalDateTime start() {
+            LocalDate heute = LocalDate.now();
+            switch (this) {
+                case TAG:   return heute.atStartOfDay();
+                case WOCHE: return SimulatorEngine.aktuellerWochenstart().atStartOfDay();
+                case MONAT: return heute.withDayOfMonth(1).atStartOfDay();
+                case M3:    return heute.minusMonths(3).atStartOfDay();
+                case M6:    return heute.minusMonths(6).atStartOfDay();
+                case M12:   return heute.minusMonths(12).atStartOfDay();
+                default:    return heute.atStartOfDay();
+            }
+        }
+    }
+
     private Composite panel;
     private Composite iconListe;
     private Font iconFont;
     private Font boldFont;
     private Color selectionColor;
 
+    /** NEU: Zeitraum-Auswahl der Gewinn-Zeilen (Combo + aktueller Wert) */
+    private org.eclipse.swt.widgets.Combo zeitraumCombo;
+    private Zeitraum zeitraum = Zeitraum.WOCHE;
+
     private final PortfolioStore store;
     private final List<PortfolioDefinition> portfolios = new ArrayList<>();
+
+    /**
+     * NEU: Gewinn-Zeilen je Portfolio ("Woche: +123 € (+2,34 %)") für den
+     * ausgewählten Zeitraum. Cache-Key: "<portfolioId>@<ZEITRAUM>@<Start>",
+     * Wert null = Berechnung läuft. Wird bei Zeitraumwechsel und Add/Edit/
+     * Remove geleert, beim Anklicken nur der Eintrag des Portfolios.
+     */
+    private final Map<String, String> gewinnCache =
+            Collections.synchronizedMap(new LinkedHashMap<>());
+
+    /** NEU: Hintergrund-Thread für die Gewinn-Berechnung (Datei-IO) */
+    private final java.util.concurrent.ExecutorService gewinnPool =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "Portfolio-Gewinn");
+                t.setDaemon(true);
+                return t;
+            });
 
     /** Aktuell ausgewähltes Portfolio (Klick zuletzt geklicktes Icon) */
     private PortfolioDefinition auswahl;
@@ -88,6 +152,36 @@ public class MqlSidePanel {
 
         Label trenner = new Label(panel, SWT.SEPARATOR | SWT.HORIZONTAL);
         trenner.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
+
+        // NEU: Zeitraum-Auswahl für die Gewinn-Zeilen
+        Composite zeitraumZeile = new Composite(panel, SWT.NONE);
+        zeitraumZeile.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
+        zeitraumZeile.setLayout(new GridLayout(2, false));
+
+        Label gewinnTitel = new Label(zeitraumZeile, SWT.NONE);
+        gewinnTitel.setText("Gewinn:");
+        gewinnTitel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+
+        zeitraumCombo = new org.eclipse.swt.widgets.Combo(zeitraumZeile, SWT.READ_ONLY);
+        for (Zeitraum z : Zeitraum.values()) {
+            zeitraumCombo.add(z.label);
+        }
+        zeitraumCombo.select(Zeitraum.WOCHE.ordinal());
+        zeitraumCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        zeitraumCombo.setToolTipText("Zeitraum der Gewinn-Zeilen unter den Portfolios.\n"
+                + "Basis: Live-Tick-Daten (Δ Profit+Floating) je Signal,\n"
+                + "angewendet auf das Sim-Kapital am Periodenstart.");
+        zeitraumCombo.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                Zeitraum neu = Zeitraum.values()[zeitraumCombo.getSelectionIndex()];
+                if (neu != zeitraum) {
+                    zeitraum = neu;
+                    gewinnCache.clear();
+                    baueIcons();
+                }
+            }
+        });
 
         // Dynamische Icon-Liste
         iconListe = new Composite(panel, SWT.NONE);
@@ -175,6 +269,21 @@ public class MqlSidePanel {
             beschriftung.setText(p.getName() != null ? p.getName() : ("#" + p.getId()));
             beschriftung.setLayoutData(new GridData(SWT.CENTER, SWT.TOP, true, false));
 
+            // NEU: Gewinn-Zeile unter der Beschriftung (€ und %, Zeitraum siehe Combo)
+            Label gewinn = new Label(eintrag, SWT.WRAP | SWT.CENTER);
+            String gewinnZeile = gewinnCache.get(gewinnKey(p));
+            gewinn.setText(gewinnZeile != null ? gewinnZeile : "berechne …");
+            gewinn.setLayoutData(new GridData(SWT.CENTER, SWT.TOP, true, false));
+            gewinn.setToolTipText("Gewinn im Zeitraum ab " + zeitraum.start().toLocalDate() + ":\n"
+                    + "Δ Profit+Floating je Signal aus den Tick-Daten, angewendet\n"
+                    + "auf das Sim-Kapital am Periodenstart. Fallback: Simulations-\n"
+                    + "kurve, wenn keine Tick-Wochendaten vorliegen. Gibt es keine\n"
+                    + "Ticks zum Periodenstart, gilt der älteste Tick als Basis.\n"
+                    + "Klick auf das Portfolio rechnet mit aktuellen Daten neu.");
+            if (gewinnZeile != null) {
+                faerbeGewinnZeile(gewinn, gewinnZeile);
+            }
+
             markiereAuswahl(eintrag, p);
 
             SelectionAdapter klick = new SelectionAdapter() {
@@ -200,6 +309,166 @@ public class MqlSidePanel {
         if (parent instanceof org.eclipse.swt.custom.SashForm) {
             ((org.eclipse.swt.custom.SashForm) parent).layout();
         }
+
+        // NEU: Fehlende Gewinn-Werte im Hintergrund nachrechnen
+        berechneGewinneAsynchron();
+    }
+
+    // --------------------------------------------------- Gewinn-Zeilen
+
+    /** Cache-Key eines Portfolios für den aktuellen Zeitraum */
+    private String gewinnKey(PortfolioDefinition p) {
+        return gewinnKey(p.getId());
+    }
+
+    /** Cache-Key für eine Portfolio-ID im aktuellen Zeitraum */
+    private String gewinnKey(int portfolioId) {
+        return portfolioId + "@" + zeitraum.name() + "@" + zeitraum.start().toLocalDate();
+    }
+
+    /**
+     * NEU: Berechnet fehlende Gewinn-Werte je Portfolio im Hintergrund
+     * (Portfolio-Simulation + Periodenprozente aus den Tick-Daten) und
+     * aktualisiert die Icon-Zeilen, sobald Ergebnisse vorliegen.
+     */
+    private void berechneGewinneAsynchron() {
+        if (portfolios.isEmpty()) {
+            return;
+        }
+
+        final Zeitraum periode = zeitraum;
+        SimulatorEngine engine = new SimulatorEngine(gui.getMonitor().getConfig());
+        Map<String, String> namen = new LinkedHashMap<>();
+        IdTranslationManager translation = gui.getProviderTable() != null
+                ? gui.getProviderTable().getIdTranslationManager() : null;
+
+        for (PortfolioDefinition p : portfolios) {
+            for (String id : p.getSignalIds()) {
+                namen.put(id, translation != null ? translation.getProviderName(id) : id);
+            }
+
+            final PortfolioDefinition portfolio = p;
+            final String key = p.getId() + "@" + periode.name() + "@" + periode.start().toLocalDate();
+            final Map<String, String> namenSnapshot = namen;
+            synchronized (gewinnCache) {
+                if (gewinnCache.containsKey(key)) {
+                    continue; // schon berechnet oder Berechnung läuft
+                }
+                gewinnCache.put(key, null); // Platzhalter "in Arbeit"
+            }
+
+            gewinnPool.submit(() -> {
+                String zeile;
+                try {
+                    SimulationResult result = engine.simulate(
+                            new ArrayList<>(portfolio.getSignalIds()), namenSnapshot,
+                            parseStartdatum(portfolio.getStartDate()), portfolio.getStartCapital());
+                    zeile = formatGewinnZeile(periode, result, ladeProzente(portfolio, periode));
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING,
+                            "Gewinn für '" + portfolio.getName() + "' fehlgeschlagen", e);
+                    zeile = periode.praefix + ": —";
+                }
+                gewinnCache.put(key, zeile);
+
+                if (gui.getDisplay() != null && !gui.getDisplay().isDisposed()) {
+                    gui.getDisplay().asyncExec(() -> {
+                        if (iconListe != null && !iconListe.isDisposed()) {
+                            aktualisiereGewinnLabels();
+                        }
+                    });
+                }
+            });
+        }
+    }
+
+    /**
+     * NEU: Schreibt die fertigen Gewinn-Zeilen in die vorhandenen Labels
+     * (ohne die Icons komplett neu zu bauen)
+     */
+    private void aktualisiereGewinnLabels() {
+        for (var kind : iconListe.getChildren()) {
+            Object pid = kind.getData("portfolioId");
+            if (pid == null || !(kind instanceof Composite)) {
+                continue;
+            }
+            var kinder = ((Composite) kind).getChildren();
+            if (kinder.length < 3 || !(kinder[2] instanceof Label) || kinder[2].isDisposed()) {
+                continue;
+            }
+            String zeile = gewinnCache.get(pid + "@" + zeitraum.name() + "@"
+                    + zeitraum.start().toLocalDate());
+            if (zeile == null) {
+                continue; // noch in Arbeit
+            }
+            Label gewinn = (Label) kinder[2];
+            if (!gewinn.getText().equals(zeile)) {
+                gewinn.setText(zeile);
+                faerbeGewinnZeile(gewinn, zeile);
+            }
+        }
+        iconListe.layout();
+        panel.layout();
+    }
+
+    /**
+     * NEU: Lädt je Signal den Gewinn in % seit dem Periodenstart aus den
+     * Tick-Daten (dieselbe Quelle wie die Gewinn-Spalten der Tabelle).
+     * Signale ohne Daten fehlen in der Map — ihr Kapital zählt mit 0 %.
+     */
+    private Map<String, Double> ladeProzente(PortfolioDefinition portfolio, Zeitraum periode) {
+        Map<String, Double> prozente = new LinkedHashMap<>();
+        var config = gui.getMonitor().getConfig();
+        for (String id : portfolio.getSignalIds()) {
+            try {
+                com.mql.realmonitor.utils.PeriodProfitCalculator.PeriodResult pr =
+                        com.mql.realmonitor.utils.PeriodProfitCalculator.calculatePeriodProfit(
+                                config.getTickFilePath(id), id, periode.start());
+                if (pr.hasData) {
+                    prozente.put(id, pr.percent);
+                }
+            } catch (Exception e) {
+                LOGGER.fine("Keine Periodendaten für Signal " + id + ": " + e.getMessage());
+            }
+        }
+        return prozente;
+    }
+
+    /** NEU: Formatiert die Gewinn-Zeile aus dem Simulationsergebnis */
+    private String formatGewinnZeile(Zeitraum periode, SimulationResult result,
+                                     Map<String, Double> prozente) {
+        if (result.portfolio.isEmpty()) {
+            return periode.praefix + ": —"; // keine Trade-Historie geladen
+        }
+        // Bevorzugt LIVE-Periodenprozente aus den Tick-Daten; Fallback auf die
+        // Simulationskurve (z. B. wenn noch gar keine Ticks vorliegen)
+        double[] w = !prozente.isEmpty()
+                ? SimulatorEngine.gewinnSeitAusTicks(result, prozente, periode.start())
+                : SimulatorEngine.gewinnSeitAusKurve(result, periode.start());
+        return String.format(Locale.GERMANY, "%s: %+.0f € (%+.2f %%)",
+                periode.praefix, w[0], w[1]);
+    }
+
+    /** NEU: Grün bei Gewinn, Rot bei Verlust (anhand des Vorzeichens) */
+    private void faerbeGewinnZeile(Label label, String zeile) {
+        int pos = zeile.indexOf(':') + 2;
+        if (pos >= 2 && pos < zeile.length()) {
+            char vorzeichen = zeile.charAt(pos);
+            if (vorzeichen == '-') {
+                label.setForeground(gui.getDisplay().getSystemColor(SWT.COLOR_DARK_RED));
+            } else if (vorzeichen == '+') {
+                label.setForeground(gui.getDisplay().getSystemColor(SWT.COLOR_DARK_GREEN));
+            }
+        }
+    }
+
+    /** NEU: Startdatum parsen (Fallback: globale Simulator-Config) */
+    private LocalDate parseStartdatum(String startDate) {
+        try {
+            return LocalDate.parse(startDate, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        } catch (Exception e) {
+            return gui.getMonitor().getConfig().getSimulatorStartDateParsed();
+        }
     }
 
     private void markiereAuswahl(Composite eintrag, PortfolioDefinition p) {
@@ -221,6 +490,8 @@ public class MqlSidePanel {
      */
     private void portfolioAnklicken(PortfolioDefinition p) {
         auswahl = p;
+        // Gewinn-Zeilen des angeklickten Portfolios mit aktuellen Tick-Daten neu rechnen
+        gewinnCache.keySet().removeIf(k -> k.startsWith(p.getId() + "@"));
         baueIcons();
 
         if (p.getSignalIds().isEmpty()) {
@@ -230,12 +501,7 @@ public class MqlSidePanel {
             return;
         }
 
-        LocalDate start;
-        try {
-            start = LocalDate.parse(p.getStartDate(), DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-        } catch (Exception e) {
-            start = gui.getMonitor().getConfig().getSimulatorStartDateParsed();
-        }
+        LocalDate start = parseStartdatum(p.getStartDate());
 
         new SimulatorWindow(gui).open(
                 p.getName(),
@@ -262,6 +528,7 @@ public class MqlSidePanel {
                 portfolios.add(neu);
                 auswahl = neu;
                 store.save(portfolios);
+                gewinnCache.clear(); // NEU: Werte neu berechnen
                 baueIcons();
                 gui.updateStatus("Portfolio-Simulator '" + neu.getName() + "' angelegt ("
                         + neu.getSignalIds().size() + " Signale)");
@@ -297,6 +564,7 @@ public class MqlSidePanel {
                     original.setSignalIds(kopie.getSignalIds());
                 }
                 store.save(portfolios);
+                gewinnCache.clear(); // NEU: Werte neu berechnen
                 baueIcons();
                 gui.updateStatus("Portfolio-Simulator '" + original.getName() + "' gespeichert");
             }
@@ -327,6 +595,7 @@ public class MqlSidePanel {
         store.save(portfolios);
         String name = auswahl.getName();
         auswahl = null;
+        gewinnCache.clear(); // NEU: Werte neu berechnen
         baueIcons();
         gui.updateStatus("Portfolio-Simulator '" + name + "' entfernt");
     }

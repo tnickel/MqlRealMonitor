@@ -38,6 +38,7 @@ import java.awt.image.BufferedImage;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -138,7 +139,9 @@ public class SimulatorWindow {
         titel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         Label hinweis = new Label(header, SWT.WRAP);
         hinweis.setText("Grün = Gewinn · Rot = Verlust · Grau = keine Historie geladen "
-                + "(zuerst \uD83D\uDCDC Trades laden). Sortiert nach Ergebnis. Unten: Portfolio (alle vereint).");
+                + "(zuerst \uD83D\uDCDD Trades laden). Dunkelgelb = Open Equity (live aus Tick-Daten, "
+                + "nur ab Monitoring-Start verfügbar — zeigt die Floating-Schwankungen). "
+                + "Sortiert nach Ergebnis. Unten: Portfolio (alle vereint).");
         hinweis.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
         // Scrollbare Liste
@@ -214,7 +217,34 @@ public class SimulatorWindow {
             return;
         }
 
-        SimulationResult result = engine.simulate(ids, namen, startDatum);
+        // FIX: Startkapital des Aufrufs nutzen (Portfolio-Simulatoren haben
+        // ein eigenes Kapital) — vorher wurde still die globale Config verwendet
+        SimulationResult result = engine.simulate(ids, namen, startDatum, startKapital);
+
+        // NEU: Open-Equity-Overlays (Floating-Schwankungen) aus den Tick-Daten.
+        // Portfolio-Open-Equity = Summe der vereinigten Kurven (Sim-Verlauf +
+        // Overlay) ALLER Strategien — nicht nur der Overlay-Segmente, sonst
+        // trägt jede Strategie vor ihrem Overlay-Start 0 bei und das Portfolio
+        // fiele fälschlich auf ein einzelnes Sim-Konto (~10K statt ~30K).
+        var config = gui.getMonitor().getConfig();
+        Map<String, java.util.List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint>> openEquity =
+                new LinkedHashMap<>();
+        java.util.List<java.util.List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint>> kurvenFuerPortfolio =
+                new ArrayList<>();
+        int strategienMitOverlay = 0;
+        for (StrategyResult s : result.strategien) {
+            java.util.List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint> kurve =
+                    SimulatorEngine.ladeOpenEquityKurve(config, s, startDatum);
+            openEquity.put(s.signalId, kurve);
+            if (s.hatHistorie) {
+                if (!kurve.isEmpty()) {
+                    strategienMitOverlay++;
+                }
+                kurvenFuerPortfolio.add(SimulatorEngine.vereineKurven(s.punkte, kurve));
+            }
+        }
+        java.util.List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint> portfolioOpenEquity =
+                SimulatorEngine.mergeKurven(kurvenFuerPortfolio);
 
         // Status-Label ersetzen
         display.asyncExec(() -> {
@@ -230,12 +260,14 @@ public class SimulatorWindow {
                 return;
             }
             final int nr = index++;
-            final ImageData bild = renderStrategyImage(s, nr);
+            final ImageData bild = renderStrategyImage(s, nr, openEquity.get(s.signalId));
+            final java.util.List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint> overlay =
+                    openEquity.get(s.signalId);
             display.asyncExec(() -> {
                 if (shell.isDisposed() || content.isDisposed()) {
                     return;
                 }
-                addChartPanel(display, s, bild);
+                addChartPanel(display, s, bild, overlay);
                 applyMinSize(scrolled);
                 content.layout();
             });
@@ -245,7 +277,7 @@ public class SimulatorWindow {
         if (shell.isDisposed()) {
             return;
         }
-        final ImageData portfolioBild = renderPortfolioImage(result);
+        final ImageData portfolioBild = renderPortfolioImage(result, portfolioOpenEquity);
         display.asyncExec(() -> {
             if (shell.isDisposed() || content.isDisposed()) {
                 return;
@@ -255,12 +287,14 @@ public class SimulatorWindow {
             content.layout();
         });
 
-        LOGGER.info("Simulator-Fenster aufgebaut: " + result.strategien.size() + " Strategien");
+        LOGGER.info("Simulator-Fenster aufgebaut: " + result.strategien.size() + " Strategien, "
+                + "Open-Equity-Overlays für " + strategienMitOverlay + " Strategien");
     }
 
     // ------------------------------------------------------------- Panels
 
-    private void addChartPanel(Display display, StrategyResult s, ImageData bildData) {
+    private void addChartPanel(Display display, StrategyResult s, ImageData bildData,
+                               java.util.List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint> openEquity) {
         Composite panel = new Composite(content, SWT.NONE);
         panel.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         panel.setLayout(new GridLayout(1, false));
@@ -268,14 +302,18 @@ public class SimulatorWindow {
         Label titel = new Label(panel, SWT.NONE);
         titel.setFont(titleFont);
         boolean gewinn = s.endwert >= s.startkapital;
+        String openEquityInfo = (openEquity != null && !openEquity.isEmpty())
+                ? String.format("  ·  Open Equity (live) ab %ta.%tm.",
+                        openEquity.get(0).getTime(), openEquity.get(0).getTime())
+                : "";
         if (!s.hatHistorie) {
             titel.setText("— " + s.name + " (" + s.signalId + ")  ·  keine Historie geladen");
         } else if (s.punkte.size() <= 1) {
             titel.setText(s.name + " (" + s.signalId + ")  ·  keine Trades seit Startdatum  ·  "
-                    + String.format("%.0f", s.endwert) + " (±0,0 %)");
+                    + String.format("%.0f", s.endwert) + " (±0,0 %)" + openEquityInfo);
         } else {
-            titel.setText(String.format("%s (#%s)  ·  Endstand %.0f  ·  %+.1f %%",
-                    s.name, s.signalId, s.endwert, s.prozent()));
+            titel.setText(String.format("%s (#%s)  ·  Endstand %.0f  ·  %+.1f %%%s",
+                    s.name, s.signalId, s.endwert, s.prozent(), openEquityInfo));
         }
         titel.setForeground(display.getSystemColor(
                 !s.hatHistorie ? SWT.COLOR_GRAY : gewinn ? SWT.COLOR_DARK_GREEN : SWT.COLOR_DARK_RED));
@@ -327,16 +365,38 @@ public class SimulatorWindow {
     // ------------------------------------------------------------- Rendering
 
     /** Rendert das Chart einer Strategie zu ImageData (Hintergrund-Thread) */
-    private ImageData renderStrategyImage(StrategyResult s, int nr) {
+    private ImageData renderStrategyImage(StrategyResult s, int nr,
+                                          java.util.List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint> openEquity) {
         if (!s.hatHistorie || s.punkte.isEmpty()) {
             return null;
         }
 
-        TimeSeries serie = new TimeSeries("Sim-Equity");
+        TimeSeries serie = new TimeSeries("Sim-Konto");
         for (com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint p : s.punkte) {
             serie.addOrUpdate(new Millisecond(toDate(p.getTime())), p.getCumulatedProfit());
         }
+        // OPTIK-FIX: grüne Kurve flach bis zum letzten Open-Equity-Zeitpunkt
+        // führen — sonst wirkt sie "abgebrochen" (nur CLOSED Trades erzeugen Punkte)
+        if (openEquity != null && !openEquity.isEmpty()) {
+            com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint simEnde =
+                    s.punkte.get(s.punkte.size() - 1);
+            com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint oeEnde =
+                    openEquity.get(openEquity.size() - 1);
+            if (oeEnde.getTime().isAfter(simEnde.getTime())) {
+                serie.addOrUpdate(new Millisecond(toDate(oeEnde.getTime())),
+                        simEnde.getCumulatedProfit());
+            }
+        }
         TimeSeriesCollection dataset = new TimeSeriesCollection(serie);
+
+        // NEU: Open Equity (live) als zweite Serie — Floating-Schwankungen
+        if (openEquity != null && !openEquity.isEmpty()) {
+            TimeSeries oe = new TimeSeries("Open Equity (live)");
+            for (com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint p : openEquity) {
+                oe.addOrUpdate(new Millisecond(toDate(p.getTime())), p.getCumulatedProfit());
+            }
+            dataset.addSeries(oe);
+        }
 
         boolean gewinn = s.endwert >= s.startkapital;
         JFreeChart chart = ChartFactory.createTimeSeriesChart(
@@ -346,6 +406,9 @@ public class SimulatorWindow {
         XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer(true, false);
         renderer.setSeriesPaint(0, gewinn ? new Color(0, 128, 0) : new Color(200, 0, 0));
         renderer.setSeriesStroke(0, new BasicStroke(2.0f));
+        // Dunkelgelb = Open Equity (wie im Haupt-Chart)
+        renderer.setSeriesPaint(1, new Color(204, 153, 0));
+        renderer.setSeriesStroke(1, new BasicStroke(1.2f));
         plot.setRenderer(renderer);
         plot.setBackgroundPaint(Color.WHITE);
         plot.setDomainGridlinePaint(Color.LIGHT_GRAY);
@@ -369,24 +432,48 @@ public class SimulatorWindow {
     }
 
     /** Rendert das Portfolio-Chart zu ImageData (Hintergrund-Thread) */
-    private ImageData renderPortfolioImage(SimulationResult result) {
+    private ImageData renderPortfolioImage(SimulationResult result,
+                                           java.util.List<com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint> openEquity) {
         if (result.portfolio.isEmpty()) {
             return null;
         }
 
-        TimeSeries serie = new TimeSeries("Portfolio");
+        TimeSeries serie = new TimeSeries("Sim-Konto (Portfolio)");
         for (com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint p : result.portfolio) {
             serie.addOrUpdate(new Millisecond(toDate(p.getTime())), p.getCumulatedProfit());
         }
+        // OPTIK-FIX: Portfolio-Kurve flach bis zum letzten Open-Equity-Zeitpunkt
+        if (openEquity != null && !openEquity.isEmpty()) {
+            com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint simEnde =
+                    result.portfolio.get(result.portfolio.size() - 1);
+            com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint oeEnde =
+                    openEquity.get(openEquity.size() - 1);
+            if (oeEnde.getTime().isAfter(simEnde.getTime())) {
+                serie.addOrUpdate(new Millisecond(toDate(oeEnde.getTime())),
+                        simEnde.getCumulatedProfit());
+            }
+        }
         TimeSeriesCollection dataset = new TimeSeriesCollection(serie);
 
+        // NEU: Open Equity (live) für das gesamte Portfolio
+        if (openEquity != null && !openEquity.isEmpty()) {
+            TimeSeries oe = new TimeSeries("Open Equity (live)");
+            for (com.mql.realmonitor.mql5.EquityCurveBuilder.EquityPoint p : openEquity) {
+                oe.addOrUpdate(new Millisecond(toDate(p.getTime())), p.getCumulatedProfit());
+            }
+            dataset.addSeries(oe);
+        }
+
         JFreeChart chart = ChartFactory.createTimeSeriesChart(
-                null, "Zeit", "Gesamtwert (alle Strategien)", dataset, false, false, false);
+                null, "Zeit", "Gesamtwert (alle Strategien)", dataset, true, false, false);
 
         XYPlot plot = chart.getXYPlot();
         XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer(true, false);
         renderer.setSeriesPaint(0, new Color(0, 51, 153));
         renderer.setSeriesStroke(0, new BasicStroke(2.5f));
+        // Dunkelgelb = Open Equity (wie im Haupt-Chart)
+        renderer.setSeriesPaint(1, new Color(204, 153, 0));
+        renderer.setSeriesStroke(1, new BasicStroke(1.2f));
         plot.setRenderer(renderer);
         plot.setBackgroundPaint(Color.WHITE);
         plot.setDomainGridlinePaint(Color.LIGHT_GRAY);
