@@ -13,6 +13,7 @@ import org.eclipse.swt.graphics.ImageData;
 import org.eclipse.swt.graphics.PaletteData;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
+import org.eclipse.swt.widgets.Button;
 import org.eclipse.swt.widgets.Canvas;
 import org.eclipse.swt.widgets.Combo;
 import org.eclipse.swt.widgets.Composite;
@@ -20,6 +21,7 @@ import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Shell;
+import org.eclipse.swt.program.Program;
 
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.JFreeChart;
@@ -188,7 +190,8 @@ public class SimulatorWindow {
         hinweis.setText("Grün = Gewinn · Rot = Verlust · Grau = keine Historie geladen "
                 + "(zuerst \uD83D\uDCDD Trades laden). Dunkelgelb = Open Equity (live aus Tick-Daten, "
                 + "nur ab Monitoring-Start verfügbar — zeigt die Floating-Schwankungen). "
-                + "Sortiert nach Ergebnis. Unten: Portfolio (alle vereint).");
+                + "Sortiert nach Ergebnis. Unten: Portfolio (alle vereint). "
+                + "🌐 = MQL5-Seite des Signals im Browser öffnen (überprüfen).");
         hinweis.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
         // NEU: Anzeige-Zeitraum wählen (Gewinn-Zeilen des Seitenpanels folgen
@@ -460,10 +463,11 @@ public class SimulatorWindow {
         panel.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
         panel.setLayout(new GridLayout(1, false));
 
-        Label titel = new Label(panel, SWT.NONE);
-        titel.setFont(titleFont);
         boolean imZeitraum = ab != null;
         boolean gewinn = sicht.endwert >= sicht.basis;
+        double prozent = sicht.basis > 0
+                ? (sicht.endwert - sicht.basis) / sicht.basis * 100.0 : 0.0;
+        double gewinnEur = sicht.endwert - sicht.basis;
         String openEquityInfo = (openEquity != null && !openEquity.isEmpty())
                 ? String.format("  ·  Open Equity (live) ab %ta.%tm.",
                         openEquity.get(0).getTime(), openEquity.get(0).getTime())
@@ -471,22 +475,52 @@ public class SimulatorWindow {
         String zeitraumInfo = imZeitraum
                 ? String.format("  ·  %s ab %te.%tm.", aktuellerZeitraum, ab, ab)
                 : "";
+
+        String restText;
         if (!s.hatHistorie) {
-            titel.setText("— " + s.name + " (" + s.signalId + ")  ·  keine Historie geladen");
+            restText = "  (#" + s.signalId + ")  ·  keine Historie geladen";
         } else if (sicht.isFlat()) {
             String grund = imZeitraum ? "keine Trades im Zeitraum" : "keine Trades seit Startdatum";
-            titel.setText(s.name + " (" + s.signalId + ")  ·  " + grund + "  ·  "
-                    + String.format("%.0f", sicht.endwert) + " (±0,0 %)"
-                    + openEquityInfo + zeitraumInfo);
+            restText = String.format("  (#%s)  ·  %s  ·  %+.0f € (%+.2f %%)%s%s",
+                    s.signalId, grund, gewinnEur, prozent, openEquityInfo, zeitraumInfo);
         } else {
-            double prozent = sicht.basis > 0
-                    ? (sicht.endwert - sicht.basis) / sicht.basis * 100.0 : 0.0;
-            titel.setText(String.format("%s (#%s)  ·  Endstand %.0f  ·  %+.1f %%%s%s",
-                    s.name, s.signalId, sicht.endwert, prozent, openEquityInfo, zeitraumInfo));
+            restText = String.format("  (#%s)  ·  %+.0f € (%+.2f %%)  ·  Endstand %.0f%s%s",
+                    s.signalId, gewinnEur, prozent, sicht.endwert, openEquityInfo, zeitraumInfo);
         }
-        titel.setForeground(display.getSystemColor(
-                !s.hatHistorie ? SWT.COLOR_GRAY : gewinn ? SWT.COLOR_DARK_GREEN : SWT.COLOR_DARK_RED));
-        titel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, true, false));
+
+        // Titelzeile: Name DICK (BOLD), Rest normal — SWT-Labels beherrschen
+        // keine gemischten Styles, deshalb zwei Labels nebeneinander; rechts
+        // ein 🌐-Button, der die MQL5-Seite des Signals im Browser öffnet
+        Composite titelZeile = new Composite(panel, SWT.NONE);
+        titelZeile.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        titelZeile.setLayout(new GridLayout(3, false));
+
+        Label nameLabel = new Label(titelZeile, SWT.NONE);
+        nameLabel.setFont(titleFont);
+        nameLabel.setText((!s.hatHistorie ? "— " : "") + s.name);
+        nameLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+
+        Label restLabel = new Label(titelZeile, SWT.NONE);
+        restLabel.setText(restText);
+        restLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, true, false));
+
+        Button mqlButton = new Button(titelZeile, SWT.PUSH);
+        mqlButton.setText("\uD83C\uDF10"); // 🌐
+        mqlButton.setToolTipText("MQL5-Seite von " + s.name + " im Browser öffnen (überprüfen)");
+        mqlButton.setLayoutData(new GridData(SWT.RIGHT, SWT.CENTER, false, false));
+        mqlButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                String url = gui.getMonitor().getConfig().buildSignalUrl(s.signalId);
+                LOGGER.info("Öffne MQL5-Seite im Browser: " + url);
+                Program.launch(url);
+            }
+        });
+
+        org.eclipse.swt.graphics.Color farbe = display.getSystemColor(
+                !s.hatHistorie ? SWT.COLOR_GRAY : gewinn ? SWT.COLOR_DARK_GREEN : SWT.COLOR_DARK_RED);
+        nameLabel.setForeground(farbe);
+        restLabel.setForeground(farbe);
 
         if (bildData != null) {
             Image bild = new Image(display, bildData);
@@ -515,16 +549,18 @@ public class SimulatorWindow {
         titel.setFont(headerFont);
         if (ab == null) {
             boolean gewinn = result.portfolioEndwert >= result.portfolioStartwert;
-            titel.setText(String.format("PORTFOLIO — alle Strategien vereint  ·  Start %.0f  ·  Endstand %.0f  ·  %+.1f %%",
-                    result.portfolioStartwert, result.portfolioEndwert, result.portfolioProzent()));
+            titel.setText(String.format("PORTFOLIO — alle Strategien vereint  ·  %+.0f € (%+.2f %%)  ·  Start %.0f  ·  Endstand %.0f",
+                    result.portfolioEndwert - result.portfolioStartwert, result.portfolioProzent(),
+                    result.portfolioStartwert, result.portfolioEndwert));
             titel.setForeground(display.getSystemColor(
                     gewinn ? SWT.COLOR_DARK_GREEN : SWT.COLOR_DARK_RED));
         } else {
             boolean gewinn = sicht.endwert >= sicht.basis;
             double prozent = sicht.basis > 0
                     ? (sicht.endwert - sicht.basis) / sicht.basis * 100.0 : 0.0;
-            titel.setText(String.format("PORTFOLIO — %s ab %te.%tm.  ·  Start %.0f  ·  Endstand %.0f  ·  %+.1f %%",
-                    aktuellerZeitraum, ab, ab, sicht.basis, sicht.endwert, prozent));
+            titel.setText(String.format("PORTFOLIO — %s ab %te.%tm.  ·  %+.0f € (%+.2f %%)  ·  Start %.0f  ·  Endstand %.0f",
+                    aktuellerZeitraum, ab, ab, sicht.endwert - sicht.basis, prozent,
+                    sicht.basis, sicht.endwert));
             titel.setForeground(display.getSystemColor(
                     gewinn ? SWT.COLOR_DARK_GREEN : SWT.COLOR_DARK_RED));
         }
