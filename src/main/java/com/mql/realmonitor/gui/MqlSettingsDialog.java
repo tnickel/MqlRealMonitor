@@ -29,7 +29,33 @@ import com.mql.realmonitor.mql5.Mql5Credentials;
  */
 public class MqlSettingsDialog extends Dialog {
 
-    private static final String VERSION_TAG = " (v1.4.1)";
+    private static final String VERSION_TAG = " (v1.4.4)";
+
+    /**
+     * NEU: Erklärtext für den Info-Button neben der KiScanner-Base-URL.
+     */
+    private static final String INFO_KISCANNER_URL =
+        "Diese Adresse ist die REST-Schnittstelle des Programms MqlKiScanner — "
+        + "sie zeigt auf den eigenen Rechner, nicht ins Internet.\n\n"
+        + "Wofür der RealMonitor sie benutzt:\n"
+        + "Beim Klick auf den Button „🤖 KiScanner\" ruft er genau diese Adresse auf "
+        + "und holt die gescannte Signalliste:\n"
+        + "   GET {Base-URL}/api/v1/signals?ampel=gruen,gelb\n"
+        + "Ist ein Zugriffs-Token eingetragen, wird er als Header „X-User-Key\" mitgesendet.\n\n"
+        + "Welche Daten übertragen werden:\n"
+        + "• Zum Scanner: nur dieser eine Lese-Aufruf — keine Logins, keine Kontodaten, keine Trades.\n"
+        + "• Vom Scanner: eine JSON-Liste der gescannten Signale (Signal-ID, Name, Plattform, URL, "
+        + "Ampel-Farbe, Urteil, Kurzfassung, Score).\n"
+        + "Der RealMonitor übernimmt daraus ausschließlich grün/gelb bewertete Signale in die "
+        + "Überwachung und gleicht die Favoritenklasse an die Scanner-Ampel an. Alles Weitere "
+        + "(Kurshistorie, Trade-Download) holt er sich selbst direkt von mql5.com.\n\n"
+        + "Was ist wo einzutragen?\n"
+        + "Die Scanner-API lauscht bewusst nur lokal (127.0.0.1) — Fernzugriff über das Netzwerk "
+        + "(z. B. ein Server wie Contabo) ist nicht vorgesehen.\n"
+        + "• Läuft der MqlKiScanner auf demselben Rechner wie dieser RealMonitor: "
+        + "http://127.0.0.1:8611\n"
+        + "• Läuft dort kein Scanner, schlägt der KiScanner-Abruf mit einer Fehlermeldung fehl — "
+        + "am Rest des Programms ändert das nichts.";
 
     private final MqlRealMonitorGUI gui;
     private final MqlRealMonitorConfig config;
@@ -92,9 +118,18 @@ public class MqlSettingsDialog extends Dialog {
         kiGroup.setLayout(new GridLayout(2, false));
 
         addLabel(kiGroup, "Base-URL:");
-        kiScannerUrlText = new Text(kiGroup, SWT.BORDER);
-        kiScannerUrlText.setLayoutData(fill());
+        Composite urlCell = new Composite(kiGroup, SWT.NONE);
+        urlCell.setLayoutData(fill());
+        GridLayout urlLayout = new GridLayout(2, false);
+        urlLayout.marginWidth = 0;
+        urlLayout.marginHeight = 0;
+        urlCell.setLayout(urlLayout);
+        kiScannerUrlText = new Text(urlCell, SWT.BORDER);
+        kiScannerUrlText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         kiScannerUrlText.setText(config.getKiScannerBaseUrl());
+        kiScannerUrlText.setToolTipText("Adresse der lokalen REST-Schnittstelle des MqlKiScanner "
+                + "(Standard: http://127.0.0.1:8611)");
+        addInfoButton(urlCell, "KiScanner Base-URL — was passiert hier?", INFO_KISCANNER_URL);
 
         addLabel(kiGroup, "Zugriffs-Token:");
         kiScannerTokenText = new Text(kiGroup, SWT.BORDER | SWT.PASSWORD);
@@ -268,6 +303,25 @@ public class MqlSettingsDialog extends Dialog {
         Label label = new Label(parent, SWT.NONE);
         label.setText(text);
         label.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+    }
+
+    /**
+     * NEU: Kleiner Info-Button („i") neben einem Feld — öffnet einen Erklär-Dialog.
+     */
+    private void addInfoButton(Composite parent, String titel, String text) {
+        Button info = new Button(parent, SWT.FLAT);
+        info.setText("i");
+        info.setToolTipText("Klicken für eine Erklärung zu diesem Feld");
+        info.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        info.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                MessageBox box = new MessageBox(getParent(), SWT.ICON_INFORMATION | SWT.OK);
+                box.setText(titel);
+                box.setMessage(text);
+                box.open();
+            }
+        });
     }
 
     private GridData fill() {
