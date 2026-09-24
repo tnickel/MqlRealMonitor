@@ -275,10 +275,11 @@ public class MqlSidePanel {
             gewinn.setText(gewinnZeile != null ? gewinnZeile : "berechne …");
             gewinn.setLayoutData(new GridData(SWT.CENTER, SWT.TOP, true, false));
             gewinn.setToolTipText("Gewinn im Zeitraum ab " + zeitraum.start().toLocalDate() + ":\n"
-                    + "Δ Profit+Floating je Signal aus den Tick-Daten, angewendet\n"
-                    + "auf das Sim-Kapital am Periodenstart. Fallback: Simulations-\n"
-                    + "kurve, wenn keine Tick-Wochendaten vorliegen. Gibt es keine\n"
-                    + "Ticks zum Periodenstart, gilt der älteste Tick als Basis.\n"
+                    + "Δ Profit+Floating je Signal aus den Tick-Daten (15-Minuten-\n"
+                    + "Snapshots von Kontostand/Equity), angewendet auf das Sim-\n"
+                    + "Kapital am Periodenstart. Funktioniert auch ohne Trade-\n"
+                    + "Historie (nicht abonnierte Signale). Signale ohne Tick-Daten\n"
+                    + "fehlt die Basis. Fallback: Simulationskurve ohne Ticks.\n"
                     + "Klick auf das Portfolio rechnet mit aktuellen Daten neu.");
             if (gewinnZeile != null) {
                 faerbeGewinnZeile(gewinn, gewinnZeile);
@@ -437,11 +438,13 @@ public class MqlSidePanel {
     /** NEU: Formatiert die Gewinn-Zeile aus dem Simulationsergebnis */
     private String formatGewinnZeile(Zeitraum periode, SimulationResult result,
                                      Map<String, Double> prozente) {
-        if (result.portfolio.isEmpty()) {
-            return periode.praefix + ": —"; // keine Trade-Historie geladen
+        if (result.portfolio.isEmpty() && prozente.isEmpty()) {
+            return periode.praefix + ": —"; // weder Trade-Historie noch Tick-Daten
         }
-        // Bevorzugt LIVE-Periodenprozente aus den Tick-Daten; Fallback auf die
-        // Simulationskurve (z. B. wenn noch gar keine Ticks vorliegen)
+        // Bevorzugt LIVE-Periodenprozente aus den Tick-Daten — die hängen nicht
+        // an der Trade-Historie und funktionieren damit auch auf Systemen, deren
+        // Signale nicht abonniert sind (MQL5 liefert dort die Trade-Liste nur
+        // verzögert). Fallback auf die Simulationskurve, wenn keine Ticks.
         double[] w = !prozente.isEmpty()
                 ? SimulatorEngine.gewinnSeitAusTicks(result, prozente, periode.start())
                 : SimulatorEngine.gewinnSeitAusKurve(result, periode.start());

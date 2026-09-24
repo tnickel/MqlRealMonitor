@@ -370,6 +370,11 @@ public class SimulatorEngine {
      * Damit die Zeile Werte zeigt, obwohl Trade-Exporte nur per
      * "Trades laden" aktualisiert werden.
      *
+     * Funktioniert auch OHNE Trade-Historie: Nicht abonnierte Signale
+     * liefern die Trade-Liste nur verzögert/gar nicht — ihr Kapital am
+     * Periodenstart ist dann das konfigurierte Startkapital (kein
+     * Compounding-Wert), der Gewinn kommt allein aus den Tick-Prozenten.
+     *
      * @param result             Simulationsergebnis des Portfolios
      * @param prozenteJeSignal   Signal-ID → Gewinn in % seit dem Referenzzeitpunkt (nur Signale MIT Daten)
      * @param seit               Start des Zeitraums
@@ -379,7 +384,7 @@ public class SimulatorEngine {
                                               java.util.Map<String, Double> prozenteJeSignal,
                                               LocalDateTime seit) {
         double[] out = new double[2];
-        if (result == null || result.portfolio.isEmpty() || seit == null) {
+        if (result == null || result.strategien.isEmpty() || seit == null) {
             return out;
         }
 
@@ -388,9 +393,8 @@ public class SimulatorEngine {
         int strategienMitKapital = 0;
 
         for (StrategyResult s : result.strategien) {
-            if (!s.hatHistorie || s.punkte.isEmpty()) {
-                continue;
-            }
+            // Ohne Historie ist punkte leer — kapitalAmStart bleibt dann
+            // beim konfigurierten Startkapital
             double kapitalAmStart = s.startkapital;
             for (EquityPoint p : s.punkte) {
                 if (p.getTime().isAfter(seit)) {

@@ -256,6 +256,33 @@ class SimulatorEngineTest {
         assertEquals(10.0 / 3.0, w2[1], 1e-9);
     }
 
+    @Test
+    void testGewinnSeitAusTicksOhneTradeHistorie() {
+        // Nicht abonnierte Signale: keine Trade-Exporte → keine Kurven.
+        // Das konfigurierte Startkapital zählt als Basis, der Gewinn kommt
+        // allein aus den Tick-Prozenten (Zeile darf nicht "—" zeigen).
+        SimulatorEngine.SimulationResult result = new SimulatorEngine.SimulationResult();
+        result.strategien.add(new SimulatorEngine.StrategyResult(
+                "A", "A", new ArrayList<>(), false, 10_000.0));
+        result.strategien.add(new SimulatorEngine.StrategyResult(
+                "B", "B", new ArrayList<>(), false, 20_000.0));
+
+        LocalDate wochenStart = SimulatorEngine.aktuellerWochenstart();
+        java.util.Map<String, Double> prozente = java.util.Map.of("A", 5.0, "B", -2.0);
+        double[] w = SimulatorEngine.gewinnSeitAusTicks(
+                result, prozente, wochenStart.atStartOfDay());
+
+        // Basis 30.000; Gewinn +500 − 400 = +100 → +0,3333… %
+        assertEquals(100.0, w[0], 1e-9);
+        assertEquals(100.0 / 30_000.0 * 100.0, w[1], 1e-9);
+
+        // Ohne Tick-Prozente gibt es keinen Gewinn, aber eine Basis
+        double[] wOhne = SimulatorEngine.gewinnSeitAusTicks(
+                result, java.util.Map.of(), wochenStart.atStartOfDay());
+        assertEquals(0.0, wOhne[0], 1e-9);
+        assertEquals(0.0, wOhne[1], 1e-9);
+    }
+
     // ---------------------------------------------------- Open Equity
 
     @Test
