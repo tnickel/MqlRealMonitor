@@ -29,7 +29,8 @@ import com.mql.realmonitor.mql5.Mql5Credentials;
  */
 public class MqlSettingsDialog extends Dialog {
 
-    private static final String VERSION_TAG = " (v1.4.6)";
+    // Abgeleitet aus MqlRealMonitorGUI.VERSION — Version nur EINMAL pflegen
+    private static final String VERSION_TAG = " (v" + MqlRealMonitorGUI.VERSION + ")";
 
     /**
      * NEU: Erklärtext für den Info-Button neben der KiScanner-Base-URL.

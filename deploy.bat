@@ -61,6 +61,33 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem 6b. Deploy auf Zielrechner DESKTOP-NS1MQSV per SSH/SCP
+rem     Vorlage: doc\zielrechner_ns1mqsv_betrieb.md in den Scanner-Repos.
+rem     Der Monitor dort muss VOR dem Kopieren beendet sein (Jar-Sperre!);
+rem     Start danach: StartMqlRealMonitor.bat in der trader-Session (Doppelklick).
+set "SSH_KEY=D:\git\MQL\MqlGoldscanner\config\goldscanner_ziel_key"
+set "SSH_TARGET=tnickel@192.168.178.164"
+set "ZIEL_JAR=C:/Forex/MqlAnalyzer/bin/MqlRealMonitor.jar"
+echo [INFO] Deploy auf Zielrechner !SSH_TARGET! nach !ZIEL_JAR!...
+if not exist "!SSH_KEY!" (
+    echo [WARNUNG] SSH-Key nicht gefunden: !SSH_KEY!
+    echo [WARNUNG] Zielrechner-Deploy uebersprungen — NAS-Kopie liegt bereit.
+) else (
+    rem Erst als .neu kopieren, dann austauschen — bei Jar-Sperre bleibt die
+    rem alte Jar unangetastet
+    scp -q -o BatchMode=yes -i "!SSH_KEY!" "target\mql-real-monitor.jar" "!SSH_TARGET!:!ZIEL_JAR!.neu"
+    if errorlevel 1 (
+        echo [WARNUNG] SCP zum Zielrechner fehlgeschlagen — Deploy dort uebersprungen.
+    ) else (
+        ssh -o BatchMode=yes -i "!SSH_KEY!" "!SSH_TARGET!" "copy /y ""C:\Forex\MqlAnalyzer\bin\MqlRealMonitor.jar.neu"" ""C:\Forex\MqlAnalyzer\bin\MqlRealMonitor.jar"" && del ""C:\Forex\MqlAnalyzer\bin\MqlRealMonitor.jar.neu"""
+        if errorlevel 1 (
+            echo [WARNUNG] Austausch auf dem Zielrechner fehlgeschlagen — laeuft dort noch der Monitor? Jar.neu blieb liegen.
+        ) else (
+            echo [INFO] Zielrechner-Deploy erfolgreich. Monitor dort starten: StartMqlRealMonitor.bat in der trader-Session.
+        )
+    )
+)
+
 rem 7. Kopieren des doc\drawdown Ordners falls vorhanden
 if exist "doc\drawdown" (
     echo [INFO] Kopiere doc\drawdown Ordner nach !DEST_DIR!\doc\drawdown...
