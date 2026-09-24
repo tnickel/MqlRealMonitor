@@ -168,7 +168,9 @@ public class MqlSidePanel {
         }
         zeitraumCombo.select(Zeitraum.WOCHE.ordinal());
         zeitraumCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        zeitraumCombo.setToolTipText("Zeitraum der Gewinn-Zeilen unter den Portfolios.\n"
+        zeitraumCombo.setToolTipText("Zeitraum der Gewinn-Zeilen unter den Portfolios\n"
+                + "und der Simulator-Ansicht beim Klick auf ein Portfolio\n"
+                + "(im Simulator-Fenster beliebig umschaltbar).\n"
                 + "Basis: Live-Tick-Daten (Δ Profit+Floating) je Signal,\n"
                 + "angewendet auf das Sim-Kapital am Periodenstart.");
         zeitraumCombo.addSelectionListener(new SelectionAdapter() {
@@ -506,11 +508,13 @@ public class MqlSidePanel {
 
         LocalDate start = parseStartdatum(p.getStartDate());
 
+        // NEU: Simulator-Ansicht im gewählten Gewinn-Zeitraum öffnen
         new SimulatorWindow(gui).open(
                 p.getName(),
                 new ArrayList<>(p.getSignalIds()),
                 start,
-                p.getStartCapital());
+                p.getStartCapital(),
+                zeitraum.label);
     }
 
     // --------------------------------------------------------- CRUD

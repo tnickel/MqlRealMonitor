@@ -458,6 +458,91 @@ public class SimulatorEngine {
         return kombiniert;
     }
 
+    // -------------------------------------------------- Zeitraum-Ansicht
+
+    /**
+     * NEU: Zeitraum-gefilterte Sicht auf eine Kurve für die Simulator-
+     * Ansicht. Die Simulation selbst rechnet immer ab dem Sim-Startdatum
+     * (Compounding) — für die Anzeige eines kürzeren Zeitraums (Tag/Woche/
+     * Monat/…) wird die Kurve hier zugeschnitten:
+     *
+     * - Punkte VOR dem Zeitraum-Start liefern den Kontostand am Start
+     *   (Step-Funktion: letzter bekannter Wert) und werden als Trägerpunkt
+     *   AUF den Startzeitpunkt gesetzt — die Kurve beginnt also mit dem
+     *   echten Kapitalstand, nicht bei 0 oder Startkapital.
+     * - Liegt die KOMPLETTE Kurve vor dem Zeitraum (Strategie hat im
+     *   Zeitraum keine geschlossen Trades), bleibt ein flacher Punkt am
+     *   Startzeitpunkt stehen (isFlat() = true).
+     * - ab == null heißt "Gesamt": die Kurve wird unverändert übernommen.
+     */
+    public static class Zeitfenster {
+        public final List<EquityPoint> kurve = new ArrayList<>();
+        /** Kapitalstand am Zeitraum-Start (bei Gesamt: erster Kurvenwert) */
+        public double basis;
+        /** Letzter Wert der zugeschnittenen Kurve */
+        public double endwert;
+        /** Echte Kurvenpunkte nach dem Startzeitpunkt (ein Punkt exakt AM
+         * Start gilt als Basis-Träger und zählt nicht mit) */
+        public int originale;
+
+        public boolean isFlat() {
+            return originale == 0;
+        }
+    }
+
+    public static Zeitfenster fensterFuer(List<EquityPoint> punkte, LocalDateTime ab) {
+        Zeitfenster f = new Zeitfenster();
+        if (punkte == null || punkte.isEmpty()) {
+            return f;
+        }
+        if (ab == null) {
+            f.kurve.addAll(punkte);
+            f.basis = punkte.get(0).getCumulatedProfit();
+            f.endwert = punkte.get(punkte.size() - 1).getCumulatedProfit();
+            f.originale = punkte.size();
+            return f;
+        }
+
+        Double vorher = null; // letzter Wert strikt vor dem Zeitraum-Start
+        boolean gestartet = false;
+        for (EquityPoint p : punkte) {
+            if (p.getTime().isBefore(ab)) {
+                vorher = p.getCumulatedProfit();
+                continue;
+            }
+            if (!gestartet) {
+                gestartet = true;
+                if (p.getTime().equals(ab)) {
+                    // Punkt exakt AM Start = Basis-Träger (dieselbe Regel wie
+                    // gewinnSeit…: letzter Wert <= Start ist die Basis)
+                    f.basis = p.getCumulatedProfit();
+                    f.kurve.add(p);
+                } else {
+                    f.basis = vorher != null ? vorher : p.getCumulatedProfit();
+                    if (vorher != null) {
+                        f.kurve.add(new EquityPoint(ab, vorher));
+                    }
+                    f.kurve.add(p);
+                    f.originale++;
+                }
+                continue;
+            }
+            f.kurve.add(p);
+            f.originale++;
+        }
+        if (!gestartet) {
+            // Komplette Kurve vor dem Zeitraum → flacher Stand am Startzeitpunkt
+            double wert = vorher != null ? vorher
+                    : punkte.get(punkte.size() - 1).getCumulatedProfit();
+            f.basis = wert;
+            f.endwert = wert;
+            f.kurve.add(new EquityPoint(ab, wert));
+            return f;
+        }
+        f.endwert = f.kurve.get(f.kurve.size() - 1).getCumulatedProfit();
+        return f;
+    }
+
     /** Format-Helfer für Datumseingaben (yyyy-MM-dd) */
     public static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 }

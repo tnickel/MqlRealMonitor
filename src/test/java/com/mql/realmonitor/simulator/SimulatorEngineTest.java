@@ -283,6 +283,90 @@ class SimulatorEngineTest {
         assertEquals(0.0, wOhne[1], 1e-9);
     }
 
+    // ------------------------------------------- Zeitraum-Ansicht (Fenster)
+
+    @Test
+    void testFensterGesamtUveraendert() {
+        List<EquityPoint> kurve = new ArrayList<>();
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-01T00:00"), 10_000.0));
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-10T12:00"), 11_000.0));
+
+        SimulatorEngine.Zeitfenster f = SimulatorEngine.fensterFuer(kurve, null);
+        assertEquals(2, f.kurve.size());
+        assertEquals(10_000.0, f.basis, 1e-9);
+        assertEquals(11_000.0, f.endwert, 1e-9);
+        assertEquals(2, f.originale);
+        assertFalse(f.isFlat());
+    }
+
+    @Test
+    void testFensterTraegtWertAnPeriodenstart() {
+        // Letzter Punkt VOR dem Wochenstart liefert den Startwert — die Kurve
+        // beginnt im Fenster mit dem echten Kapitalstand, nicht bei 0
+        List<EquityPoint> kurve = new ArrayList<>();
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-01T00:00"), 10_000.0));
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-10T12:00"), 11_000.0));
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-23T15:00"), 11_500.0));
+
+        LocalDateTime ab = LocalDateTime.parse("2026-09-21T00:00");
+        SimulatorEngine.Zeitfenster f = SimulatorEngine.fensterFuer(kurve, ab);
+
+        assertEquals(2, f.kurve.size()); // Trägerpunkt + Punkt 09-23
+        assertEquals(ab, f.kurve.get(0).getTime());
+        assertEquals(11_000.0, f.kurve.get(0).getCumulatedProfit(), 1e-9);
+        assertEquals(11_000.0, f.basis, 1e-9);
+        assertEquals(11_500.0, f.endwert, 1e-9);
+        assertEquals(1, f.originale);
+    }
+
+    @Test
+    void testFensterKurveKomplettVorZeitraumIstFlach() {
+        // KiraCat-Fall: letzte geschlossene Trades vor dem Wochenstart →
+        // flacher Trägerpunkt am Zeitraum-Start, keine Originalpunkte
+        List<EquityPoint> kurve = new ArrayList<>();
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-01T00:00"), 10_000.0));
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-04T12:00"), 10_040.0));
+
+        LocalDateTime ab = LocalDateTime.parse("2026-09-21T00:00");
+        SimulatorEngine.Zeitfenster f = SimulatorEngine.fensterFuer(kurve, ab);
+
+        assertEquals(1, f.kurve.size());
+        assertEquals(ab, f.kurve.get(0).getTime());
+        assertEquals(10_040.0, f.basis, 1e-9);
+        assertEquals(10_040.0, f.endwert, 1e-9);
+        assertEquals(0, f.originale);
+        assertTrue(f.isFlat());
+    }
+
+    @Test
+    void testFensterPunktExaktAmStartZaehltInsFenster() {
+        // Punkt genau AM Periodenstart darf nicht als "vorher" behandelt
+        // und nicht doppelt (Träger + Original mit gleichem Wert) auftreten
+        List<EquityPoint> kurve = new ArrayList<>();
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-01T00:00"), 10_000.0));
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-21T00:00"), 10_200.0));
+        kurve.add(new EquityPoint(LocalDateTime.parse("2026-09-22T10:00"), 10_300.0));
+
+        LocalDateTime ab = LocalDateTime.parse("2026-09-21T00:00");
+        SimulatorEngine.Zeitfenster f = SimulatorEngine.fensterFuer(kurve, ab);
+
+        assertEquals(2, f.kurve.size()); // Punkt AM Start = Träger, kein Doppelpunkt
+        assertEquals(ab, f.kurve.get(0).getTime());
+        assertEquals(10_200.0, f.kurve.get(0).getCumulatedProfit(), 1e-9);
+        assertEquals(10_200.0, f.basis, 1e-9);
+        assertEquals(10_300.0, f.endwert, 1e-9);
+        assertEquals(1, f.originale);
+    }
+
+    @Test
+    void testFensterLeereKurve() {
+        SimulatorEngine.Zeitfenster f = SimulatorEngine.fensterFuer(
+                new ArrayList<>(), LocalDateTime.parse("2026-09-21T00:00"));
+        assertTrue(f.kurve.isEmpty());
+        assertTrue(f.isFlat());
+        assertEquals(0.0, f.basis, 1e-9);
+    }
+
     // ---------------------------------------------------- Open Equity
 
     @Test
