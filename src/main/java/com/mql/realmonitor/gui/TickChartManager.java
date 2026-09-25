@@ -426,8 +426,14 @@ public class TickChartManager {
             LOGGER.info("Bestehender Drawdown-Chart aktualisiert");
         }
 
-        // NEU: X-Achse auf die Historie erweitern (sonst außerhalb sichtbar)
-        extendAxisRangeForHistory(drawdownChart.getXYPlot(), historyDrawdownSeries);
+        // FIX 25.09.2026 (v2): X-Achse abschließend auf den Zeitraum ALLER
+        // Serien (Tick-Fenster + Historie) setzen UND das Datumsformat genau
+        // danach wählen — unabhängig von der Reihenfolge der vorherigen
+        // Kalibrier-Schritte. Vorher blieb das Kurzzeit-Format des kleinen
+        // Tick-Fensters stehen ("HH:mm" bzw. bei wenigen Punkten "HH:mm:ss")
+        // und die über Monate gereichten Tagesgrenzen-Ticks zeigten überall
+        // "00:00" bzw. "00:00:00".
+        finalisiereZeitAchse(drawdownChart.getXYPlot(), timeScale);
 
         LOGGER.info("EQUITY DRAWDOWN CHART ERFOLGREICH ERSTELLT/AKTUALISIERT (Erweiterte X-Achse, Optimierte Performance)");
     }
@@ -546,7 +552,9 @@ public class TickChartManager {
             // configureDateAxisEnhanced clippt die Achse auf das Tick-Fenster —
             // die graue Historie (Monate/Jahre) läge dann komplett außerhalb
             // des sichtbaren Bereichs (Serie in der Legende, aber unsichtbar).
-            extendAxisRangeForHistory(profitChart.getXYPlot(), historySeries);
+            // FIX 25.09.2026 (v2): finalisiereZeitAchse übernimmt das — sie
+            // setzt Bereich UND Format abschließend auf den Dataset-Zeitraum.
+            finalisiereZeitAchse(profitChart.getXYPlot(), timeScale);
         }
     
     /**
@@ -645,27 +653,53 @@ public class TickChartManager {
     }
 
     /**
-     * NEU: Erweitert die X-Achse des Plots auf den Zeitraum einer Zusatz-Serie
-     * (configureDateAxisEnhanced clippt auf das Tick-Fenster — die Historie
-     * läge sonst komplett außerhalb des sichtbaren Bereichs).
+     * FIX 25.09.2026 (v2): Stellt die X-Achse abschließend auf den Zeitraum
+     * ALLER Serien im Plot-Dataset ein (Tick-Fenster + ggf. MQL5-Historie)
+     * und wählt das Datumsformat nach genau diesem Zeitraum.
+     *
+     * Der Zeitraum wird direkt aus den Daten berechnet — nicht aus dem
+     * internen Bereichsspeicher der Achse, der je nach Reihenfolge der
+     * Kalibrier-Schritte noch veraltet oder (bei frisch erstellten Charts)
+     * auf den 01.01.1970 stehen kann. Da die Historie im selben Dataset
+     * liegt, ist der Dataset-Zeitraum immer der tatsächlich sichtbare.
+     * Format-Regel: siehe ChartDateAxisFormat (unter 4 h Uhrzeit, bis 48 h
+     * Datum+Uhrzeit, darüber Datum mit Jahr) — damit verschwinden die
+     * "00:00"-Reihen über Monate gereichter Tagesgrenzen-Ticks.
      */
-    private void extendAxisRangeForHistory(XYPlot plot, TimeSeries historySeries) {
-        if (historySeries == null || historySeries.getItemCount() == 0) {
-            return;
-        }
+    private void finalisiereZeitAchse(XYPlot plot, TimeScale timeScale) {
         try {
+            long min = Long.MAX_VALUE;
+            long max = Long.MIN_VALUE;
+            for (int d = 0; d < plot.getDatasetCount(); d++) {
+                Object datasetObj = plot.getDataset(d);
+                if (datasetObj instanceof TimeSeriesCollection) {
+                    TimeSeriesCollection zeiten = (TimeSeriesCollection) datasetObj;
+                    for (int s = 0; s < zeiten.getSeriesCount(); s++) {
+                        TimeSeries serie = zeiten.getSeries(s);
+                        if (serie != null && serie.getItemCount() > 0) {
+                            long von = serie.getTimePeriod(0).getStart().getTime();
+                            long bis = serie.getTimePeriod(serie.getItemCount() - 1).getEnd().getTime();
+                            min = Math.min(min, von);
+                            max = Math.max(max, bis);
+                        }
+                    }
+                }
+            }
+            if (min == Long.MAX_VALUE || max <= min) {
+                LOGGER.info("Kein Zeitraum im Dataset — X-Achse unverändert");
+                return;
+            }
+
             DateAxis axis = (DateAxis) plot.getDomainAxis();
-            org.jfree.data.Range current = axis.getRange();
-            double lower = current.getLowerBound();
-            double upper = current.getUpperBound();
-            Date first = historySeries.getTimePeriod(0).getStart();
-            Date last = historySeries.getTimePeriod(historySeries.getItemCount() - 1).getEnd();
-            lower = Math.min(lower, first.getTime());
-            upper = Math.max(upper, last.getTime());
-            axis.setRange(new org.jfree.data.Range(lower, upper));
-            LOGGER.info("X-Achse auf Historie erweitert: " + first + " bis " + last);
+            long rand = Math.max(60_000L, (long) ((max - min) * 0.02));
+            axis.setRange(new Date(min - rand), new Date(max + rand));
+            axis.setDateFormatOverride(ChartDateAxisFormat.formatForBereich(max - min));
+
+            LOGGER.info("X-Achse final auf Dataset-Zeitraum gesetzt: "
+                    + ((max - min) / 3_600_000L) + " h, Format dd.MM.yy/HH:mm je Spanne"
+                    + " (TimeScale: " + (timeScale != null ? timeScale.getLabel() : "NULL") + ")");
         } catch (Exception e) {
-            LOGGER.warning("Konnte X-Achse nicht auf Historie erweitern: " + e.getMessage());
+            LOGGER.warning("Konnte X-Achse nicht finalisieren: " + e.getMessage());
         }
     }
 

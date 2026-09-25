@@ -41,8 +41,8 @@ public class MqlRealMonitorGUI {
     // EINZIGE Quelle für die Versionsnummer — Titelleiste UND Einstellungs-
     // Dialog (VERSION_TAG) leiten sich daraus ab. Bei jedem Feature-Bump
     // HIER ändern (der Zielsystem-Check läuft über den Einstellungs-Dialog).
-    public static final String VERSION = "1.4.7";
-    private static final String BUILD_DATE = "2026-09-24";
+    public static final String VERSION = "1.4.10";
+    private static final String BUILD_DATE = "2026-09-25";
     private static final String APPLICATION_TITLE = "MQL5 Real Monitor - Signal Provider Überwachung";
     
     private final MqlRealMonitor monitor;

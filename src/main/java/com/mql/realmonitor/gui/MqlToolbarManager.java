@@ -67,7 +67,7 @@ public class MqlToolbarManager {
     public void createToolbar() {
         Composite toolbar = new Composite(shell, SWT.NONE);
         toolbar.setLayoutData(new GridData(SWT.FILL, SWT.TOP, true, false));
-        toolbar.setLayout(new GridLayout(18, false)); // 18 Spalten für alle Buttons
+        toolbar.setLayout(new GridLayout(20, false)); // 20 Spalten für alle Buttons
         
         // Monitoring-Buttons
         createMonitoringButtons(toolbar);
@@ -170,6 +170,42 @@ public class MqlToolbarManager {
                 openDrawdownAnalyzerForSelected();
             }
         });
+
+        // NEU (v1.4.8): Tickkurse anzeigen Button — 15-Minuten-Daten als
+        // Chart + sortierbare Tabelle im geteilten Fenster
+        Button tickViewButton = new Button(parent, SWT.PUSH);
+        tickViewButton.setText("\uD83D\uDDD2 Tickkurse anzeigen"); // 🗒️
+        tickViewButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        tickViewButton.setToolTipText("Zeigt die 15-Minuten-Tickdaten als Chart und sortierbare Tabelle "
+                + "(markiertes Signal ist vorbelegt)");
+        tickViewButton.addSelectionListener(new SelectionAdapter() {
+            @Override
+            public void widgetSelected(SelectionEvent e) {
+                openTickDataView();
+            }
+        });
+    }
+
+    /**
+     * NEU (v1.4.8): Öffnet das Tickkurse-Fenster; das in der Tabelle
+     * markierte Signal wird vorbelegt (kein Fehler, wenn nichts markiert ist)
+     */
+    private void openTickDataView() {
+        try {
+            LOGGER.info("=== USER-AKTION: Tickkurse anzeigen Button geklickt ===");
+            String signalId = null;
+            if (gui.getProviderTable() != null && gui.getProviderTable().getTable() != null
+                    && !gui.getProviderTable().getTable().isDisposed()) {
+                org.eclipse.swt.widgets.TableItem[] selected = gui.getProviderTable().getTable().getSelection();
+                if (selected.length > 0) {
+                    signalId = selected[0].getText(ProviderTableHelper.COL_SIGNAL_ID);
+                }
+            }
+            new TickDataSplitWindow(gui, signalId).open();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen der Tickkurse-Anzeige", e);
+            gui.showError("Fehler", "Tickkurse-Anzeige konnte nicht geöffnet werden: " + e.getMessage());
+        }
     }
     
     /**

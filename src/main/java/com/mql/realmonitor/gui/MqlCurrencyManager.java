@@ -25,6 +25,7 @@ public class MqlCurrencyManager {
     
     // Currency-Komponenten
     private Button kurseladenButton;
+    private Button kurseAnzeigenButton;
     private CurrencyDataLoader currencyDataLoader;
     
     public MqlCurrencyManager(MqlRealMonitorGUI gui) {
@@ -135,9 +136,25 @@ public class MqlCurrencyManager {
             
             // Button initial aktivieren nur wenn CurrencyDataLoader verfügbar
             kurseladenButton.setEnabled(currencyDataLoader != null);
-            
+
             LOGGER.info("Kurse laden Button erfolgreich erstellt");
-            
+
+            // NEU (v1.4.8): "Kurse anzeigen" direkt neben "Kurse laden" —
+            // zeigt die gespeicherten Kurse (Chart + Tabelle) im geteilten Fenster
+            kurseAnzeigenButton = new Button(parent, SWT.PUSH);
+            kurseAnzeigenButton.setText("📈 Kurse anzeigen");
+            kurseAnzeigenButton.setToolTipText(
+                    "Zeigt die gespeicherten Währungskurse (XAUUSD, BTCUSD) als Chart und sortierbare Tabelle");
+            kurseAnzeigenButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+            kurseAnzeigenButton.addSelectionListener(new SelectionAdapter() {
+                @Override
+                public void widgetSelected(SelectionEvent e) {
+                    openCurrencyView();
+                }
+            });
+
+            LOGGER.info("Kurse anzeigen Button erfolgreich erstellt");
+
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Fehler beim Erstellen des Kurse laden Buttons: " + e.getMessage(), e);
             gui.showError("Button-Erstellungsfehler", 
@@ -145,6 +162,19 @@ public class MqlCurrencyManager {
         }
     }
     
+    /**
+     * NEU (v1.4.8): Öffnet das "Kurse anzeigen"-Fenster (Chart + Tabelle)
+     */
+    private void openCurrencyView() {
+        try {
+            LOGGER.info("=== USER-AKTION: Kurse anzeigen Button geklickt ===");
+            new CurrencyRatesSplitWindow(gui).open();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Fehler beim Öffnen der Kursanzeige", e);
+            gui.showError("Fehler", "Kursanzeige konnte nicht geöffnet werden: " + e.getMessage());
+        }
+    }
+
     /**
      * Lädt Währungskurse von MQL5 in einem separaten Thread
      */
@@ -400,6 +430,7 @@ public class MqlCurrencyManager {
             
             // Button wird automatisch durch SWT disposed
             kurseladenButton = null;
+            kurseAnzeigenButton = null;
             
             LOGGER.info("CurrencyManager bereinigt");
             
