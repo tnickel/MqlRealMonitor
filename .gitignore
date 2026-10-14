@@ -3,3 +3,4 @@
 doc/drawdown/data.js
 *.log
 /.settings/
+.zcode/

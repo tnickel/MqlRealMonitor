@@ -488,6 +488,13 @@ public class TickChartWindowManager implements TickChartWindowToolbar.ToolbarCal
                 filteredTicks = tickDataSet.getTicks();
                 LOGGER.info("FALLBACK: Verwende alle verfügbaren Ticks");
             }
+
+            // FIX (v1.4.11): volle Tick-Historie an den Chart-Manager — der
+            // Drawdown-Peak soll die GESAMTE Historie sehen (High-Water-Mark
+            // inkl. Kontostand), nicht nur das aktuelle Zeitintervall-Fenster
+            if (chartManager != null) {
+                chartManager.setVollHistorie(tickDataSet.getTicks());
+            }
             
             LOGGER.info("TimeScale " + currentTimeScale.getLabel() + ": " + filteredTicks.size() + " gefilterte Ticks");
             

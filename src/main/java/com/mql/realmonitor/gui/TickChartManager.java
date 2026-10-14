@@ -48,6 +48,11 @@ public class TickChartManager {
 
     // NEU: Config für das Laden der Trade-Historie (Chart-Overlay); kann null sein
     private final com.mql.realmonitor.config.MqlRealMonitorConfig config;
+
+    // FIX (v1.4.11): volle Tick-Historie (vom TickChartWindowManager gesetzt) —
+    // der Drawdown-Peak wird pro Punkt aus der GESAMTEN Historie gelesen,
+    // nicht nur aus dem gerade sichtbaren Zeitintervall-Fenster
+    private List<TickDataLoader.TickData> vollHistorie;
     
     // REDUZIERT: Weniger Datenpunkte für schnelleres Rendering
     private static final int MAX_DATA_POINTS = 100;  // Reduziert von 200 auf 100
@@ -80,6 +85,14 @@ public class TickChartManager {
 
         LOGGER.info("TickChartManager erstellt für Signal: " + signalId + " (" + providerName + ")"
                 + (config != null ? " mit Trade-Historie-Overlay" : ""));
+    }
+
+    /**
+     * FIX (v1.4.11): setzt die volle Tick-Historie für die Drawdown-Peak-
+     * Berechnung (wird vom TickChartWindowManager nach dem Laden übergeben)
+     */
+    public void setVollHistorie(List<TickDataLoader.TickData> vollHistorie) {
+        this.vollHistorie = vollHistorie;
     }
     
     /**
@@ -353,41 +366,81 @@ public class TickChartManager {
         
         // TimeSeries für Total Value Drawdown erstellen
         TimeSeries totalValueDrawdownSeries = new TimeSeries("Total Value Drawdown (%)");
-        
-        // Peak-Tracking für konsistente Drawdown-Berechnung
+
+        // FIX (v1.4.11, KiraCat-Drawdown): High-Water-Mark = höchster JE
+        // gesehener Konto-Stand — pro Tick das MAXIMUM aus Gesamtwert
+        // (Kontostand + Floating) und Kontostand allein. Eine offene
+        // Verlustposition zieht den Gesamtwert UNTER den Kontostand; zählte
+        // der Peak nur Gesamtwerte, blieb der offene Drawdown unsichtbar
+        // (KiraCat: Kontostand 1003,31, Gesamtwert ~812–881 → ~ -16 %).
+        // Liegt die volle Tick-Historie vor, wird der Peak PRO PUNKT aus der
+        // GESAMTEN Historie gelesen — Fenster unterhalb des Hochs zeigen dann
+        // den echten Abstand statt 0 %.
+        long[] vollZeiten = null;
+        double[] vollPeaks = null;
+        if (vollHistorie != null && !vollHistorie.isEmpty()) {
+            vollZeiten = new long[vollHistorie.size()];
+            vollPeaks = new double[vollHistorie.size()];
+            double peak = Double.NEGATIVE_INFINITY;
+            for (int i = 0; i < vollHistorie.size(); i++) {
+                TickDataLoader.TickData t = vollHistorie.get(i);
+                peak = Math.max(peak, Math.max(t.getTotalValue(), t.getEquity()));
+                vollZeiten[i] = t.getTimestamp().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+                vollPeaks[i] = peak;
+            }
+        }
+
+        // Peak-Tracking (Fallback ohne volle Historie: nur Fensterdaten)
         double runningPeak = peakTotalValue;
-        boolean firstData = true;
-        
+        double letzterDrawdown = 0.0;
+
         for (TickDataLoader.TickData tick : optimizedData) {
             try {
                 double totalValue = tick.getTotalValue();
-                
-                // Peak-Tracking (konsistent mit SignalProviderTable)
-                if (firstData) {
-                    if (totalValue > runningPeak) {
-                        runningPeak = totalValue;
+
+                // High-Water-Mark: Gesamtwert ODER Kontostand (je höher)
+                double peakFuerPunkt;
+                if (vollPeaks != null) {
+                    Date tsFuerPeak = Date.from(tick.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
+                    peakFuerPunkt = peakBisZu(vollZeiten, vollPeaks, tsFuerPeak.getTime());
+                } else {
+                    double kandidat = Math.max(totalValue, tick.getEquity());
+                    if (kandidat > runningPeak) {
+                        runningPeak = kandidat;
                     }
-                    firstData = false;
-                } else if (totalValue > runningPeak) {
-                    runningPeak = totalValue;
+                    peakFuerPunkt = runningPeak;
                 }
-                
-                // Drawdown berechnen (konsistent mit SignalData)
+
+                // Drawdown berechnen
                 double drawdownPercent = 0.0;
-                if (runningPeak > 0) {
-                    drawdownPercent = ((totalValue - runningPeak) / runningPeak) * 100.0;
+                if (peakFuerPunkt > 0) {
+                    drawdownPercent = ((totalValue - peakFuerPunkt) / peakFuerPunkt) * 100.0;
                 }
-                
+                letzterDrawdown = drawdownPercent;
+
                 // KORRIGIERT: LocalDateTime zu Date konvertieren
                 LocalDateTime localDateTime = tick.getTimestamp();
                 Date timestamp = Date.from(localDateTime.atZone(ZoneId.systemDefault()).toInstant());
                 Millisecond millisecond = new Millisecond(timestamp);
-                
+
                 // Datenpunkt hinzufügen
                 totalValueDrawdownSeries.addOrUpdate(millisecond, drawdownPercent);
-                
+
             } catch (Exception e) {
                 LOGGER.warning("Fehler beim Hinzufügen von Drawdown-Datenpunkt: " + e.getMessage());
+            }
+        }
+
+        // FIX (v1.4.11): letzten Stand bis "jetzt" durchziehen — bei wenigen
+        // Ticks (bzw. einem einzelnen Punkt) zeichnet JFreeChart sonst GAR
+        // KEINE Linie, und der aktuell OFFENE Drawdown erscheint nicht
+        if (totalValueDrawdownSeries.getItemCount() > 0) {
+            Date jetzt = new Date();
+            Date letztesEnde = totalValueDrawdownSeries
+                    .getTimePeriod(totalValueDrawdownSeries.getItemCount() - 1).getEnd();
+            if (jetzt.getTime() - letztesEnde.getTime() > 60_000L) {
+                totalValueDrawdownSeries.addOrUpdate(new Millisecond(jetzt), letzterDrawdown);
+                LOGGER.info("Drawdown-Kurve bis 'jetzt' durchgezogen: " + String.format("%.2f%%", letzterDrawdown));
             }
         }
         
@@ -399,6 +452,13 @@ public class TickChartManager {
         // MQL5-Trade-Export, damit man sieht wie weit es im schlimmsten
         // Fall runterging (Run-up der Ein-/Auszahlungen inklusive)
         TimeSeries historyDrawdownSeries = buildHistoryDrawdownSeries();
+        // FIX (v1.4.12): offene Tick-Periode AN DIE HISTORIE anhängen — die
+        // graue Kurve endete bisher am letzten CLOSED Trade, und der aktuell
+        // offene Drawdown (Open Equity, KiraCat ~ -16 %) war nur als winziges
+        // rotes Stück am äußersten rechten Rand vorhanden. So fällt die
+        // Historien-Kurve sichtbar auf den offenen Drawdown und läuft bis
+        // "jetzt".
+        haengeOffenenDrawdownAn(historyDrawdownSeries, vollZeiten, vollPeaks);
         if (historyDrawdownSeries != null) {
             dataset.addSeries(historyDrawdownSeries);
             LOGGER.info("HISTORIE-DRAWDOWN-OVERLAY: " + historyDrawdownSeries.getItemCount()
@@ -473,10 +533,12 @@ public class TickChartManager {
         // TimeSeries für RELATIVE Profit-Werte erstellen (nicht absolute Beträge!)
         TimeSeries realizedProfitSeries = new TimeSeries("Kontostand (Profit)");
         TimeSeries totalProfitSeries = new TimeSeries("Gesamtwert (Profit + Floating)");
-        
+
         int addedPoints = 0;
         double minProfit = Double.MAX_VALUE;
         double maxProfit = Double.MIN_VALUE;
+        double letzterRealized = 0.0;
+        double letzterTotal = 0.0;
         
         for (TickDataLoader.TickData tick : optimizedData) {
             try {
@@ -495,15 +557,33 @@ public class TickChartManager {
                 // Y-Achse zeigt jetzt PROFIT in Euro (0, 5, 10, 15) statt absolute Beträge (2800, 2805)
                 realizedProfitSeries.addOrUpdate(millisecond, realizedProfit);
                 totalProfitSeries.addOrUpdate(millisecond, totalProfit);
-                
+
+                letzterRealized = realizedProfit;
+                letzterTotal = totalProfit;
+
                 addedPoints++;
-                
+
                 // Min/Max für Logging
                 if (totalProfit < minProfit) minProfit = totalProfit;
                 if (totalProfit > maxProfit) maxProfit = totalProfit;
-                
+
             } catch (Exception e) {
                 LOGGER.warning("Fehler beim Hinzufügen von Profit-Datenpunkt: " + e.getMessage());
+            }
+        }
+
+        // FIX (v1.4.11): letzten Stand bis "jetzt" durchziehen — bei wenigen
+        // Ticks (bzw. einem einzelnen Punkt) zeichnet JFreeChart sonst KEINE
+        // Linie und der offene Anteil (Floating) ist nicht erkennbar
+        if (realizedProfitSeries.getItemCount() > 0) {
+            Date jetzt = new Date();
+            Date letztesEnde = realizedProfitSeries
+                    .getTimePeriod(realizedProfitSeries.getItemCount() - 1).getEnd();
+            if (jetzt.getTime() - letztesEnde.getTime() > 60_000L) {
+                realizedProfitSeries.addOrUpdate(new Millisecond(jetzt), letzterRealized);
+                totalProfitSeries.addOrUpdate(new Millisecond(jetzt), letzterTotal);
+                LOGGER.info("Profit-Kurven bis 'jetzt' durchgezogen (realized " + letzterRealized
+                        + ", gesamt " + letzterTotal + ")");
             }
         }
         
@@ -653,6 +733,52 @@ public class TickChartManager {
     }
 
     /**
+     * FIX (v1.4.12): Hängt die offene Tick-Periode an die Historie-Drawdown-
+     * Kurve an — die graue Kurve endete bisher am letzten CLOSED Trade und
+     * der aktuell offene Drawdown (Open Equity) war praktisch unsichtbar.
+     * Die angehängten Punkte nutzen dieselbe Real-Konto-Basis wie die rote
+     * Kurve: Gesamtwert vs. High-Water-Mark aus max(Gesamtwert, Kontostand),
+     * pro Punkt aus der vollen Tick-Historie — und werden bis "jetzt"
+     * durchgezogen. Tick-Punkte VOR dem Ende der Historie werden ausgelassen
+     * (dort gilt die Trading-Kurven-Basis; die rote Kurve deckt sie ab).
+     */
+    private void haengeOffenenDrawdownAn(TimeSeries historyDrawdownSeries,
+                                         long[] vollZeiten, double[] vollPeaks) {
+        if (historyDrawdownSeries == null || vollZeiten == null || vollPeaks == null
+                || vollHistorie == null || vollHistorie.isEmpty()) {
+            return;
+        }
+        long letzteHistorieZeit = historyDrawdownSeries
+                .getTimePeriod(historyDrawdownSeries.getItemCount() - 1).getEnd().getTime();
+
+        double letzter = 0.0;
+        int angehaengt = 0;
+        for (TickDataLoader.TickData t : vollHistorie) {
+            Date ts = Date.from(t.getTimestamp().atZone(ZoneId.systemDefault()).toInstant());
+            if (ts.getTime() <= letzteHistorieZeit) {
+                continue;
+            }
+            double peak = peakBisZu(vollZeiten, vollPeaks, ts.getTime());
+            double dd = peak > 0 ? (t.getTotalValue() - peak) / peak * 100.0 : 0.0;
+            historyDrawdownSeries.addOrUpdate(new Millisecond(ts), dd);
+            letzter = dd;
+            angehaengt++;
+        }
+        if (angehaengt == 0) {
+            return;
+        }
+        // Bis "jetzt" durchziehen — der offene Drawdown gilt aktuell weiter
+        Date jetzt = new Date();
+        Date letztesEnde = historyDrawdownSeries
+                .getTimePeriod(historyDrawdownSeries.getItemCount() - 1).getEnd();
+        if (jetzt.getTime() - letztesEnde.getTime() > 60_000L) {
+            historyDrawdownSeries.addOrUpdate(new Millisecond(jetzt), letzter);
+        }
+        LOGGER.info("HISTORIE-DRAWDOWN um offene Periode erweitert: " + angehaengt
+                + " Tick-Punkte angehängt, aktuell " + String.format("%.2f%%", letzter));
+    }
+
+    /**
      * FIX 25.09.2026 (v2): Stellt die X-Achse abschließend auf den Zeitraum
      * ALLER Serien im Plot-Dataset ein (Tick-Fenster + ggf. MQL5-Historie)
      * und wählt das Datumsformat nach genau diesem Zeitraum.
@@ -701,6 +827,26 @@ public class TickChartManager {
         } catch (Exception e) {
             LOGGER.warning("Konnte X-Achse nicht finalisieren: " + e.getMessage());
         }
+    }
+
+    /**
+     * FIX (v1.4.11): Laufender Peak aus der vollen Tick-Historie bis zum
+     * Zeitpunkt t (binäre Suche — die Historie ist zeitlich sortiert)
+     */
+    private static double peakBisZu(long[] zeiten, double[] peaks, long t) {
+        int lo = 0;
+        int hi = zeiten.length - 1;
+        int idx = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (zeiten[mid] <= t) {
+                idx = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return idx >= 0 ? peaks[idx] : peaks[0];
     }
 
     /**
