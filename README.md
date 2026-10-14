@@ -4,7 +4,7 @@ Einziger Nachteil in Claude ist. Die Projektgrösse ist in Claude für Privatnut
 # 📊 MqlRealMonitor - Projektübersicht
 
 > [!NOTE]
-> **Repository-Pfad:** Dieses Projekt wurde nach `D:\git\MQL\MqlRealmonitor` verschoben (vorher: `D:\git\MqlRealmonitor`).
+> **Repository-Pfad:** Dieses Projekt ist Teil der Megaprojekt-Suite unter `D:\AntiGravitySoftware\GitWorkspace\SIGNALDOWNLOADER\MqlRealmonitor` (vorher: `D:\git\MQL\MqlRealmonitor`).
 
 ## 🎯 **Was macht das Projekt?**
 
