@@ -6,6 +6,14 @@ Einziger Nachteil in Claude ist. Die Projektgrösse ist in Claude für Privatnut
 > [!NOTE]
 > **Repository-Pfad:** Dieses Projekt ist Teil der Megaprojekt-Suite unter `D:\AntiGravitySoftware\GitWorkspace\SIGNALDOWNLOADER\MqlRealmonitor` (vorher: `D:\git\MQL\MqlRealmonitor`).
 
+## Einordnung in den Workspace
+
+**MqlRealMonitor ist noch nicht in den produktiven Gesamtworkflow des SignalKiScanners integriert. Diese Integration bleibt ausdrücklich zurückgestellt.** Das Projekt ist eine eigenständig startbare Desktopanwendung. Dass `startall.bat` im übergeordneten Workspace auch diesen Monitor startet, bedeutet lediglich einen gemeinsamen Programmstart, keine fachliche Integration.
+
+Im Code ist bereits ein Scanner-Client als Vorbereitung vorhanden: Über den Button „KiScanner“ kann er `GET /api/v1/signals?ampel=gruen,gelb` abrufen; die Standardadresse ist `http://127.0.0.1:8611`. Der Client filtert zusätzlich auf grüne und gelbe Signale und unterstützt einen optionalen Schlüssel im Header `X-User-Key`. Diese vorhandene Abrufmöglichkeit belegt weder einen produktiv abgestimmten Ablauf noch eine abgeschlossene Integration. Maßgebliche Implementierung: `kiscanner/KiScannerClient.java`, `gui/MqlSignalManager.java` und `config/MqlRealMonitorConfig.java` unter `src/main/java/com/mql/realmonitor/`.
+
+Der eigenständige Start erfolgt über `run.bat` → `start.bat`. Ohne vorhandene JAR beziehungsweise mit `--rebuild` baut das Startskript per Maven; Daten und Favoriten liegen standardmäßig unter `C:\Forex\MqlAnalyzer` und lassen sich über `--base-path` verlagern.
+
 ## 🎯 **Was macht das Projekt?**
 
 **MqlRealMonitor** ist eine professionelle Java-Anwendung zur **automatischen Überwachung von MQL5 Signalprovider-Konten**. Das System lädt regelmäßig HTML-Seiten von MQL5.com herunter, extrahiert Kontostand und Floating Profit-Daten und stellt diese in einer übersichtlichen GUI dar.
@@ -22,6 +30,8 @@ Einziger Nachteil in Claude ist. Die Projektgrösse ist in Claude für Privatnut
 ---
 
 ## 📁 **Projektstatistiken**
+
+Die folgenden Datei- und Zeilenzahlen sind historische Schätzungen aus der ursprünglichen Projektbeschreibung; sie wurden nicht als aktueller Umfang neu ermittelt.
 
 ### **📦 Packages: 7**
 ```
@@ -211,4 +221,4 @@ Gesamt:           14
 
 ---
 
-**🎉 Das MqlRealMonitor-Projekt ist ein vollständiges, professionelles Java-System mit über 4.200 Zeilen durchdachtem Code!**
+Die historischen Umfangsangaben belegen weder Vollständigkeit noch Produktionsreife; der Integrationsstand ist oben gesondert dokumentiert.

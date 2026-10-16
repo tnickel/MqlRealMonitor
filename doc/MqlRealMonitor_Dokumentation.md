@@ -2,6 +2,12 @@
 
 Dieses Dokument beschreibt die Architektur, die internen Abläufe, die Verzeichnisstrukturen und die Algorithmen der Java-Desktop-Anwendung **MqlRealMonitor**.
 
+## Integrationsstand im Workspace (16.10.2026)
+
+**Die produktive Integration in den Gesamtworkflow des SignalKiScanners ist noch nicht erfolgt und bleibt ausdrücklich zurückgestellt.** MqlRealMonitor ist eigenständig startbar und verwaltet seine Favoriten, Konfiguration und Tickdaten unter dem konfigurierten `BASE_PATH`. Der Aufruf durch das übergeordnete `startall.bat` startet die Anwendung gemeinsam mit anderen Projekten; daraus folgt keine fachliche Integration.
+
+Als Vorbereitung existiert bereits das Paket `com.mql.realmonitor.kiscanner`: `KiScannerClient` ruft über `HttpURLConnection` die Signalliste `GET /api/v1/signals?ampel=gruen,gelb` ab und filtert die Antwort zusätzlich auf grüne/gelbe Ampeln. `MqlRealMonitorConfig` verwendet standardmäßig `http://127.0.0.1:8611`; ein optionaler Schlüssel wird als `X-User-Key` gesendet. `gui.MqlSignalManager` bietet einen manuellen Import über den Button „KiScanner“ und übernimmt Signale in die lokalen Favoriten. Diese implementierten Schnittstellen sind vorbereitete Funktionen, keine Aussage über einen produktiv integrierten oder freigegebenen Gesamtworkflow.
+
 ---
 
 ## 📊 1. Projektübersicht & Zweck
@@ -64,57 +70,57 @@ graph TD
 ## 📁 3. Detaillierte Paket- und Klassenbeschreibung
 
 ### 3.1. Hauptpaket (`com.mql.realmonitor`)
-- **[MqlRealMonitor.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/MqlRealMonitor.java)**:
+- **[MqlRealMonitor.java](../src/main/java/com/mql/realmonitor/MqlRealMonitor.java)**:
   Der zentrale Orchestrator. Initialisiert alle Subsysteme, verwaltet den wiederkehrenden Monitoring-Zyklus (`performMonitoringCycle`), empfängt Kommandozeilenparameter und startet das GUI.
 
 ### 3.2. Paket `config`
-- **[MqlRealMonitorConfig.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/config/MqlRealMonitorConfig.java)**:
+- **[MqlRealMonitorConfig.java](../src/main/java/com/mql/realmonitor/config/MqlRealMonitorConfig.java)**:
   Verwaltet alle Pfade und anwendungsspezifischen Parameter. Liest und schreibt Konfigurationsdateien unter dem angegebenen `BASE_PATH` (Standard: `C:\Forex\MqlAnalyzer`).
-- **[IdTranslationManager.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/config/IdTranslationManager.java)**:
+- **[IdTranslationManager.java](../src/main/java/com/mql/realmonitor/config/IdTranslationManager.java)**:
   Übersetzt die numerischen MQL5-Signal-IDs in lesbare Namen der Signalprovider für eine bessere GUI-Darstellung.
 
 ### 3.3. Paket `currency`
-- **[CurrencyDataLoader.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/currency/CurrencyDataLoader.java)**:
+- **[CurrencyDataLoader.java](../src/main/java/com/mql/realmonitor/currency/CurrencyDataLoader.java)**:
   Verantwortlich für das Laden von Währungskursen (z.B. Gold - XAUUSD oder Bitcoin - BTCUSD) von MQL5 im Hintergrund.
-- **[CurrencyData.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/currency/CurrencyData.java)**:
+- **[CurrencyData.java](../src/main/java/com/mql/realmonitor/currency/CurrencyData.java)**:
   Modellklasse zur Repräsentation eines Währungskurses zu einem bestimmten Zeitpunkt.
-- **[CurrencyParser.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/currency/CurrencyParser.java)**:
+- **[CurrencyParser.java](../src/main/java/com/mql/realmonitor/currency/CurrencyParser.java)**:
   Parst die Kursdaten aus den abgerufenen HTML-Inhalten.
-- **[CurrencyDataWriter.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/currency/CurrencyDataWriter.java)**:
+- **[CurrencyDataWriter.java](../src/main/java/com/mql/realmonitor/currency/CurrencyDataWriter.java)**:
   Schreibt die Kurshistorie in CSV-Dateien unter `Realtick\tick_kurse\`.
 
 ### 3.4. Paket `downloader`
-- **[WebDownloader.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/downloader/WebDownloader.java)**:
+- **[WebDownloader.java](../src/main/java/com/mql/realmonitor/downloader/WebDownloader.java)**:
   Führt die HTTP-Downloads durch. Unterstützt Gzip-Kompression, Verbindungs-Timeouts und speichert die rohen HTML-Seiten im Download-Verzeichnis ab.
-- **[FavoritesReader.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/downloader/FavoritesReader.java)**:
+- **[FavoritesReader.java](../src/main/java/com/mql/realmonitor/downloader/FavoritesReader.java)**:
   Liest die zu überwachenden MQL5-Signal-IDs aus der Konfigurationsdatei `favorites.txt`.
-- **[DownloadResult.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/downloader/DownloadResult.java)**:
+- **[DownloadResult.java](../src/main/java/com/mql/realmonitor/downloader/DownloadResult.java)**:
   Strukturierte Transportklasse für das Download-Ergebnis. Enthält den HTML-Inhalt, den HTTP-Statuscode und detaillierte Fehlerbeschreibungen bei Verbindungsproblemen.
 
 ### 3.5. Paket `parser`
-- **[HTMLParser.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/parser/HTMLParser.java)**:
+- **[HTMLParser.java](../src/main/java/com/mql/realmonitor/parser/HTMLParser.java)**:
   Analysiert die HTML-Dateien der Signalprovider. Nutzt ein flexibles Regex-System zur Extraktion von Währungen, Kontostand, Floating Profit und Drawdowns. Unterstützt sowohl JavaScript-Daten-Arrays als auch reguläre HTML-Tags als Fallback.
-- **[SignalData.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/parser/SignalData.java)**:
+- **[SignalData.java](../src/main/java/com/mql/realmonitor/parser/SignalData.java)**:
   Datenmodell zur Speicherung der extrahierten Daten eines Signalproviders mit Validierungslogik.
 
 ### 3.6. Paket `data` & `tickdata`
-- **[TickDataLoader.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/data/TickDataLoader.java)**:
+- **[TickDataLoader.java](../src/main/java/com/mql/realmonitor/data/TickDataLoader.java)**:
   Lädt und parst historische CSV-Tick-Dateien zur Bereitstellung der Datenreihen für die Diagramme.
-- **[TickDataWriter.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/tickdata/TickDataWriter.java)**:
+- **[TickDataWriter.java](../src/main/java/com/mql/realmonitor/tickdata/TickDataWriter.java)**:
   Erstellt und aktualisiert die CSV-Tick-Dateien der Signalprovider. Verhindert das Schreiben von Duplikaten durch Zeitstempel-Abgleich.
 
 ### 3.7. Paket `gui` (SWT-Oberfläche)
-- **[MqlRealMonitorGUI.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/gui/MqlRealMonitorGUI.java)**:
+- **[MqlRealMonitorGUI.java](../src/main/java/com/mql/realmonitor/gui/MqlRealMonitorGUI.java)**:
   Das Hauptfenster der SWT-Anwendung. Enthält die Tabelle der Signalprovider, Schaltflächen zum manuellen Aktualisieren und Laden von Kursen sowie die Menüleiste.
-- **[SignalProviderTable.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/gui/SignalProviderTable.java)**:
+- **[SignalProviderTable.java](../src/main/java/com/mql/realmonitor/gui/SignalProviderTable.java)**:
   Verwaltet die Tabelle mit den Signalprovidern. Sie bietet Sortierfunktionen, Farbkodierungen (z. B. Rot bei Verlusten, Grün bei Gewinnen) und zeigt berechnete Performance-Kennzahlen an.
-- **[StatusUpdater.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/gui/StatusUpdater.java)**:
+- **[StatusUpdater.java](../src/main/java/com/mql/realmonitor/gui/StatusUpdater.java)**:
   Aktualisiert periodisch die Statuszeile, überwacht den Speicherverbrauch der Java Virtual Machine (JVM) und zeigt die verbleibende Zeit bis zum nächsten Download an.
-- **[AsyncTickChartWindow.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/gui/AsyncTickChartWindow.java)**:
+- **[AsyncTickChartWindow.java](../src/main/java/com/mql/realmonitor/gui/AsyncTickChartWindow.java)**:
   Asynchrones Fenster zur Anzeige der Charts. Zeigt sofort eine Ladeanimation an und berechnet die Diagramme im Hintergrund, um ein Einfrieren der Benutzeroberfläche zu verhindern.
-- **[TickChartManager.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/gui/TickChartManager.java)**:
+- **[TickChartManager.java](../src/main/java/com/mql/realmonitor/gui/TickChartManager.java)**:
   Steuert die JFreeChart-Logik und koordiniert die Zeichnung des Drawdown- und Profit-Entwicklungsdiagramms.
-- **[EquityDrawdownChartPanel.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/gui/EquityDrawdownChartPanel.java)** & **[ProfitDevelopmentChartPanel.java](file:///d:/git/MQL/MqlRealmonitor/src/main/java/com/mql/realmonitor/gui/ProfitDevelopmentChartPanel.java)**:
+- **[EquityDrawdownChartPanel.java](../src/main/java/com/mql/realmonitor/gui/EquityDrawdownChartPanel.java)** & **[ProfitDevelopmentChartPanel.java](../src/main/java/com/mql/realmonitor/gui/ProfitDevelopmentChartPanel.java)**:
   Wiederverwendbare GUI-Komponenten (Custom Controls) zur Darstellung der jeweiligen Diagramme.
 
 ---
@@ -133,7 +139,7 @@ Der Überwachungszyklus läuft standardmäßig asynchron im Hintergrund:
 4. **Persistierung**: Falls neue Daten vorhanden sind (Prüfung auf geänderten Zeitstempel), werden diese an die CSV-Datei des Providers angehängt.
 5. **UI-Update**: Die Daten werden thread-sicher via `Display.asyncExec` in die Tabelle eingepflegt.
 6. **Währungskurse abrufen**: Nach Abschluss des Signal-Downloads werden automatisch die Währungskurse aktualisiert.
-7. **Wartezeit**: Der Zyklus schläft für das konfigurierte Intervall (Standard: 60 Minuten).
+7. **Wartezeit**: Der Zyklus schläft für das konfigurierte Intervall (Standard im aktuellen `MqlRealMonitorConfig`: 15 Minuten).
 
 ### 4.2. Asynchrones Chart-Setup & UI-Responsiveness
 
@@ -226,8 +232,8 @@ C:\Forex\MqlAnalyzer\ (oder benutzerdefinierter BASE_PATH)
 Die Anwendung kann flexibel konfiguriert und gestartet werden.
 
 ### 6.1. Start über `start.bat`
-Das im Hauptverzeichnis liegende Startskript [start.bat](file:///d:/git/MQL/MqlRealmonitor/start.bat) übernimmt die komplette Umgebungskontrolle:
-- Es prüft die Java-Version (mindestens Java 11 erforderlich).
+Das im Hauptverzeichnis liegende Startskript [start.bat](../start.bat) übernimmt die komplette Umgebungskontrolle:
+- Es prüft, ob `java` auf dem PATH aufrufbar ist; eine numerische Prüfung der Mindestversion erfolgt dabei nicht. Das Maven-Projekt verwendet Java 11 als Quell- und Zielversion.
 - Falls die ausführbare Datei `target\mql-real-monitor.jar` nicht vorhanden ist, wird das Projekt automatisch kompiliert (`mvn clean package -DskipTests`).
 - Das Skript leitet alle zusätzlichen Parameter transparent an die Java-Anwendung weiter.
 
